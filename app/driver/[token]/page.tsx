@@ -75,7 +75,7 @@ export default function DriverPage({ params }: { params: Promise<{ token: string
 
       leafletMapRef.current = map;
 
-      const bounds = L.latLngBounds();
+      const boundsPoints: [number, number][] = [];
 
       // Restaurant Marker
       if (config) {
@@ -86,7 +86,7 @@ export default function DriverPage({ params }: { params: Promise<{ token: string
           iconAnchor: [15, 15],
         });
         L.marker([config.sucursal_lat, config.sucursal_lng], { icon: restIcon }).addTo(map);
-        bounds.extend([config.sucursal_lat, config.sucursal_lng]);
+        boundsPoints.push([config.sucursal_lat, config.sucursal_lng]);
       }
 
       // Client Marker
@@ -98,7 +98,7 @@ export default function DriverPage({ params }: { params: Promise<{ token: string
           iconAnchor: [15, 15],
         });
         L.marker([pedido.cliente_lat, pedido.cliente_lng], { icon: clientIcon }).addTo(map);
-        bounds.extend([pedido.cliente_lat, pedido.cliente_lng]);
+        boundsPoints.push([pedido.cliente_lat, pedido.cliente_lng]);
       }
 
       // Driver Marker
@@ -110,9 +110,10 @@ export default function DriverPage({ params }: { params: Promise<{ token: string
       });
 
       markerRef.current = L.marker([initialLat, initialLng], { icon: driverIcon }).addTo(map);
-      bounds.extend([initialLat, initialLng]);
+      boundsPoints.push([initialLat, initialLng]);
 
-      if (bounds.isValid()) {
+      if (boundsPoints.length > 0) {
+        const bounds = L.latLngBounds(boundsPoints);
         map.fitBounds(bounds, { padding: [30, 30] });
       } else {
         map.setView([initialLat, initialLng], 15);
