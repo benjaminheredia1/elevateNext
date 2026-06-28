@@ -28,14 +28,29 @@ model Usuario {
   token            String
   rol              String         @default("USER")
   transaccion_id   Transaccion[]
+  cajas            Caja[]
   created_at       DateTime       @default(now())
   update_at        DateTime       @updatedAt
+}
+
+model Cliente {
+  id           Int           @id @default(autoincrement())
+  nombre       String
+  telefono     String?
+  direccion    String?
+  transacciones Transaccion[]
+  created_at   DateTime      @default(now())
+  update_at    DateTime      @updatedAt
 }
 
 model Transaccion {
   id                       Int                     @id @default(autoincrement())
   usuario_id               Int?
   usuario                  Usuario?                @relation(fields: [usuario_id], references: [id])
+  
+  cliente_id               Int?
+  cliente                  Cliente?                @relation(fields: [cliente_id], references: [id])
+  
   cliente_nombre           String?
   cliente_telefono         String?
   cliente_direccion        String?
@@ -115,10 +130,23 @@ model Insumo {
   stock_actual          Float
   stock_minimo          Float
   unidad_medida         Unidad_medida
+  costo_promedio        Float              @default(0)
+  es_mixto              Boolean            @default(false)
   movimientoInterno_id  MovimientoInterno[]
   recetaProducto_id     RecetasProducto[]
+  insumos_mixtos_padre  InsumoMixtoDetalle[] @relation("InsumoPadre")
+  insumos_mixtos_hijo   InsumoMixtoDetalle[] @relation("InsumoHijo")
   created_at            DateTime           @default(now())
   update_at             DateTime           @updatedAt
+}
+
+model InsumoMixtoDetalle {
+  id               Int      @id @default(autoincrement())
+  insumo_padre_id  Int
+  insumo_hijo_id   Int
+  cantidad         Float
+  insumo_padre     Insumo   @relation("InsumoPadre", fields: [insumo_padre_id], references: [id])
+  insumo_hijo      Insumo   @relation("InsumoHijo", fields: [insumo_hijo_id], references: [id])
 }
 
 model RecetasProducto {
@@ -182,3 +210,32 @@ model Configuracion {
   created_at      DateTime @default(now())
   update_at       DateTime @updatedAt
 }
+
+enum EstadoCaja {
+  ABIERTA
+  CERRADA
+}
+
+model Caja {
+  id              Int        @id @default(autoincrement())
+  monto_inicial   Float      @default(0)
+  monto_final     Float?
+  ingresos        Float      @default(0)
+  egresos         Float      @default(0)
+  estado          EstadoCaja @default(ABIERTA)
+  fecha_apertura  DateTime   @default(now())
+  fecha_cierre    DateTime?
+  usuario_id      Int
+  usuario         Usuario    @relation(fields: [usuario_id], references: [id])
+  gastos          Gasto[]
+}
+
+model Gasto {
+  id          Int      @id @default(autoincrement())
+  caja_id     Int
+  monto       Float
+  descripcion String
+  caja        Caja     @relation(fields: [caja_id], references: [id])
+  created_at  DateTime @default(now())
+}
+
