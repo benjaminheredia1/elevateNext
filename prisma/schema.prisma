@@ -1,0 +1,184 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum EstadoTransaccion {
+  PENDIENTE
+  EN_PREPARACION
+  EN_CAMINO
+  ENTREGADO
+  CANCELADO
+  PAGADO
+}
+
+model Usuario {
+  id               Int            @id @default(autoincrement())
+  nombre           String
+  apellido_paterno String
+  apellido_materno String
+  email            String         @unique
+  password         String
+  token            String
+  rol              String         @default("USER")
+  transaccion_id   Transaccion[]
+  created_at       DateTime       @default(now())
+  update_at        DateTime       @updatedAt
+}
+
+model Transaccion {
+  id                       Int                     @id @default(autoincrement())
+  usuario_id               Int?
+  usuario                  Usuario?                @relation(fields: [usuario_id], references: [id])
+  cliente_nombre           String?
+  cliente_telefono         String?
+  cliente_direccion        String?
+  cliente_lat              Float?
+  cliente_lng              Float?
+  metodo_pago              String?
+  total                    Float
+  estado                   EstadoTransaccion       @default(PENDIENTE)
+  
+  // Driver tracking fields
+  driver_nombre            String?
+  driver_lat               Float?
+  driver_lng               Float?
+  driver_link_id           String?                 @unique
+
+  transaccionesDetalles_id TransaccionesDetalles[]
+  created_at               DateTime                @default(now())
+  update_at                DateTime                @updatedAt
+}
+
+model Categoria {
+  id           Int                @id @default(autoincrement())
+  nombre       String
+  detalles     String
+  categoria_id CategoriasProducto[]
+  created_at   DateTime           @default(now())
+  update_at    DateTime           @updatedAt
+}
+
+model Producto {
+  id                       Int                   @id @default(autoincrement())
+  nombre                   String
+  descripcion              String
+  precio                   Float
+  imagen_url               String?
+  disponible               Boolean               @default(true)
+  categoria_id             CategoriasProducto[]
+  created_at               DateTime              @default(now())
+  update_at                DateTime              @updatedAt
+  recetaProducto_id        RecetasProducto[]
+  promocionProducto_id     PromocionProducto[]
+  transaccionesDetalles_id TransaccionesDetalles[]
+}
+
+model TransaccionesDetalles {
+  id                Int         @id @default(autoincrement())
+  transaccion_id    Int
+  precio_unitario   Float
+  descuentoAplicado Float        @default(0)
+  producto_id       Int
+  cantidad          Float
+  transaccion       Transaccion @relation(fields: [transaccion_id], references: [id], onDelete: Cascade)
+  producto          Producto    @relation(fields: [producto_id], references: [id])
+}
+
+model CategoriasProducto {
+  id           Int      @id @default(autoincrement())
+  categoria_id Int
+  producto_id  Int
+  categoria    Categoria @relation(fields: [categoria_id], references: [id])
+  producto     Producto  @relation(fields: [producto_id], references: [id])
+  created_at   DateTime  @default(now())
+  update_at    DateTime  @updatedAt
+}
+
+enum Unidad_medida {
+  KG
+  GR
+  UNIDAD
+  LT
+  ML
+}
+
+model Insumo {
+  id                    Int                @id @default(autoincrement())
+  nombre                String
+  stock_actual          Float
+  stock_minimo          Float
+  unidad_medida         Unidad_medida
+  movimientoInterno_id  MovimientoInterno[]
+  recetaProducto_id     RecetasProducto[]
+  created_at            DateTime           @default(now())
+  update_at             DateTime           @updatedAt
+}
+
+model RecetasProducto {
+  id                 Int      @id @default(autoincrement())
+  producto_id        Int
+  insumo_id          Int
+  cantidad_utilizada Float
+  producto           Producto @relation(fields: [producto_id], references: [id])
+  insumo             Insumo   @relation(fields: [insumo_id], references: [id])
+  created_at         DateTime @default(now())
+  update_at          DateTime @updatedAt
+}
+
+enum Tipo_movimiento {
+  INGRESO
+  EGRESO
+  PRODUCCION
+}
+
+model MovimientoInterno {
+  id              Int             @id @default(autoincrement())
+  insumo_id       Int
+  tipo_movimiento Tipo_movimiento
+  cantidad        Float
+  descripcion     String
+  insumo          Insumo          @relation(fields: [insumo_id], references: [id])
+  created_at      DateTime        @default(now())
+  update_at       DateTime        @updatedAt
+}
+
+model PromocionProducto {
+  id                      Int                  @id @default(autoincrement())
+  producto_id             Int
+  key                     String
+  promocion_descuentos_id Int
+  promocionDescuentos     PromocionesDescuentos @relation(fields: [promocion_descuentos_id], references: [id])
+  producto                Producto             @relation(fields: [producto_id], references: [id])
+}
+
+model PromocionesDescuentos {
+  id                   Int                @id @default(autoincrement())
+  nombre               String
+  valor                String
+  promocionProducto_id PromocionProducto[]
+  reglasHorarias_id    ReglasHorarias[]
+}
+
+model ReglasHorarias {
+  id                       Int                   @id @default(autoincrement())
+  promocionesDescuentos_id Int
+  fecha_inicio             DateTime
+  fecha_fin                DateTime
+  promocionesDescuentos    PromocionesDescuentos @relation(fields: [promocionesDescuentos_id], references: [id])
+}
+
+model Configuracion {
+  id              Int      @id @default(1)
+  sucursal_lat    Float
+  sucursal_lng    Float
+  sucursal_nombre String
+  created_at      DateTime @default(now())
+  update_at       DateTime @updatedAt
+}
