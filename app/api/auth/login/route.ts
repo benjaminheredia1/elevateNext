@@ -1,12 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { login } from '@/lib/auth';
-import { isRateLimited } from '@/lib/server/rate-limit';
 
 export async function POST(request: NextRequest) {
-  if (isRateLimited(request, 60000, 5)) { // Max 5 login attempts per minute
-    return NextResponse.json({ message: 'Demasiados intentos de inicio de sesión. Por favor intente más tarde.' }, { status: 429 });
-  }
-
   try {
     const body = await request.json();
     const identifier = body.identifier ?? body.email;
