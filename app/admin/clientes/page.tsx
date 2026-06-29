@@ -8,17 +8,43 @@ import MoneyText from '@/components/ui/MoneyText';
 import DataTable from '@/components/ui/DataTable';
 import EmptyState from '@/components/ui/EmptyState';
 
+function currentMonth() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
+
 function fmt(d: string | null | undefined) {
   if (!d) return '—';
   return new Date(d).toLocaleDateString('es-BO', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
+function monthName(value: string | undefined) {
+  if (!value) return 'Mes actual';
+  const [year, month] = value.split('-').map(Number);
+  return new Date(year, month - 1, 1).toLocaleDateString('es-BO', { month: 'long', year: 'numeric' });
+}
+
+function FavoriteProduct({ product }: { product?: { nombre: string; cantidad: number; total: number } | null }) {
+  if (!product) return <span className="admin-cell-muted">Sin compras</span>;
+  return (
+    <div>
+      <div className="admin-cell-title">{product.nombre}</div>
+      <div className="admin-cell-sub">{Number(product.cantidad).toFixed(0)} un. · <MoneyText value={product.total} /></div>
+    </div>
+  );
+}
+
 export default function ClientesAdminPage() {
   const [q, setQ] = useState('');
-  const { data, isLoading, isError } = useAdminClientes(q);
+  const [mes, setMes] = useState(currentMonth());
+  const { data, isLoading, isError } = useAdminClientes(q, mes);
 
   const items = data?.items ?? [];
   const resumen = data?.resumen;
+  const clienteMasComprador = resumen?.cliente_mas_comprador;
+  const clienteMasFrecuente = resumen?.cliente_mas_frecuente;
+  const productoMasComprado = resumen?.producto_mas_comprado;
+  const topClientes = resumen?.top_clientes_mes ?? [];
 
   return (
     <AdminPanel>
@@ -39,16 +65,98 @@ export default function ClientesAdminPage() {
             <KpiCard label="Total clientes" value={resumen?.total_clientes ?? 0} />
             <KpiCard label="Ingresos totales" value={<MoneyText value={resumen?.ingresos_totales ?? 0} />} highlight />
             <KpiCard label="Gasto promedio" value={<MoneyText value={resumen?.gasto_promedio ?? 0} />} />
+            <KpiCard label="Activos del mes" value={resumen?.clientes_activos_mes ?? 0} accent="var(--fresh)" />
           </div>
 
-          <div style={{ marginBottom: 12 }}>
+          <div className="admin-toolbar">
             <input
               placeholder="Buscar por nombre o teléfono…"
               value={q}
               onChange={e => setQ(e.target.value)}
-              style={{ width: '100%', maxWidth: 360, padding: '8px 12px', borderRadius: 8, background: 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.1)', color: '#fff', fontSize: 13 }}
+              className="admin-search-field"
             />
+            <div className="form-group" style={{ minWidth: 190 }}>
+              <label>Mes de fidelización</label>
+              <input type="month" value={mes} onChange={e => setMes(e.target.value || currentMonth())} />
+            </div>
           </div>
+
+          <div className="finance-grid">
+            <div className="finance-panel span-4">
+              <div className="finance-panel-header">
+                <div>
+                  <h3>Más comprador</h3>
+                  <p>{monthName(resumen?.mes)}</p>
+                </div>
+              </div>
+              {clienteMasComprador ? (
+                <div className="finance-list">
+                  <div className="finance-row"><span>Cliente</span><strong>{clienteMasComprador.nombre}</strong></div>
+                  <div className="finance-row"><span>Gastó</span><strong><MoneyText value={clienteMasComprador.gastado_mes} /></strong></div>
+                  <div className="finance-row"><span>Pedidos</span><strong>{clienteMasComprador.pedidos_mes}</strong></div>
+                  <div className="finance-row"><span>Compra más</span><strong>{clienteMasComprador.producto_favorito_mes?.nombre ?? 'Sin producto'}</strong></div>
+                </div>
+              ) : (
+                <EmptyState title="Sin compras en este mes" />
+              )}
+            </div>
+
+            <div className="finance-panel span-4">
+              <div className="finance-panel-header">
+                <div>
+                  <h3>Más frecuente</h3>
+                  <p>Cliente con más pedidos</p>
+                </div>
+              </div>
+              {clienteMasFrecuente ? (
+                <div className="finance-list">
+                  <div className="finance-row"><span>Cliente</span><strong>{clienteMasFrecuente.nombre}</strong></div>
+                  <div className="finance-row"><span>Pedidos</span><strong>{clienteMasFrecuente.pedidos_mes}</strong></div>
+                  <div className="finance-row"><span>Ticket prom.</span><strong><MoneyText value={clienteMasFrecuente.ticket_promedio_mes} /></strong></div>
+                  <div className="finance-row"><span>Compra más</span><strong>{clienteMasFrecuente.producto_favorito_mes?.nombre ?? 'Sin producto'}</strong></div>
+                </div>
+              ) : (
+                <EmptyState title="Sin frecuencia este mes" />
+              )}
+            </div>
+
+            <div className="finance-panel span-4">
+              <div className="finance-panel-header">
+                <div>
+                  <h3>Producto favorito</h3>
+                  <p>Preferencia global del mes</p>
+                </div>
+              </div>
+              {productoMasComprado ? (
+                <div className="finance-list">
+                  <div className="finance-row"><span>Producto</span><strong>{productoMasComprado.nombre}</strong></div>
+                  <div className="finance-row"><span>Unidades</span><strong>{Number(productoMasComprado.cantidad).toFixed(0)}</strong></div>
+                  <div className="finance-row"><span>Ingresos</span><strong><MoneyText value={productoMasComprado.total} /></strong></div>
+                  <div className="finance-row"><span>Ticket prom.</span><strong><MoneyText value={resumen?.ticket_promedio_mes ?? 0} /></strong></div>
+                </div>
+              ) : (
+                <EmptyState title="Sin productos vendidos" />
+              )}
+            </div>
+          </div>
+
+          {topClientes.length > 0 && (
+            <div className="dash-card span-12" style={{ marginBottom: 18 }}>
+              <div className="dash-card-header">
+                <h3>Top clientes del mes</h3>
+                <span className="dash-card-sub">ordenado por gasto</span>
+              </div>
+              <div className="finance-category-grid">
+                {topClientes.map((cliente: any, index: number) => (
+                  <div key={cliente.id} className="finance-category-card">
+                    <div className="finance-category-label">#{index + 1} · {cliente.pedidos_mes} pedidos</div>
+                    <div className="finance-category-value">{cliente.nombre}</div>
+                    <div className="finance-category-sub"><MoneyText value={cliente.gastado_mes} /> · {cliente.producto_favorito_mes?.nombre ?? 'Sin producto favorito'}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <DataTable
             data={items}
@@ -57,13 +165,16 @@ export default function ClientesAdminPage() {
             columns={[
               { key: 'nombre', header: 'Cliente', render: (row: any) => (
                 <div>
-                  <div style={{ fontWeight: 600 }}>{row.nombre}</div>
-                  {row.telefono && <div style={{ fontSize: 12, color: '#888' }}>{row.telefono}</div>}
+                  <div className="admin-cell-title">{row.nombre}</div>
+                  {row.telefono && <div className="admin-cell-sub">{row.telefono}</div>}
                 </div>
               )},
               { key: 'primer_pedido', header: 'Primer pedido', render: (row: any) => fmt(row.primer_pedido) },
               { key: 'pedidos', header: 'Pedidos', className: 'num', render: (row: any) => row.pedidos },
               { key: 'total_gastado', header: 'Total gastado', className: 'num', render: (row: any) => <MoneyText value={row.total_gastado} /> },
+              { key: 'pedidos_mes', header: 'Pedidos mes', className: 'num', render: (row: any) => row.pedidos_mes },
+              { key: 'gastado_mes', header: 'Gastado mes', className: 'num', render: (row: any) => <MoneyText value={row.gastado_mes} /> },
+              { key: 'favorito_mes', header: 'Compra más', render: (row: any) => <FavoriteProduct product={row.producto_favorito_mes} /> },
               { key: 'gasto_promedio', header: 'Gasto prom.', className: 'num', render: (row: any) => <MoneyText value={row.gasto_promedio} /> },
             ]}
           />

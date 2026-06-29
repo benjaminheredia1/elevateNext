@@ -10,7 +10,7 @@ export default function MoneyText({ value, signed = false }: MoneyTextProps) {
     maximumFractionDigits: 2,
   }).format(Math.abs(numeric || 0));
   const sign = signed && numeric !== 0 ? (numeric > 0 ? '+' : '-') : '';
-  const color = signed ? (numeric >= 0 ? 'var(--fresh)' : 'var(--danger)') : 'var(--ink)';
+  const color = signed ? (numeric >= 0 ? 'var(--fresh)' : 'var(--danger)') : 'inherit';
 
   return <span className="num" style={{ color, fontWeight: 700 }}>{sign}Bs {formatted}</span>;
 }

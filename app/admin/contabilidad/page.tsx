@@ -56,7 +56,7 @@ export default function AdminContabilidadPage() {
           <h1>Contabilidad</h1>
           <p>Estado de resultados, balance y movimientos del periodo.</p>
         </div>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div className="admin-toolbar" style={{ marginBottom: 0 }}>
           <RangeFilter value={rango} onChange={setRango} />
           <button className="admin-btn secondary" onClick={handleExport} disabled={!er}>Export Excel</button>
         </div>
@@ -90,7 +90,7 @@ export default function AdminContabilidadPage() {
                 <ChartCard title="Ingresos por categoria" data={categorias} />
               </div>
 
-              <div style={{ marginTop: 18 }}>
+              <div className="finance-panel span-12">
                 <DataTable
                   data={flujo.data?.movimientos ?? []}
                   emptyTitle="Sin movimientos en el periodo"

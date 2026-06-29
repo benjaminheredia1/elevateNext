@@ -17,10 +17,14 @@ export default function ChartCard({ title, data, color = '#ff5c19' }: ChartCardP
       <div style={{ width: '100%', height: 240 }}>
         <ResponsiveContainer>
           <BarChart data={data}>
-            <CartesianGrid stroke="rgba(255,255,255,0.08)" vertical={false} />
-            <XAxis dataKey="name" stroke="#7a9088" fontSize={12} />
-            <YAxis stroke="#7a9088" fontSize={12} />
-            <Tooltip contentStyle={{ background: '#161b22', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8 }} />
+            <CartesianGrid stroke="#e4ebe6" vertical={false} />
+            <XAxis dataKey="name" stroke="#6f827a" fontSize={12} />
+            <YAxis stroke="#6f827a" fontSize={12} />
+            <Tooltip
+              cursor={{ fill: 'rgba(20, 52, 42, .05)' }}
+              contentStyle={{ background: '#fff', border: '1px solid #dde6df', borderRadius: 8, color: '#14342a' }}
+              labelStyle={{ color: '#14342a', fontWeight: 700 }}
+            />
             <Bar dataKey="value" fill={color} radius={[6, 6, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>

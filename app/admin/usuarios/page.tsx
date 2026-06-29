@@ -18,16 +18,16 @@ import apiClient from '@/hooks/api';
 
 const ROLES: RolUsuario[] = ['DUENO', 'ADMIN', 'CAJERO', 'CLIENTE'];
 
-const ROL_COLORS: Record<RolUsuario, string> = {
-  DUENO: '#ff5c19',
-  ADMIN: '#a855f7',
-  CAJERO: '#3b82f6',
-  CLIENTE: '#22c55e',
+const ROL_CLASS: Record<RolUsuario, string> = {
+  DUENO: 'orange',
+  ADMIN: 'warn',
+  CAJERO: 'info',
+  CLIENTE: 'fresh',
 };
 
 function RolBadge({ rol }: { rol: RolUsuario }) {
   return (
-    <span style={{ background: ROL_COLORS[rol] + '22', color: ROL_COLORS[rol], borderRadius: 6, padding: '2px 8px', fontSize: 11, fontWeight: 700 }}>
+    <span className={`admin-badge-soft ${ROL_CLASS[rol]}`}>
       {rol}
     </span>
   );
@@ -77,12 +77,14 @@ function FormModal({
   };
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.55)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <form onSubmit={submit} className="dash-card" style={{ width: 'min(560px, 100%)', gridColumn: 'auto', maxHeight: '90vh', overflowY: 'auto' }}>
-        <div className="dash-card-header">
-          <h3>{form.id ? 'Editar usuario' : 'Nuevo usuario'}</h3>
+    <div className="admin-modal-overlay">
+      <form onSubmit={submit} className="admin-modal wide">
+        <div className="admin-modal-header">
+          <h2>{form.id ? 'Editar usuario' : 'Nuevo usuario'}</h2>
+          <button type="button" className="admin-modal-close" onClick={onClose}>×</button>
         </div>
-        <div className="form-grid">
+        <div className="admin-modal-body">
+          <div className="form-grid">
           <div className="form-group">
             <label>Nombre</label>
             <input value={form.nombre} onChange={e => setForm({ ...form, nombre: e.target.value })} required />
@@ -133,8 +135,9 @@ function FormModal({
               </select>
             </div>
           )}
+          </div>
         </div>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
+        <div className="admin-modal-footer">
           <button type="button" className="admin-btn ghost" onClick={onClose}>Cancelar</button>
           <button type="submit" className="admin-btn primary" disabled={saving}>Guardar</button>
         </div>
@@ -188,8 +191,8 @@ export default function UsuariosPage() {
             columns={[
               { key: 'usuario', header: 'Usuario', render: (row: any) => (
                 <div>
-                  <div style={{ fontWeight: 600 }}>{row.nombre} {row.apellido_paterno}</div>
-                  <div style={{ fontSize: 12, color: '#888' }}>{row.email}</div>
+                  <div className="admin-cell-title">{row.nombre} {row.apellido_paterno}</div>
+                  <div className="admin-cell-sub">{row.email}</div>
                 </div>
               )},
               { key: 'rol', header: 'Rol', render: (row: any) => <RolBadge rol={row.rol} /> },
@@ -199,7 +202,7 @@ export default function UsuariosPage() {
                 key: 'acciones',
                 header: '',
                 render: (row: any) => (
-                  <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                  <div className="admin-actions">
                     <button className="admin-btn ghost" onClick={() => setEditing(row)}>Editar</button>
                     <button
                       className="admin-btn ghost"

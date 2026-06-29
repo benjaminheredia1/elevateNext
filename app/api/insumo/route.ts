@@ -12,9 +12,27 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const { nombre, stock_actual, stock_minimo, unidad_medida } = await request.json();
+    const {
+      categoria_insumo,
+      costo_promedio,
+      nombre,
+      proveedor,
+      punto_critico,
+      stock_actual,
+      stock_minimo,
+      unidad_medida,
+    } = await request.json();
     const insumo = await prisma.insumo.create({
-      data: { nombre, stock_actual, stock_minimo, unidad_medida },
+      data: {
+        categoria_insumo: categoria_insumo || null,
+        costo_promedio: Number(costo_promedio || 0),
+        nombre,
+        proveedor: proveedor || null,
+        punto_critico: Number(punto_critico || 0),
+        stock_actual: Number(stock_actual || 0),
+        stock_minimo: Number(stock_minimo || 0),
+        unidad_medida,
+      },
     });
     return NextResponse.json(insumo, { status: 201 });
   } catch {

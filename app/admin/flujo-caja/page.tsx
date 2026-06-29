@@ -55,7 +55,7 @@ export default function AdminFlujoCajaPage() {
             <ChartCard title="Por categoria" data={categorias} color="#3b82f6" />
           </div>
 
-          <div style={{ marginTop: 18 }}>
+          <div className="finance-panel span-12">
             <DataTable
               data={data?.movimientos ?? []}
               emptyTitle="Sin movimientos en el periodo"

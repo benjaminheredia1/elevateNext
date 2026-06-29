@@ -1,233 +1,337 @@
 'use client';
 
-import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useEffect, useMemo, useState } from 'react';
 import {
-  ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid,
-  PieChart, Pie, Cell, Legend, ScatterChart, Scatter, ZAxis,
+  Area,
+  AreaChart,
+  CartesianGrid,
+  Cell,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Scatter,
+  ScatterChart,
+  Tooltip,
+  XAxis,
+  YAxis,
+  ZAxis,
 } from 'recharts';
 import AdminPanel from '@/components/admin/AdminPanel';
-import KpiCard from '@/components/ui/KpiCard';
-import MoneyText from '@/components/ui/MoneyText';
-import EmptyState from '@/components/ui/EmptyState';
 import apiClient from '@/hooks/api';
+import { classifyMenu, foodCostColor, menuClassMeta, type MenuClass } from '@/components/admin/inventoryData';
 
 type Rango = '7d' | '30d' | '90d';
 
+interface ContabilidadData {
+  total_ventas: number;
+  total_pedidos: number;
+  ticket_promedio: number;
+  cmv: number;
+  total_gastos: number;
+  utilidad_bruta: number;
+  utilidad_neta: number;
+  margen_bruto: number;
+  margen_neto: number;
+  ventas_lista: { id: number; descripcion: string; monto: number; fecha: string; tipo: string }[];
+  compras: { id: number; descripcion: string; monto: number; fecha: string; tipo: string }[];
+  gastos: { id: number; descripcion: string; monto: number; fecha: string; tipo: string }[];
+}
+
+interface ApiProducto {
+  id: number;
+  nombre: string;
+  precio: number;
+  ventas_acumuladas: number;
+  costo_calculado: number;
+  food_cost_pct: number;
+  categoria_id: { categoria: { nombre: string } }[];
+  marcas: { marca: { nombre: string } }[];
+}
+
+interface TrendRow {
+  fecha: string;
+  ventas: number;
+  utilidad: number;
+}
+
 const RANGOS: { key: Rango; label: string }[] = [
-  { key: '7d',  label: '7 días'  },
+  { key: '7d', label: '7 días' },
   { key: '30d', label: '30 días' },
   { key: '90d', label: '90 días' },
 ];
 
-const CATEGORIA_COLORS = ['#ff5c19', '#a855f7', '#3b82f6', '#10b981', '#f59e0b', '#ec4899'];
-
-const MATRIX_COLORS = {
-  Estrella: '#f59e0b',
-  Caballo:  '#3b82f6',
-  Puzzle:   '#a855f7',
-  Perro:    '#6b7280',
+const PALETTE = ['#FF5C19', '#1FA971', '#14342A', '#3B82C4', '#E8A317', '#E5484D'];
+const CLASS_COLORS: Record<MenuClass, string> = {
+  Estrella: '#1FA971',
+  Caballo: '#3B82C4',
+  Puzzle: '#E8A317',
+  Perro: '#E5484D',
 };
 
-function useAnalitica(rango: Rango) {
-  return useQuery({
-    queryKey: ['analitica', rango],
-    queryFn: async () => (await apiClient.get(`/api/admin/analitica?rango=${rango}`)).data,
-    staleTime: 60_000,
-  });
+function money(value: number) {
+  return `Bs ${new Intl.NumberFormat('es-BO', {
+    maximumFractionDigits: 0,
+  }).format(Math.round(value || 0))}`;
 }
 
-function SectionCard({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 16, padding: '20px 24px', marginBottom: 20 }}>
-      <h3 style={{ color: '#fff', fontSize: 15, fontWeight: 700, marginBottom: 18 }}>{title}</h3>
-      {children}
-    </div>
-  );
+function rangeQuery(rango: Rango) {
+  if (rango === '7d') return 'rango=7dias';
+  if (rango === '30d') return 'rango=mes';
+  const hasta = new Date();
+  const desde = new Date();
+  desde.setDate(hasta.getDate() - 90);
+  return `rango=rango&desde=${desde.toISOString()}&hasta=${hasta.toISOString()}`;
+}
+
+function dateKey(value: string | Date) {
+  return new Date(value).toISOString().slice(0, 10);
+}
+
+function buildTrend(data?: ContabilidadData): TrendRow[] {
+  if (!data) return [];
+  const map = new Map<string, TrendRow>();
+  for (const venta of data.ventas_lista ?? []) {
+    const key = dateKey(venta.fecha);
+    const row = map.get(key) ?? { fecha: key, ventas: 0, utilidad: 0 };
+    row.ventas += Number(venta.monto || 0);
+    row.utilidad += Number(venta.monto || 0);
+    map.set(key, row);
+  }
+  for (const egreso of [...(data.compras ?? []), ...(data.gastos ?? [])]) {
+    const key = dateKey(egreso.fecha);
+    const row = map.get(key) ?? { fecha: key, ventas: 0, utilidad: 0 };
+    row.utilidad -= Number(egreso.monto || 0);
+    map.set(key, row);
+  }
+  return Array.from(map.values()).sort((a, b) => a.fecha.localeCompare(b.fecha));
+}
+
+function mixBy(products: ApiProducto[], getKeys: (product: ApiProducto) => string[]) {
+  const map = new Map<string, number>();
+  for (const product of products) {
+    const value = Number(product.precio || 0) * Number(product.ventas_acumuladas || 0);
+    for (const key of getKeys(product)) {
+      map.set(key, (map.get(key) ?? 0) + value);
+    }
+  }
+  return Array.from(map.entries())
+    .map(([name, value]) => ({ name, value }))
+    .filter(item => item.value > 0)
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 6);
 }
 
 export default function AnaliticaPage() {
   const [rango, setRango] = useState<Rango>('30d');
-  const { data: resp, isLoading, isError } = useAnalitica(rango);
-  const data = resp?.data;
+  const [contabilidad, setContabilidad] = useState<ContabilidadData | null>(null);
+  const [productos, setProductos] = useState<ApiProducto[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const ticketProm = data && data.totalTransacciones > 0
-    ? data.totalVentas / data.totalTransacciones : 0;
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      setLoading(true);
+      try {
+        const [contaRes, productsRes] = await Promise.all([
+          apiClient.get(`/api/contabilidad?${rangeQuery(rango)}`),
+          apiClient.get('/api/admin/productos'),
+        ]);
+        if (cancelled) return;
+        setContabilidad(contaRes.data?.data ?? null);
+        setProductos(productsRes.data?.data ?? []);
+      } catch (err) {
+        console.error(err);
+        if (!cancelled) {
+          setContabilidad(null);
+          setProductos([]);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [rango]);
+
+  const trend = useMemo(() => buildTrend(contabilidad ?? undefined), [contabilidad]);
+  const categoryMix = useMemo(() => mixBy(productos, product => product.categoria_id.map(c => c.categoria.nombre)), [productos]);
+  const brandMix = useMemo(() => mixBy(productos, product => product.marcas.map(m => m.marca.nombre)), [productos]);
+
+  const rows = useMemo(() => productos.map(product => {
+    const costo = Number(product.costo_calculado || 0);
+    const margen = Number(product.precio || 0) - costo;
+    return {
+      ...product,
+      costo,
+      margen,
+      fc: product.precio > 0 ? (costo / product.precio) * 100 : Number(product.food_cost_pct || 0),
+    };
+  }), [productos]);
+
+  const avgSales = rows.reduce((sum, row) => sum + Number(row.ventas_acumuladas || 0), 0) / (rows.length || 1);
+  const avgMargin = rows.reduce((sum, row) => sum + Number(row.margen || 0), 0) / (rows.length || 1);
+  const matrixData = rows.map(row => {
+    const clazz = classifyMenu(row.ventas_acumuladas || 0, row.margen, avgSales, avgMargin);
+    return {
+      x: row.ventas_acumuladas || 0,
+      y: Number(row.margen.toFixed(2)),
+      name: row.nombre,
+      clazz,
+      color: CLASS_COLORS[clazz],
+    };
+  });
+
+  const hasFinancialData = !!contabilidad && (contabilidad.total_ventas > 0 || contabilidad.total_gastos > 0 || contabilidad.cmv > 0);
 
   return (
     <AdminPanel>
-      <div className="admin-page-header">
-        <div>
-          <h1>Analítica & KPIs</h1>
-          <p>Tendencias de ventas, food cost e ingeniería de menú.</p>
-        </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          {RANGOS.map(r => (
-            <button key={r.key} onClick={() => setRango(r.key)}
-              className={`admin-btn ${rango === r.key ? 'primary' : 'ghost'}`}>
-              {r.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {isLoading ? (
-        <EmptyState title="Cargando analítica…" />
-      ) : isError ? (
-        <EmptyState title="Error al cargar datos" />
-      ) : !data ? null : (
-        <>
-          {/* KPIs */}
-          <div className="kpi-grid" style={{ marginBottom: 20 }}>
-            <KpiCard label="Ventas totales" value={<MoneyText value={data.totalVentas} />} highlight />
-            <KpiCard label="Transacciones" value={data.totalTransacciones} />
-            <KpiCard label="Ticket promedio" value={<MoneyText value={ticketProm} />} />
-            <KpiCard label="Food cost %" value={`${data.foodCostTotal.toFixed(1)}%`} />
+      <div className="admin-analytics">
+        <div className="admin-page-header">
+          <div>
+            <h1>Analítica & Finanzas</h1>
+            <p>Rentabilidad, tendencias e ingeniería de menú</p>
           </div>
-
-          {/* Tendencia de ventas */}
-          <SectionCard title="📈 Tendencia de Ventas">
-            {data.ventasPorDia.length === 0 ? (
-              <p style={{ color: '#666', fontSize: 13 }}>Sin datos en este rango.</p>
-            ) : (
-              <ResponsiveContainer width="100%" height={220}>
-                <LineChart data={data.ventasPorDia} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                  <XAxis dataKey="fecha" tick={{ fill: '#666', fontSize: 11 }} tickFormatter={v => v.slice(5)} />
-                  <YAxis tick={{ fill: '#666', fontSize: 11 }} />
-                  <Tooltip
-                    contentStyle={{ background: '#1a1a2e', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, color: '#fff', fontSize: 12 }}
-                    formatter={(v) => [`Bs ${typeof v === 'number' ? v.toFixed(2) : v}`, 'Ventas']}
-                  />
-                  <Line type="monotone" dataKey="total" stroke="#ff5c19" strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
-                </LineChart>
-              </ResponsiveContainer>
-            )}
-          </SectionCard>
-
-          {/* Mix categoría + marca */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
-            {[
-              { title: '🍽️ Mix por Categoría', items: data.mixCategoria },
-              { title: '🏷️ Mix por Marca',     items: data.mixMarca     },
-            ].map(({ title, items }) => (
-              <SectionCard key={title} title={title}>
-                {items.length === 0 ? (
-                  <p style={{ color: '#666', fontSize: 13 }}>Sin datos.</p>
-                ) : (
-                  <ResponsiveContainer width="100%" height={200}>
-                    <PieChart>
-                      <Pie data={items} dataKey="total" nameKey="nombre" cx="50%" cy="50%" outerRadius={70} innerRadius={40}>
-                        {items.map((_: unknown, idx: number) => (
-                          <Cell key={idx} fill={CATEGORIA_COLORS[idx % CATEGORIA_COLORS.length]} />
-                        ))}
-                      </Pie>
-                      <Tooltip contentStyle={{ background: '#1a1a2e', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, color: '#fff', fontSize: 12 }}
-                      formatter={(v, _name, props: any) => [`Bs ${typeof v === 'number' ? v.toFixed(2) : v} (${props.payload.pct}%)`, props.payload.nombre]} />
-                      <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11, color: '#888' }} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                )}
-              </SectionCard>
+          <div className="period-selector">
+            {RANGOS.map(option => (
+              <button
+                key={option.key}
+                className={`period-btn ${rango === option.key ? 'active' : ''}`}
+                onClick={() => setRango(option.key)}
+                type="button"
+              >
+                {option.label}
+              </button>
             ))}
           </div>
+        </div>
 
-          {/* Ingeniería de menú */}
-          <SectionCard title="⭐ Ingeniería de Menú (Boston Matrix)">
-            <div style={{ display: 'flex', gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
-              {(Object.entries(MATRIX_COLORS) as [string, string][]).map(([cat, color]) => {
-                const count = data.ingenieriaMeniu.filter((p: any) => p.categoria === cat).length;
-                return (
-                  <div key={cat} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
-                    <div style={{ width: 10, height: 10, borderRadius: '50%', background: color }} />
-                    <span style={{ color: '#888' }}>{cat}</span>
-                    <span style={{ color: '#fff', fontWeight: 700 }}>{count}</span>
-                  </div>
-                );
-              })}
+        {loading ? (
+          <div className="empty-state"><h4>Cargando analítica</h4><p>Consultando ventas, gastos y productos.</p></div>
+        ) : (
+          <>
+            <div className="kpi-grid">
+              <div className="kpi-card"><div className="kpi-label">Ventas</div><div className="kpi-value" style={{ color: 'var(--orange)' }}>{money(contabilidad?.total_ventas ?? 0)}</div></div>
+              <div className="kpi-card"><div className="kpi-label">Utilidad neta</div><div className="kpi-value" style={{ color: (contabilidad?.utilidad_neta ?? 0) >= 0 ? 'var(--fresh)' : 'var(--danger)' }}>{money(contabilidad?.utilidad_neta ?? 0)}</div></div>
+              <div className="kpi-card"><div className="kpi-label">Ticket promedio</div><div className="kpi-value">{money(contabilidad?.ticket_promedio ?? 0)}</div></div>
+              <div className="kpi-card"><div className="kpi-label">Food Cost</div><div className="kpi-value" style={{ color: foodCostColor(contabilidad?.total_ventas ? ((contabilidad.cmv / contabilidad.total_ventas) * 100) : 0) }}>{Math.round(contabilidad?.total_ventas ? ((contabilidad.cmv / contabilidad.total_ventas) * 100) : 0)}%</div></div>
+              <div className="kpi-card"><div className="kpi-label">Margen bruto</div><div className="kpi-value" style={{ color: 'var(--fresh)' }}>{Math.round(contabilidad?.margen_bruto ?? 0)}%</div></div>
             </div>
-            {data.ingenieriaMeniu.length === 0 ? (
-              <p style={{ color: '#666', fontSize: 13 }}>Sin datos de productos.</p>
-            ) : (
-              <ResponsiveContainer width="100%" height={240}>
-                <ScatterChart margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                  <XAxis dataKey="ventas" name="Ventas" tick={{ fill: '#666', fontSize: 11 }} label={{ value: 'Ventas', position: 'insideBottom', fill: '#666', fontSize: 11 }} />
-                  <YAxis dataKey="margen" name="Margen %" tick={{ fill: '#666', fontSize: 11 }} label={{ value: 'Margen %', angle: -90, position: 'insideLeft', fill: '#666', fontSize: 11 }} />
-                  <ZAxis range={[60, 60]} />
-                  <Tooltip
-                    cursor={{ strokeDasharray: '3 3' }}
-                    contentStyle={{ background: '#1a1a2e', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, color: '#fff', fontSize: 12 }}
-                    content={({ payload }) => {
-                      if (!payload?.length) return null;
-                      const p = payload[0].payload;
-                      return (
-                        <div style={{ background: '#1a1a2e', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, padding: '10px 14px' }}>
-                          <div style={{ color: '#fff', fontWeight: 700, marginBottom: 4 }}>{p.nombre}</div>
-                          <div style={{ color: '#888', fontSize: 11 }}>Ventas: {p.ventas}</div>
-                          <div style={{ color: '#888', fontSize: 11 }}>Margen: {p.margen.toFixed(1)}%</div>
-                          <div style={{ fontSize: 11, fontWeight: 700, color: MATRIX_COLORS[p.categoria as keyof typeof MATRIX_COLORS] }}>{p.categoria}</div>
-                        </div>
-                      );
-                    }}
-                  />
-                  {(Object.entries(MATRIX_COLORS) as [string, string][]).map(([cat, color]) => (
-                    <Scatter
-                      key={cat}
-                      name={cat}
-                      data={data.ingenieriaMeniu.filter((p: any) => p.categoria === cat)}
-                      fill={color}
-                      opacity={0.85}
-                    />
-                  ))}
-                </ScatterChart>
-              </ResponsiveContainer>
-            )}
-          </SectionCard>
 
-          {/* Heatmap horas pico (tabla simplificada) */}
-          <SectionCard title="🕐 Horas Pico">
-            {data.heatmap.length === 0 ? (
-              <p style={{ color: '#666', fontSize: 13 }}>Sin datos de horas.</p>
+            {!hasFinancialData && productos.length === 0 ? (
+              <div className="empty-state"><h4>Sin datos del periodo</h4><p>Cuando existan ventas y productos, los indicadores aparecerán aquí.</p></div>
             ) : (
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
-                  <thead>
-                    <tr>
-                      <th style={{ color: '#666', padding: '4px 8px', textAlign: 'left' }}>Hora</th>
-                      {['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'].map(d => (
-                        <th key={d} style={{ color: '#666', padding: '4px 8px', textAlign: 'center' }}>{d}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {Array.from({ length: 16 }, (_, h) => h + 7).map(hora => {
-                      const maxVal = Math.max(...data.heatmap.map((c: any) => c.ventas));
-                      return (
-                        <tr key={hora}>
-                          <td style={{ color: '#888', padding: '3px 8px' }}>{hora}:00</td>
-                          {[0, 1, 2, 3, 4, 5, 6].map(dia => {
-                            const cell = data.heatmap.find((c: any) => c.hora === hora && c.diaSemana === dia);
-                            const intensity = cell ? (cell.ventas / maxVal) : 0;
+              <div className="dashboard-grid">
+                <div className="dash-card span-8">
+                  <div className="dash-card-header"><h3>Tendencia de ventas y utilidad</h3><span className="dash-card-sub">Periodo seleccionado</span></div>
+                  {trend.length === 0 ? (
+                    <div className="alert-empty">Sin movimientos en el periodo.</div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height={260}>
+                      <AreaChart data={trend} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+                        <defs>
+                          <linearGradient id="analytics-sales" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#FF5C19" stopOpacity={0.24} /><stop offset="100%" stopColor="#FF5C19" stopOpacity={0} /></linearGradient>
+                          <linearGradient id="analytics-profit" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#1FA971" stopOpacity={0.2} /><stop offset="100%" stopColor="#1FA971" stopOpacity={0} /></linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#E4EAE5" vertical={false} />
+                        <XAxis dataKey="fecha" tick={{ fill: '#5C6B63', fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={(value: string) => value.slice(5)} />
+                        <YAxis tick={{ fill: '#5C6B63', fontSize: 11 }} axisLine={false} tickLine={false} />
+                        <Tooltip contentStyle={{ background: '#fff', border: '1px solid #E4EAE5', borderRadius: 10, fontSize: 12 }} formatter={(value, name) => [money(Number(value ?? 0)), name === 'ventas' ? 'Ventas' : 'Utilidad']} />
+                        <Area type="monotone" dataKey="ventas" stroke="#FF5C19" strokeWidth={2.5} fill="url(#analytics-sales)" />
+                        <Area type="monotone" dataKey="utilidad" stroke="#1FA971" strokeWidth={2.5} fill="url(#analytics-profit)" />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  )}
+                </div>
+
+                <DonutCard title="Mix por categoría" data={categoryMix} />
+                <DonutCard title="Mix por marca" data={brandMix} />
+
+                <div className="dash-card span-8">
+                  <div className="dash-card-header">
+                    <h3>Ingeniería de menú</h3>
+                    <span className="dash-card-sub">Ventas x margen</span>
+                  </div>
+                  {matrixData.length === 0 ? (
+                    <div className="alert-empty">Sin productos para clasificar.</div>
+                  ) : (
+                    <>
+                      <ResponsiveContainer width="100%" height={320}>
+                        <ScatterChart margin={{ top: 16, right: 24, left: 0, bottom: 16 }}>
+                          <CartesianGrid stroke="#E4EAE5" />
+                          <XAxis type="number" dataKey="x" name="Ventas" tick={{ fill: '#5C6B63', fontSize: 11 }} axisLine={false} tickLine={false} />
+                          <YAxis type="number" dataKey="y" name="Margen" tick={{ fill: '#5C6B63', fontSize: 11 }} axisLine={false} tickLine={false} />
+                          <ZAxis range={[100, 100]} />
+                          <Tooltip cursor={{ strokeDasharray: '3 3' }} contentStyle={{ background: '#fff', border: '1px solid #E4EAE5', borderRadius: 10, fontSize: 12 }} />
+                          {(Object.keys(CLASS_COLORS) as MenuClass[]).map(clazz => (
+                            <Scatter key={clazz} name={clazz} data={matrixData.filter(item => item.clazz === clazz)} fill={CLASS_COLORS[clazz]} />
+                          ))}
+                        </ScatterChart>
+                      </ResponsiveContainer>
+                      <div className="admin-cat-filters">
+                        {(Object.keys(menuClassMeta) as MenuClass[]).map(clazz => (
+                          <span key={clazz} className="menu-class-badge">{menuClassMeta[clazz].icon} {clazz}</span>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                <div className="dash-card span-12">
+                  <div className="dash-card-header"><h3>Rentabilidad por plato</h3><span className="dash-card-sub">{rows.length} productos</span></div>
+                  {rows.length === 0 ? (
+                    <div className="alert-empty">Sin productos registrados.</div>
+                  ) : (
+                    <div className="admin-table-wrap" style={{ boxShadow: 'none' }}>
+                      <table className="admin-table">
+                        <thead><tr><th>Plato</th><th className="num">Ventas</th><th className="num">Precio</th><th className="num">Costo</th><th className="num">Food Cost</th><th>Clase</th></tr></thead>
+                        <tbody>
+                          {rows.sort((a, b) => b.margen - a.margen).map(row => {
+                            const clazz = classifyMenu(row.ventas_acumuladas || 0, row.margen, avgSales, avgMargin);
                             return (
-                              <td key={dia} title={cell ? `Bs ${cell.ventas.toFixed(0)}` : '—'}
-                                style={{ padding: '3px 8px', textAlign: 'center', borderRadius: 4,
-                                  background: intensity > 0 ? `rgba(255,92,25,${intensity * 0.8})` : 'transparent',
-                                  color: intensity > 0.5 ? '#fff' : '#555', fontSize: 10, cursor: 'default' }}>
-                                {cell ? `${cell.ventas.toFixed(0)}` : ''}
-                              </td>
+                              <tr key={row.id}>
+                                <td><strong>{row.nombre}</strong></td>
+                                <td className="num">{row.ventas_acumuladas || 0}</td>
+                                <td className="num">{money(row.precio)}</td>
+                                <td className="num">{money(row.costo)}</td>
+                                <td className="num"><span className="margin-badge" style={{ color: foodCostColor(row.fc), background: 'var(--canvas)' }}>{Math.round(row.fc)}%</span></td>
+                                <td><span className="menu-class-badge">{menuClassMeta[clazz].icon} {clazz}</span></td>
+                              </tr>
                             );
                           })}
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
-          </SectionCard>
-        </>
-      )}
+          </>
+        )}
+      </div>
     </AdminPanel>
+  );
+}
+
+function DonutCard({ title, data }: { title: string; data: { name: string; value: number }[] }) {
+  return (
+    <div className="dash-card span-4">
+      <div className="dash-card-header"><h3>{title}</h3></div>
+      {data.length === 0 ? (
+        <div className="alert-empty">Sin datos del periodo.</div>
+      ) : (
+        <ResponsiveContainer width="100%" height={230}>
+          <PieChart>
+            <Pie data={data} dataKey="value" nameKey="name" innerRadius="58%" outerRadius="84%" paddingAngle={2}>
+              {data.map((_, index) => <Cell key={index} fill={PALETTE[index % PALETTE.length]} />)}
+            </Pie>
+            <Tooltip contentStyle={{ background: '#fff', border: '1px solid #E4EAE5', borderRadius: 10, fontSize: 12 }} formatter={(value) => money(Number(value ?? 0))} />
+          </PieChart>
+        </ResponsiveContainer>
+      )}
+    </div>
   );
 }

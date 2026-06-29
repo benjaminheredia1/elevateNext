@@ -12,11 +12,11 @@ export default function KpiCard({ label, value, highlight = false, accent = 'var
     <div
       className="kpi-card"
       style={{
-        background: highlight ? '#050505' : 'var(--surface)',
+        background: highlight ? 'var(--kale)' : 'var(--surface)',
         borderColor: highlight ? 'rgba(255,92,25,0.35)' : 'var(--line)',
       }}
     >
-      <div className="kpi-label">{label}</div>
+      <div className="kpi-label" style={{ color: highlight ? 'rgba(217,229,223,0.7)' : undefined }}>{label}</div>
       <div className="kpi-value" style={{ color: highlight ? '#fff' : 'var(--ink)' }}>{value}</div>
       <div className="kpi-bar">
         <div className="kpi-bar-fill" style={{ width: '100%', background: accent }} />

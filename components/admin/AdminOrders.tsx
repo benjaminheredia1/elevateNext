@@ -1,9 +1,12 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { AnimatePresence } from 'framer-motion';
+import apiClient from '@/hooks/api';
 
-/* ===== Types ===== */
+type EstadoPedido = 'PENDIENTE' | 'EN_PREPARACION' | 'EN_CAMINO' | 'ENTREGADO' | 'CANCELADO' | 'PAGADO';
+type FiltroEstado = 'Todos' | EstadoPedido;
+
 interface DetalleItem {
   id: number;
   cantidad: number;
@@ -19,234 +22,195 @@ interface Pedido {
   cliente_direccion: string | null;
   metodo_pago: string | null;
   total: number;
-  estado: string;
+  estado: EstadoPedido | string;
   created_at: string;
+  driver_nombre?: string | null;
   driver_link_id?: string | null;
   transaccionesDetalles_id: DetalleItem[];
 }
 
-const ESTADOS = ['Todos', 'PENDIENTE', 'EN_PREPARACION', 'EN_CAMINO', 'ENTREGADO', 'CANCELADO'] as const;
+const STATUS_OPTIONS: EstadoPedido[] = [
+  'PENDIENTE',
+  'EN_PREPARACION',
+  'EN_CAMINO',
+  'ENTREGADO',
+  'CANCELADO',
+  'PAGADO',
+];
 
-const ESTADO_META: Record<string, { label: string; color: string; bg: string }> = {
-  PENDIENTE:       { label: 'Pendiente',    color: '#f59e0b', bg: 'rgba(245,158,11,0.15)' },
-  EN_PREPARACION:  { label: 'Preparando',   color: '#3b82f6', bg: 'rgba(59,130,246,0.15)' },
-  EN_CAMINO:       { label: 'En camino',    color: '#8b5cf6', bg: 'rgba(139,92,246,0.15)' },
-  ENTREGADO:       { label: 'Entregado',    color: '#10b981', bg: 'rgba(16,185,129,0.15)' },
-  CANCELADO:       { label: 'Cancelado',    color: '#ef4444', bg: 'rgba(239,68,68,0.15)'  },
-  PAGADO:          { label: 'Pagado',       color: '#10b981', bg: 'rgba(16,185,129,0.15)' },
+const FILTER_OPTIONS: FiltroEstado[] = ['Todos', ...STATUS_OPTIONS];
+
+const STATUS_META: Record<EstadoPedido, { label: string; color: string; bg: string }> = {
+  PENDIENTE: { label: 'Pendiente', color: 'var(--amber)', bg: 'rgba(232,163,23,.14)' },
+  EN_PREPARACION: { label: 'En preparación', color: 'var(--info)', bg: 'rgba(59,130,196,.14)' },
+  EN_CAMINO: { label: 'En camino', color: 'var(--kale)', bg: 'rgba(20,52,42,.12)' },
+  ENTREGADO: { label: 'Entregado', color: 'var(--fresh)', bg: 'rgba(31,169,113,.14)' },
+  CANCELADO: { label: 'Cancelado', color: 'var(--danger)', bg: 'rgba(229,72,77,.14)' },
+  PAGADO: { label: 'Pagado', color: 'var(--fresh)', bg: 'rgba(31,169,113,.14)' },
 };
 
-const PAGO_ICONS: Record<string, string> = {
-  cash: '💵', EFECTIVO: '💵', transfer: '🏦', BANCO: '🏦', qr: '📱', QR: '📱', TARJETA: '💳',
+const PAYMENT_LABELS: Record<string, string> = {
+  EFECTIVO: 'Efectivo',
+  cash: 'Efectivo',
+  QR: 'QR',
+  qr: 'QR',
+  BANCO: 'Transferencia',
+  transfer: 'Transferencia',
+  TARJETA: 'Tarjeta',
 };
 
-function EstadoBadge({ estado }: { estado: string }) {
-  const meta = ESTADO_META[estado] ?? { label: estado, color: '#888', bg: 'rgba(136,136,136,0.15)' };
+function statusMeta(status: string) {
+  return STATUS_META[status as EstadoPedido] ?? { label: status, color: 'var(--slate)', bg: 'var(--canvas)' };
+}
+
+function money(value: number) {
+  return `Bs. ${new Intl.NumberFormat('es-BO', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Number(value || 0))}`;
+}
+
+function time(value: string) {
+  return new Intl.DateTimeFormat('es-BO', {
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(value));
+}
+
+function OrderStatusBadge({ estado }: { estado: string }) {
+  const meta = statusMeta(estado);
   return (
-    <span style={{
-      fontSize: 11, padding: '3px 8px', borderRadius: 6, fontWeight: 600,
-      color: meta.color, background: meta.bg,
-    }}>
+    <span className="order-status-badge" style={{ color: meta.color, background: meta.bg }}>
       {meta.label}
     </span>
   );
 }
 
-function PedidoCard({ pedido, onEstadoChange, onDelete }: {
+function PedidoCard({
+  pedido,
+  expanded,
+  updating,
+  onToggle,
+  onEstadoChange,
+  onDriverLink,
+}: {
   pedido: Pedido;
-  onEstadoChange: (id: number, estado: string) => void;
-  onDelete: (id: number) => void;
+  expanded: boolean;
+  updating: boolean;
+  onToggle: () => void;
+  onEstadoChange: (id: number, estado: EstadoPedido) => void;
+  onDriverLink: (pedido: Pedido) => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
-  const [updating, setUpdating] = useState(false);
-
-  const SIGUIENTE_ESTADOS = ['PENDIENTE', 'EN_PREPARACION', 'EN_CAMINO', 'ENTREGADO', 'CANCELADO'];
-
-  const handleEstado = async (nuevoEstado: string) => {
-    setUpdating(true);
-    await onEstadoChange(pedido.id, nuevoEstado);
-    setUpdating(false);
-  };
-
-  const handleGenerateDriverLink = async (ev: React.MouseEvent) => {
-    ev.stopPropagation();
-    setUpdating(true);
-    try {
-      const res = await fetch(`/api/pedidos/${pedido.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ generar_driver_link: true }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const link = `${window.location.origin}/driver/${data.data.driver_link_id}`;
-        await navigator.clipboard.writeText(link);
-        alert('Link copiado al portapapeles:\n' + link);
-        // Optimistically update the UI to show it has a link
-        pedido.driver_link_id = data.data.driver_link_id; 
-      }
-    } catch (err) {
-      console.error(err);
-      alert('Error al generar link');
-    }
-    setUpdating(false);
-  };
+  const totalItems = pedido.transaccionesDetalles_id.reduce((sum, item) => sum + Number(item.cantidad || 0), 0);
+  const payment = PAYMENT_LABELS[pedido.metodo_pago ?? ''] ?? pedido.metodo_pago ?? 'Efectivo';
 
   return (
-    <motion.div
-      layout
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.95 }}
-      style={{
-        background: 'rgba(255,255,255,0.04)',
-        border: '1px solid rgba(255,255,255,0.08)',
-        borderRadius: 16,
-        overflow: 'hidden',
-        marginBottom: 12,
-      }}
-    >
-      {/* Header */}
-      <div
-        style={{ padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}
-        onClick={() => setExpanded(e => !e)}
-      >
-        <div style={{
-          width: 40, height: 40, borderRadius: 10, flexShrink: 0,
-          background: 'rgba(255,92,25,0.15)', border: '1px solid rgba(255,92,25,0.25)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          color: '#ff5c19', fontWeight: 700, fontSize: 13,
-        }}>
-          #{pedido.id}
+    <div className={`order-card ${expanded ? 'expanded' : ''}`}>
+      <button className="order-card-main" onClick={onToggle} type="button">
+        <div className="order-card-left">
+          <span className="order-id">#{pedido.id}</span>
+          <span className="order-time">{time(pedido.created_at)}</span>
         </div>
-
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ color: '#fff', fontWeight: 600, fontSize: 14 }}>
-            {pedido.cliente_nombre ?? 'Cliente sin nombre'}
-          </div>
-          <div style={{ color: '#666', fontSize: 12, display: 'flex', gap: 8 }}>
-            {pedido.cliente_telefono && <span>📞 {pedido.cliente_telefono}</span>}
-            <span>{PAGO_ICONS[pedido.metodo_pago ?? 'cash']} {pedido.metodo_pago ?? 'Efectivo'}</span>
-            <span>🕒 {new Date(pedido.created_at).toLocaleTimeString('es-BO', { hour: '2-digit', minute: '2-digit' })}</span>
-          </div>
+        <div className="order-card-center">
+          <span className="order-customer">{pedido.cliente_nombre ?? 'Cliente sin nombre'}</span>
+          <span className="order-items-count">{totalItems} item{totalItems === 1 ? '' : 's'} · {payment}</span>
         </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ color: '#ff5c19', fontWeight: 700, fontSize: 15 }}>Bs. {pedido.total}</span>
-          <EstadoBadge estado={pedido.estado} />
-          <span style={{ color: '#555', fontSize: 12, transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}>▼</span>
+        <div className="order-card-right">
+          <span className="order-total">{money(pedido.total)}</span>
+          <OrderStatusBadge estado={pedido.estado} />
         </div>
-      </div>
+        <span className={`order-expand-icon ${expanded ? 'open' : ''}`}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9" /></svg>
+        </span>
+      </button>
 
-      {/* Expanded detail */}
-      <AnimatePresence>
+      <AnimatePresence initial={false}>
         {expanded && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.25 }}
-            style={{ overflow: 'hidden', borderTop: '1px solid rgba(255,255,255,0.06)' }}
-          >
-            <div style={{ padding: '16px 18px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-              {/* Items */}
-              <div>
-                <div style={{ color: '#888', fontSize: 11, fontWeight: 600, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>
-                  Items del pedido
-                </div>
-                {pedido.transaccionesDetalles_id.map(item => (
-                  <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                    <span style={{ color: '#ccc', fontSize: 13 }}>
-                      {item.producto.nombre} <span style={{ color: '#666' }}>x{item.cantidad}</span>
-                    </span>
-                    <span style={{ color: '#fff', fontSize: 13 }}>Bs. {(item.precio_unitario * item.cantidad).toFixed(2)}</span>
+          <div className="order-card-detail">
+            <div className="ocd-section">
+              <h4>Items del pedido</h4>
+              <div className="ocd-items">
+                {pedido.transaccionesDetalles_id.length === 0 ? (
+                  <div className="ocd-item">
+                    <span className="ocd-item-name">Sin items registrados</span>
                   </div>
-                ))}
-                {pedido.cliente_direccion && (
-                  <div style={{ marginTop: 10, color: '#888', fontSize: 12 }}>
-                    📍 {pedido.cliente_direccion}
-                  </div>
+                ) : (
+                  pedido.transaccionesDetalles_id.map(item => (
+                    <div key={item.id} className="ocd-item">
+                      <span className="ocd-item-name">{item.producto.nombre}</span>
+                      <span className="ocd-item-qty">x{item.cantidad}</span>
+                      <span className="ocd-item-price">{money(item.precio_unitario * item.cantidad)}</span>
+                    </div>
+                  ))
                 )}
               </div>
+            </div>
 
-              {/* Actions */}
-              <div>
-                <div style={{ color: '#888', fontSize: 11, fontWeight: 600, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>
-                  Cambiar estado
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {SIGUIENTE_ESTADOS.map(e => {
-                    const meta = ESTADO_META[e];
-                    const isActive = pedido.estado === e;
-                    return (
-                      <motion.button
-                        key={e}
-                        whileHover={{ scale: 1.02 }}
-                        whileTap={{ scale: 0.98 }}
-                        onClick={(ev) => { ev.stopPropagation(); handleEstado(e); }}
-                        disabled={updating || isActive}
-                        style={{
-                          padding: '8px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: isActive ? 'default' : 'pointer',
-                          background: isActive ? meta.bg : 'rgba(255,255,255,0.04)',
-                          border: `1px solid ${isActive ? meta.color + '60' : 'rgba(255,255,255,0.08)'}`,
-                          color: isActive ? meta.color : '#888',
-                          display: 'flex', alignItems: 'center', gap: 6,
-                          transition: 'all 0.15s',
-                        }}
-                      >
-                        {isActive && <span>●</span>} {meta.label}
-                      </motion.button>
-                    );
-                  })}
-                  <motion.button
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    onClick={handleGenerateDriverLink}
-                    disabled={updating}
-                    style={{
-                      marginTop: 4, padding: '8px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer',
-                      background: pedido.driver_link_id ? 'rgba(16,185,129,0.08)' : 'rgba(59,130,246,0.08)', 
-                      border: `1px solid ${pedido.driver_link_id ? 'rgba(16,185,129,0.2)' : 'rgba(59,130,246,0.2)'}`,
-                      color: pedido.driver_link_id ? '#10b981' : '#3b82f6',
-                    }}
-                  >
-                    {pedido.driver_link_id ? '📋 Copiar Link Repartidor' : '🛵 Generar Link Repartidor'}
-                  </motion.button>
-                  <motion.button
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    onClick={(ev) => { ev.stopPropagation(); onDelete(pedido.id); }}
-                    style={{
-                      marginTop: 4, padding: '8px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer',
-                      background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)',
-                      color: '#ef4444',
-                    }}
-                  >
-                    🗑️ Eliminar pedido
-                  </motion.button>
-                </div>
+            <div className="ocd-meta">
+              <div className="ocd-meta-item">
+                <span className="ocd-meta-label">Cliente</span>
+                <span>{pedido.cliente_nombre ?? 'Sin nombre'}</span>
+              </div>
+              <div className="ocd-meta-item">
+                <span className="ocd-meta-label">Teléfono</span>
+                <span>{pedido.cliente_telefono ?? 'Sin teléfono'}</span>
+              </div>
+              <div className="ocd-meta-item">
+                <span className="ocd-meta-label">Dirección</span>
+                <span>{pedido.cliente_direccion ?? 'Sin dirección'}</span>
+              </div>
+              <div className="ocd-meta-item">
+                <span className="ocd-meta-label">Repartidor</span>
+                <span>{pedido.driver_nombre ?? (pedido.driver_link_id ? `Link ${pedido.driver_link_id}` : 'Sin asignar')}</span>
               </div>
             </div>
-          </motion.div>
+
+            <div className="ocd-actions">
+              <span className="ocd-actions-label">Cambiar estado:</span>
+              <div className="ocd-status-btns">
+                {STATUS_OPTIONS.map(status => {
+                  const meta = STATUS_META[status];
+                  const current = pedido.estado === status;
+                  return (
+                    <button
+                      key={status}
+                      className={`ocd-status-btn ${current ? 'current' : ''}`}
+                      style={current ? { background: meta.bg, color: meta.color, borderColor: meta.color } : {}}
+                      onClick={() => onEstadoChange(pedido.id, status)}
+                      disabled={updating || current}
+                      type="button"
+                    >
+                      {meta.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <button className="ocd-status-btn" onClick={() => onDriverLink(pedido)} disabled={updating} type="button">
+                {pedido.driver_link_id ? 'Copiar link repartidor' : 'Generar link repartidor'}
+              </button>
+            </div>
+          </div>
         )}
       </AnimatePresence>
-    </motion.div>
+    </div>
   );
 }
 
 export default function AdminOrders() {
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filtroEstado, setFiltroEstado] = useState('Todos');
+  const [filtroEstado, setFiltroEstado] = useState<FiltroEstado>('Todos');
   const [busqueda, setBusqueda] = useState('');
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [updatingId, setUpdatingId] = useState<number | null>(null);
 
   const fetchPedidos = useCallback(async () => {
     try {
-      const res = await fetch('/api/pedidos');
-      const data = await res.json();
-      setPedidos(data.data ?? []);
+      const res = await apiClient.get('/api/pedidos');
+      setPedidos(res.data?.data ?? []);
     } catch (err) {
       console.error(err);
+      setPedidos([]);
     } finally {
       setLoading(false);
     }
@@ -254,187 +218,127 @@ export default function AdminOrders() {
 
   useEffect(() => {
     fetchPedidos();
-    const interval = setInterval(fetchPedidos, 20000); // refresh every 20s
-    return () => clearInterval(interval);
+    const interval = window.setInterval(fetchPedidos, 20000);
+    return () => window.clearInterval(interval);
   }, [fetchPedidos]);
 
-  const handleEstadoChange = async (id: number, estado: string) => {
+  const counts = useMemo(() => {
+    return FILTER_OPTIONS.reduce((acc, status) => {
+      acc[status] = status === 'Todos' ? pedidos.length : pedidos.filter(p => p.estado === status).length;
+      return acc;
+    }, {} as Record<FiltroEstado, number>);
+  }, [pedidos]);
+
+  const pedidosFiltrados = pedidos.filter(pedido => {
+    const estadoOk = filtroEstado === 'Todos' || pedido.estado === filtroEstado;
+    const query = busqueda.trim().toLowerCase();
+    const searchOk = !query
+      || String(pedido.id).includes(query)
+      || (pedido.cliente_nombre ?? '').toLowerCase().includes(query)
+      || (pedido.cliente_telefono ?? '').toLowerCase().includes(query);
+    return estadoOk && searchOk;
+  });
+
+  const handleEstadoChange = async (id: number, estado: EstadoPedido) => {
+    setUpdatingId(id);
     try {
-      const res = await fetch(`/api/pedidos/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ estado }),
-      });
-      if (res.ok) {
-        setPedidos(prev => prev.map(p => p.id === id ? { ...p, estado } : p));
+      const res = await apiClient.put(`/api/pedidos/${id}`, { estado });
+      const updated = res.data?.data;
+      setPedidos(prev => prev.map(pedido => pedido.id === id ? { ...pedido, ...(updated ?? {}), estado } : pedido));
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  const handleDriverLink = async (pedido: Pedido) => {
+    setUpdatingId(pedido.id);
+    try {
+      let linkId = pedido.driver_link_id;
+      if (!linkId) {
+        const res = await apiClient.put(`/api/pedidos/${pedido.id}`, { generar_driver_link: true });
+        const updated = res.data?.data as Pedido | undefined;
+        linkId = updated?.driver_link_id ?? null;
+        if (updated) setPedidos(prev => prev.map(item => item.id === pedido.id ? { ...item, ...updated } : item));
       }
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const handleDelete = async (id: number) => {
-    if (!confirm('¿Eliminar este pedido?')) return;
-    try {
-      await fetch(`/api/pedidos/${id}`, { method: 'DELETE' });
-      setPedidos(prev => prev.filter(p => p.id !== id));
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const handleSimulate = async () => {
-    try {
-      setLoading(true);
-      const res = await fetch('/api/pedidos', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          cliente_nombre: `Cliente Simulado ${Math.floor(Math.random() * 1000)}`,
-          cliente_telefono: `+591 7${Math.floor(Math.random() * 10000000)}`,
-          cliente_direccion: 'Dirección simulada de prueba',
-          cliente_lat: -17.7710 + (Math.random() - 0.5) * 0.05,
-          cliente_lng: -63.1900 + (Math.random() - 0.5) * 0.05,
-          metodo_pago: 'EFECTIVO',
-          items: [
-            { nombre: 'Bowl Proteico Andino', cantidad: 1, precio: 45 }
-          ],
-          total: 45
-        })
-      });
-      if (res.ok) {
-        await fetchPedidos();
+      if (linkId) {
+        await navigator.clipboard.writeText(`${window.location.origin}/driver/${linkId}`);
       }
     } catch (err) {
       console.error(err);
     } finally {
-      setLoading(false);
+      setUpdatingId(null);
     }
   };
 
-  const pedidosFiltrados = pedidos.filter(p => {
-    const estadoOk = filtroEstado === 'Todos' || p.estado === filtroEstado;
-    const busquedaOk = !busqueda ||
-      p.cliente_nombre?.toLowerCase().includes(busqueda.toLowerCase()) ||
-      p.cliente_telefono?.includes(busqueda) ||
-      String(p.id).includes(busqueda);
-    return estadoOk && busquedaOk;
-  });
-
-  const conteos = ESTADOS.reduce((acc, e) => {
-    acc[e] = e === 'Todos' ? pedidos.length : pedidos.filter(p => p.estado === e).length;
-    return acc;
-  }, {} as Record<string, number>);
-
   return (
-    <div style={{ padding: '0 4px' }}>
-      {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-        <h1 style={{ color: '#fff', fontSize: 22, fontWeight: 700 }}>
-          Pedidos
-          {loading && (
-            <motion.span
-              animate={{ opacity: [1, 0.3, 1] }}
-              transition={{ duration: 1.5, repeat: Infinity }}
-              style={{ marginLeft: 10, fontSize: 12, color: '#ff5c19' }}
-            >● actualizando</motion.span>
-          )}
-        </h1>
-        <div style={{ display: 'flex', gap: '10px' }}>
-          <motion.button
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            onClick={handleSimulate}
-            style={{
-              background: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.3)',
-              color: '#10b981', padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer',
-            }}
-          >
-            + Simular Pedido
-          </motion.button>
-          <motion.button
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            onClick={fetchPedidos}
-            style={{
-              background: 'rgba(255,92,25,0.15)', border: '1px solid rgba(255,92,25,0.3)',
-              color: '#ff5c19', padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer',
-          }}
-        >
-          ↻ Actualizar
-        </motion.button>
+    <div className="admin-orders">
+      <div className="admin-page-header">
+        <div>
+          <h1>Pedidos</h1>
+          <p>{pedidos.length} pedidos totales</p>
+        </div>
+        <button className="admin-btn secondary" onClick={fetchPedidos} type="button">
+          {loading ? 'Actualizando...' : 'Actualizar'}
+        </button>
+      </div>
+
+      <div className="admin-filters">
+        <div className="admin-search">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
+          <input
+            value={busqueda}
+            onChange={event => setBusqueda(event.target.value)}
+            placeholder="Buscar pedido, cliente o teléfono..."
+          />
         </div>
       </div>
 
-      {/* Search */}
-      <input
-        value={busqueda}
-        onChange={e => setBusqueda(e.target.value)}
-        placeholder="Buscar por nombre, teléfono o #pedido..."
-        style={{
-          width: '100%', padding: '10px 14px', borderRadius: 10, marginBottom: 16,
-          background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
-          color: '#fff', fontSize: 13, outline: 'none', boxSizing: 'border-box',
-        }}
-      />
-
-      {/* Estado filters */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
-        {ESTADOS.map(e => {
-          const meta = e !== 'Todos' ? ESTADO_META[e] : null;
-          const isActive = filtroEstado === e;
+      <div className="order-status-bar">
+        {FILTER_OPTIONS.map(status => {
+          const active = filtroEstado === status;
+          const meta = status === 'Todos' ? null : STATUS_META[status];
           return (
-            <motion.button
-              key={e}
-              whileHover={{ scale: 1.03 }}
-              whileTap={{ scale: 0.97 }}
-              onClick={() => setFiltroEstado(e)}
-              style={{
-                padding: '6px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer',
-                background: isActive ? (meta?.bg ?? 'rgba(255,92,25,0.15)') : 'rgba(255,255,255,0.04)',
-                border: `1px solid ${isActive ? (meta?.color ?? '#ff5c19') + '60' : 'rgba(255,255,255,0.08)'}`,
-                color: isActive ? (meta?.color ?? '#ff5c19') : '#888',
-                display: 'flex', alignItems: 'center', gap: 6,
-              }}
+            <button
+              key={status}
+              className={`osb-btn ${active ? 'active' : ''}`}
+              onClick={() => setFiltroEstado(status)}
+              style={active && meta ? { borderColor: meta.color } : {}}
+              type="button"
             >
-              {e === 'Todos' ? 'Todos' : (meta?.label ?? e)}
-              <span style={{
-                background: isActive ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.08)',
-                borderRadius: 6, padding: '1px 5px', fontSize: 10,
-              }}>
-                {conteos[e] ?? 0}
-              </span>
-            </motion.button>
+              {meta && <span className="osb-dot" style={{ background: meta.color }} />}
+              {status === 'Todos' ? 'Todos' : meta?.label}
+              <span className="osb-count">{counts[status] ?? 0}</span>
+            </button>
           );
         })}
       </div>
 
-      {/* Orders list */}
       {loading && pedidos.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: 60, color: '#666' }}>
-          <motion.div
-            animate={{ rotate: 360 }}
-            transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-            style={{ width: 32, height: 32, border: '3px solid #ff5c19', borderTopColor: 'transparent', borderRadius: '50%', margin: '0 auto 12px' }}
-          />
-          Cargando pedidos...
+        <div className="empty-state">
+          <h4>Cargando pedidos</h4>
+          <p>Consultando las órdenes recientes.</p>
         </div>
       ) : pedidosFiltrados.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: 60, color: '#666' }}>
-          <div style={{ fontSize: 40, marginBottom: 12 }}>📋</div>
-          <div style={{ fontSize: 14 }}>No hay pedidos {filtroEstado !== 'Todos' ? `con estado "${ESTADO_META[filtroEstado]?.label}"` : ''}</div>
+        <div className="empty-state">
+          <h4>Aún no hay pedidos</h4>
+          <p>{filtroEstado === 'Todos' ? 'Los pedidos nuevos aparecerán aquí.' : `No hay pedidos en estado ${statusMeta(filtroEstado).label}.`}</p>
         </div>
       ) : (
-        <AnimatePresence>
+        <div className="orders-list">
           {pedidosFiltrados.map(pedido => (
             <PedidoCard
               key={pedido.id}
               pedido={pedido}
+              expanded={expandedId === pedido.id}
+              updating={updatingId === pedido.id}
+              onToggle={() => setExpandedId(current => current === pedido.id ? null : pedido.id)}
               onEstadoChange={handleEstadoChange}
-              onDelete={handleDelete}
+              onDriverLink={handleDriverLink}
             />
           ))}
-        </AnimatePresence>
+        </div>
       )}
     </div>
   );
