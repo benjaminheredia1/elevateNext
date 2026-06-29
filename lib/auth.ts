@@ -34,8 +34,11 @@ export async function register(
   return { access_token, user: { ...safeUser, token: access_token } };
 }
 
-export async function login(email: string, password: string) {
-  const user = await prisma.usuario.findFirst({ where: { email } });
+export async function login(identifier: string, password: string) {
+  const id = identifier.trim();
+  const user = await prisma.usuario.findFirst({
+    where: { OR: [{ email: id }, { username: id }] },
+  });
   if (!user) throw new Error('Usuario no encontrado');
   if (!user.activo) throw new Error('Usuario inactivo');
   const password_valid = await bcrypt.compare(password, user.password);

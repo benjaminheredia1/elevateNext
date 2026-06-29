@@ -6,6 +6,7 @@ import { handleApiError } from '@/lib/server/errors';
 import { ProductoConFichaSchema } from '@/lib/server/dto/inventario.dto';
 import { costoFichaTecnica } from '@/lib/server/inventario/inventario.service';
 import { logAudit } from '@/lib/server/audit/audit.service';
+import { assertPublicable } from '@/lib/server/productos/publicacion';
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -46,6 +47,18 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
     const { id } = await params;
     const productoId = Number(id);
     const parsed = ProductoConFichaSchema.parse(await req.json());
+    if (parsed.estado_publicacion === 'PUBLICADO') {
+      assertPublicable({
+        nombre: parsed.nombre,
+        descripcion: parsed.descripcion,
+        precio: parsed.precio,
+        imagen_url: parsed.imagen_url ?? null,
+        tipo: parsed.tipo,
+        insumo_reventa_id: parsed.insumo_reventa_id ?? null,
+        marcas: parsed.marcas,
+        recetaProducto_id: parsed.receta,
+      });
+    }
 
     await prisma.$transaction(async (tx) => {
       await tx.producto.update({
@@ -116,6 +129,19 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
     const { id } = await params;
     const productoId = Number(id);
     const { estado_publicacion } = PatchSchema.parse(await req.json());
+
+    const actual = await prisma.producto.findUnique({
+      where: { id: productoId },
+      include: {
+        marcas: true,
+        recetaProducto_id: true,
+      },
+    });
+    if (!actual) return NextResponse.json({ error: 'Producto no encontrado' }, { status: 404 });
+
+    if (estado_publicacion === 'PUBLICADO') {
+      assertPublicable(actual);
+    }
 
     const prod = await prisma.producto.update({
       where: { id: productoId },

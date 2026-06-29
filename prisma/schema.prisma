@@ -62,6 +62,11 @@ enum CanalVenta {
   SALON
 }
 
+enum TipoEntrega {
+  RECOJO
+  DELIVERY
+}
+
 enum Frecuencia {
   MENSUAL
   QUINCENAL
@@ -127,6 +132,10 @@ model Transaccion {
   cliente_direccion String?
   cliente_lat       Float?
   cliente_lng       Float?
+  cliente_nit       String?
+  cliente_email     String?
+  tipo_entrega      TipoEntrega?
+  codigo_descuento  String?
   metodo_pago       TipoCuenta?
   total             Float
   estado            EstadoTransaccion @default(PENDIENTE)

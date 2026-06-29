@@ -5,6 +5,7 @@ import { handleApiError } from '@/lib/server/errors';
 import { ProductoConFichaSchema } from '@/lib/server/dto/inventario.dto';
 import { costoFichaTecnica } from '@/lib/server/inventario/inventario.service';
 import { logAudit } from '@/lib/server/audit/audit.service';
+import { assertPublicable } from '@/lib/server/productos/publicacion';
 
 // ─── GET: listar productos con estado, costo y food cost ────────────
 export async function GET(req: NextRequest) {
@@ -44,6 +45,18 @@ export async function POST(req: NextRequest) {
 
     const body   = await req.json();
     const parsed = ProductoConFichaSchema.parse(body);
+    if (parsed.estado_publicacion === 'PUBLICADO') {
+      assertPublicable({
+        nombre: parsed.nombre,
+        descripcion: parsed.descripcion,
+        precio: parsed.precio,
+        imagen_url: parsed.imagen_url ?? null,
+        tipo: parsed.tipo,
+        insumo_reventa_id: parsed.insumo_reventa_id ?? null,
+        marcas: parsed.marcas,
+        recetaProducto_id: parsed.receta,
+      });
+    }
 
     const producto = await prisma.$transaction(async (tx) => {
       // 1. Crear el producto base

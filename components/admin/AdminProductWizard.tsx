@@ -42,6 +42,8 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, onClo
   const [marcas, setMarcas] = useState<MarcaOpt[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState('');
 
   useEffect(() => {
     apiClient.get('/api/insumo').then(r => setInsumos(Array.isArray(r.data) ? r.data : r.data?.data ?? [])).catch(() => setInsumos([]));
@@ -51,6 +53,19 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, onClo
 
   const set = (patch: Partial<WizardInitial>) => setP(prev => ({ ...prev, ...patch }));
   const insumoOf = (id: number) => insumos.find(i => i.id === id);
+
+  const uploadImagen = async (file: File) => {
+    setUploading(true); setUploadError('');
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const r = await apiClient.post('/api/admin/upload', fd, { headers: { 'Content-Type': undefined } });
+      set({ imagen_url: r.data.url as string });
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { error?: string } } };
+      setUploadError(err?.response?.data?.error ?? 'No se pudo subir la imagen');
+    } finally { setUploading(false); }
+  };
 
   /* ---- métricas en vivo ---- */
   const cost = useMemo(() => {
@@ -66,10 +81,15 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, onClo
 
   /* ---- gate de publicación ---- */
   const gate: string[] = [];
+  if (!p.nombre.trim()) gate.push('Define el nombre del producto.');
+  if (!p.descripcion.trim()) gate.push('Agrega una descripción.');
   if (!(p.precio > 0)) gate.push('Define un precio de venta.');
-  if (!p.imagen_url) gate.push('Agrega una foto (URL).');
-  if (p.marcas.length === 0) gate.push('Asigna al menos una marca.');
-  if (p.tipo === 'ELABORADO' && p.receta.length === 0) gate.push('Falta la ficha técnica (receta).');
+  if (!p.imagen_url?.trim()) gate.push('Agrega una foto del producto.');
+  if (p.marcas.length === 0) gate.push('Asigna al menos un menú.');
+  if (
+    p.tipo === 'ELABORADO'
+    && (p.receta.length === 0 || p.receta.some(item => !item.insumo_id || !(item.cantidad_utilizada > 0)))
+  ) gate.push('Falta la ficha técnica con insumos y cantidades válidas.');
   if (p.tipo === 'REVENTA' && !p.insumo_reventa_id) gate.push('Vincula el insumo de reventa.');
   const canPublish = gate.length === 0;
 
@@ -81,6 +101,10 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, onClo
   const removeRecipe = (idx: number) => set({ receta: p.receta.filter((_, i) => i !== idx) });
 
   const save = async (publish: boolean) => {
+    if (publish && !canPublish) {
+      setError(`No se puede publicar: ${gate.join(' ')}`);
+      return;
+    }
     setSaving(true); setError('');
     const estado: WizardInitial['estado_publicacion'] = publish ? 'PUBLICADO' : (p.estado_publicacion === 'ARCHIVADO' ? 'ARCHIVADO' : 'BORRADOR');
     const body: Record<string, unknown> = {
@@ -182,9 +206,26 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, onClo
               <div className="form-group"><label>Calorías</label><input type="number" value={p.calorias ?? ''} onChange={e => set({ calorias: e.target.value ? +e.target.value : null })} /></div>
               <div className="form-group"><label>Proteína</label><input value={p.proteina ?? ''} onChange={e => set({ proteina: e.target.value })} placeholder="30g" /></div>
               <div className="form-group full">
-                <label>Foto (URL)</label>
-                <input value={p.imagen_url ?? ''} onChange={e => set({ imagen_url: e.target.value })} placeholder="https://..." />
-                <span className="form-hint">Pega la URL de la imagen que se verá en el menú del cliente.</span>
+                <label>Foto del producto</label>
+                <label
+                  className="admin-btn secondary"
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: uploading ? 'wait' : 'pointer', width: 'fit-content' }}
+                >
+                  {uploading ? 'Subiendo…' : '📁 Subir desde mi equipo'}
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/gif,image/avif"
+                    style={{ display: 'none' }}
+                    disabled={uploading}
+                    onChange={e => { const f = e.target.files?.[0]; if (f) uploadImagen(f); e.target.value = ''; }}
+                  />
+                </label>
+                <span className="form-hint">JPG, PNG, WEBP, GIF o AVIF · máximo 5 MB. También puedes pegar una URL abajo.</span>
+                {uploadError && <span className="form-hint" style={{ color: 'var(--orange)' }}>{uploadError}</span>}
+              </div>
+              <div className="form-group full">
+                <label>O pega una URL de imagen</label>
+                <input value={p.imagen_url ?? ''} onChange={e => set({ imagen_url: e.target.value })} placeholder="https://... o /uploads/..." />
               </div>
               {p.imagen_url && <div className="form-group full"><img src={p.imagen_url} className="photo-preview" alt="preview" /></div>}
             </div>
@@ -258,7 +299,7 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, onClo
           ) : (
             <>
               <button className="admin-btn secondary" onClick={() => save(false)} disabled={saving}>{saving ? 'Guardando…' : 'Guardar borrador'}</button>
-              <button className="admin-btn primary" onClick={() => save(true)} disabled={!canPublish || saving} title={canPublish ? '' : 'Completa los requisitos'}>Publicar al menú</button>
+              <button className="admin-btn primary" onClick={() => save(true)} disabled={saving} title={canPublish ? '' : 'Completa los requisitos'}>Publicar al menú</button>
             </>
           )}
         </div>
