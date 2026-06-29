@@ -23,6 +23,15 @@ function AlertasConfig() {
     } finally { setSaving(false); }
   };
 
+  const handleManualAlert = async () => {
+    try {
+      const res = await apiClient.post('/api/admin/alertas/enviar');
+      alert(res.data.message || 'Comando ejecutado');
+    } catch (e: any) {
+      alert(e.response?.data?.error || 'Error al enviar alerta');
+    }
+  };
+
   if (!cfg) return <div style={{ color: '#666', fontSize: 13 }}>Cargando…</div>;
 
   return (
@@ -67,10 +76,16 @@ function AlertasConfig() {
 
       {ok && <p style={{ color: '#10b981', fontSize: 13 }}>{ok}</p>}
 
-      <button onClick={save} disabled={saving}
-        style={{ padding: '10px 20px', borderRadius: 10, cursor: saving ? 'not-allowed' : 'pointer', background: saving ? '#333' : 'linear-gradient(135deg,#ff5c19,#ff8c00)', border: 'none', color: '#fff', fontWeight: 700, alignSelf: 'flex-start' }}>
-        {saving ? 'Guardando…' : 'Guardar alertas'}
-      </button>
+      <div style={{ display: 'flex', gap: 12 }}>
+        <button onClick={save} disabled={saving}
+          style={{ padding: '10px 20px', borderRadius: 10, cursor: saving ? 'not-allowed' : 'pointer', background: saving ? '#333' : 'linear-gradient(135deg,#ff5c19,#ff8c00)', border: 'none', color: '#fff', fontWeight: 700, alignSelf: 'flex-start' }}>
+          {saving ? 'Guardando…' : 'Guardar alertas'}
+        </button>
+        <button onClick={handleManualAlert}
+          style={{ padding: '10px 20px', borderRadius: 10, cursor: 'pointer', background: '#374151', border: '1px solid #4b5563', color: '#fff', fontWeight: 700, alignSelf: 'flex-start' }}>
+          Enviar alerta manual
+        </button>
+      </div>
     </div>
   );
 }
