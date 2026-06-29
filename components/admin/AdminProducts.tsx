@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import apiClient from '@/hooks/api';
-import { categories } from './adminData';
 import {
   foodCostColor, classifyMenu, menuClassMeta, buildablePortions,
 } from './inventoryData';
@@ -50,6 +49,8 @@ export default function AdminProducts() {
   const [filterPub, setFilterPub] = useState<string>('todos');
   const [wizard, setWizard] = useState<WizardInitial | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
+  const [dbCategorias, setDbCategorias] = useState<string[]>(['Todos']);
+  const [actionError, setActionError] = useState('');
 
   const load = () => {
     setLoading(true);
@@ -58,7 +59,16 @@ export default function AdminProducts() {
       .catch(() => setProductos([]))
       .finally(() => setLoading(false));
   };
-  useEffect(load, []);
+
+  useEffect(() => {
+    load();
+    apiClient.get('/api/categoria')
+      .then(r => {
+        const cats: { nombre: string }[] = Array.isArray(r.data) ? r.data : r.data?.data ?? [];
+        setDbCategorias(['Todos', ...cats.map(c => c.nombre)]);
+      })
+      .catch(() => setDbCategorias(['Todos']));
+  }, []);
 
   const publicados = productos.filter(p => p.estado_publicacion === 'PUBLICADO').length;
 
@@ -78,18 +88,28 @@ export default function AdminProducts() {
   });
 
   const setEstado = async (id: number, estado: Estado) => {
+    setActionError('');
     try {
       await apiClient.patch(`/api/admin/productos/${id}`, { estado_publicacion: estado });
       load();
-    } catch { /* noop */ }
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { error?: string } } };
+      setActionError(err?.response?.data?.error ?? 'No se pudo cambiar el estado. Verifica que tenga receta y foto.');
+      setTimeout(() => setActionError(''), 4000);
+    }
   };
 
   const remove = async (id: number) => {
+    setActionError('');
     try {
       await apiClient.delete(`/api/admin/productos/${id}`);
-    } finally {
       setDeleteConfirm(null);
       load();
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { error?: string } } };
+      setDeleteConfirm(null);
+      setActionError(err?.response?.data?.error ?? 'No se pudo eliminar. El producto puede tener pedidos asociados.');
+      setTimeout(() => setActionError(''), 5000);
     }
   };
 
@@ -137,10 +157,15 @@ export default function AdminProducts() {
         </div>
       </div>
       <div className="admin-cat-filters" style={{ marginBottom: 20 }}>
-        {categories.map(cat => (
+        {dbCategorias.map(cat => (
           <button key={cat} className={`cat-filter-btn ${filterCat === cat ? 'active' : ''}`} onClick={() => setFilterCat(cat)}>{cat}</button>
         ))}
       </div>
+      {actionError && (
+        <div style={{ background: 'rgba(229,72,77,0.12)', border: '1px solid rgba(229,72,77,0.3)', borderRadius: 8, padding: '10px 16px', marginBottom: 14, color: 'var(--danger)', fontSize: 13 }}>
+          ⚠️ {actionError}
+        </div>
+      )}
 
       <div className="admin-table-wrap">
         <table className="admin-table">

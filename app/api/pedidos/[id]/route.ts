@@ -28,12 +28,19 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     const { id } = await params;
     const body   = await req.json();
 
+    // Whitelist de campos permitidos para evitar mass assignment
+    const CAMPOS_PERMITIDOS = ['estado', 'driver_nombre', 'driver_lat', 'driver_lng', 'metodo_pago', 'es_cortesia', 'cajero_id', 'turno_id'] as const;
+
     const pedido = await prisma.$transaction(async (tx) => {
-      let updateData = { ...body };
+      const updateData: Record<string, unknown> = {};
+
+      // Solo copiar campos permitidos
+      for (const campo of CAMPOS_PERMITIDOS) {
+        if (body[campo] !== undefined) updateData[campo] = body[campo];
+      }
 
       // Generar driver_link_id si se solicita
       if (body.generar_driver_link) {
-        delete updateData.generar_driver_link;
         const existing = await tx.transaccion.findUnique({ where: { id: parseInt(id) } });
         if (!existing?.driver_link_id) {
           updateData.driver_link_id = crypto.randomUUID().split('-')[0];

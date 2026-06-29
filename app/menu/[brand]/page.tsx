@@ -19,51 +19,59 @@ export default function MenuPage() {
   const [dbProducts, setDbProducts] = useState<any[]>([]);
 
   useEffect(() => {
-    fetch('/api/productos')
+    const brandKey = (brand === 'fitbull' || brand === 'elevate' ? brand : null);
+    if (!brandKey) return;
+
+    setDbProducts([]);
+    setActiveCat('Todos');
+
+    fetch(`/api/productos?marca=${brandKey}`)
       .then(r => r.json())
       .then(res => {
-        if (res.data) {
-          const mapped = res.data.map((p: any) => {
-            const catName = p.categoria_id?.[0]?.categoria?.nombre || 'General';
-            let iconName = 'bowl';
-            const catLower = catName.toLowerCase();
-            if (catLower.includes('wrap')) iconName = 'wrap';
-            else if (catLower.includes('bebida') || catLower.includes('batido')) iconName = 'cup';
-            else if (catLower.includes('ensalada')) iconName = 'salad';
-            return {
-              id: p.id,
-              name: p.nombre,
-              description: p.descripcion,
-              price: p.precio,
-              category: catName,
-              tag: null,
-              icon: Icons[iconName as keyof typeof Icons] || Icons.bowl,
-              calories: 400,
-              protein: '30g',
-              imageUrl: p.imagen_url
-            }
-          });
-          setDbProducts(mapped);
-        }
+        const items: any[] = res.data ?? [];
+        const mapped = items.map((p: any) => {
+          const catName = p.categoria_id?.[0]?.categoria?.nombre || 'General';
+          let iconName = 'bowl';
+          const catLower = catName.toLowerCase();
+          if (catLower.includes('wrap')) iconName = 'wrap';
+          else if (catLower.includes('bebida') || catLower.includes('batido')) iconName = 'cup';
+          else if (catLower.includes('ensalada')) iconName = 'salad';
+          else if (catLower.includes('batido') || catLower.includes('shake') || catLower.includes('smoothie')) iconName = 'cup';
+          else if (catLower.includes('snack')) iconName = 'nut';
+          return {
+            id: p.id,
+            name: p.nombre,
+            description: p.descripcion,
+            price: p.precio,
+            category: catName,
+            tag: null,
+            icon: Icons[iconName as keyof typeof Icons] || Icons.bowl,
+            calories: p.calorias ?? null,
+            protein: p.proteina ?? null,
+            imageUrl: p.imagen_url,
+          };
+        });
+        setDbProducts(mapped);
       })
       .catch(console.error);
-  }, []);
+  }, [brand]);
 
   const brandKey = (brand === 'fitbull' || brand === 'elevate' ? brand : null) as BrandKey | null;
   const data = brandKey ? BRANDS[brandKey] : null;
 
+  const isUsingStaticData = dbProducts.length === 0;
+
   const categories = useMemo(() => {
-    if (dbProducts.length === 0) return data?.categories || [];
+    if (isUsingStaticData) return data?.categories || ['Todos'];
     const cats = Array.from(new Set(dbProducts.map(p => p.category)));
     return ['Todos', ...cats];
-  }, [dbProducts, data]);
+  }, [dbProducts, data, isUsingStaticData]);
 
   const filtered = useMemo(() => {
-    if (!data && dbProducts.length === 0) return [];
-    const dataSource = dbProducts.length > 0 ? dbProducts : (data?.products || []);
+    const dataSource = isUsingStaticData ? (data?.products || []) : dbProducts;
     if (activeCat === 'Todos') return dataSource;
-    return dataSource.filter(p => p.category === activeCat);
-  }, [data, dbProducts, activeCat]);
+    return dataSource.filter((p: any) => p.category === activeCat);
+  }, [data, dbProducts, activeCat, isUsingStaticData]);
 
   if (!data) {
     return (
@@ -140,6 +148,30 @@ export default function MenuPage() {
       {/* ===== PRODUCTS GRID ===== */}
       <section className="menu-products">
         <div className="container">
+          {isUsingStaticData && (
+            <motion.div
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              style={{
+                background: 'rgba(255,92,25,0.08)',
+                border: '1px solid rgba(255,92,25,0.2)',
+                borderRadius: 12,
+                padding: '12px 18px',
+                marginBottom: 24,
+                fontSize: 13,
+                color: '#aaa',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+              }}
+            >
+              <span style={{ fontSize: 18 }}>✨</span>
+              <span>
+                Próximamente en este menú. Estamos preparando productos frescos para ti —
+                <strong style={{ color: '#ff5c19' }}> vuelve pronto</strong>.
+              </span>
+            </motion.div>
+          )}
           <motion.div className="products-grid" key={activeCat} initial="hidden" animate="visible" variants={staggerContainer}>
             {filtered.map(product => (
               <TiltCard key={product.id} className="product-card" variants={staggerItem}>
@@ -164,10 +196,12 @@ export default function MenuPage() {
                   <div className="product-category">{product.category}</div>
                   <h3>{product.name}</h3>
                   <p>{product.description}</p>
-                  <div className="product-macros">
-                    <span className="macro-badge">{product.calories} kcal</span>
-                    <span className="macro-badge protein">{product.protein} proteína</span>
-                  </div>
+                  {(product.calories || product.protein) && (
+                    <div className="product-macros">
+                      {product.calories && <span className="macro-badge">{product.calories} kcal</span>}
+                      {product.protein && <span className="macro-badge protein">{product.protein} proteína</span>}
+                    </div>
+                  )}
                   <div className="product-footer">
                     <div className="product-price"><span className="currency">Bs. </span>{product.price}</div>
                     <motion.button

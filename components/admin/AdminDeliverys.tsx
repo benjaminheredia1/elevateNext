@@ -25,7 +25,13 @@ interface DriverView {
   lng: number | null;
 }
 
-const STORE_CENTER: [number, number] = [-17.7710, -63.1900];
+interface SucursalConfig {
+  sucursal_lat: number;
+  sucursal_lng: number;
+  sucursal_nombre: string;
+}
+
+const DEFAULT_CENTER: [number, number] = [-17.7710, -63.1900];
 
 function initials(name: string) {
   const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -37,10 +43,12 @@ export default function AdminDeliverys() {
   const [drivers, setDrivers] = useState<DriverView[]>([]);
   const [loading, setLoading] = useState(true);
   const [mapReady, setMapReady] = useState(false);
+  const [storeConfig, setStoreConfig] = useState<SucursalConfig | null>(null);
   const mapRef = useRef<HTMLDivElement>(null);
   const initStartedRef = useRef(false);
   const leafletMapRef = useRef<import('leaflet').Map | null>(null);
   const markersRef = useRef<Record<number, import('leaflet').Marker>>({});
+  const storeMarkerRef = useRef<import('leaflet').Marker | null>(null);
 
   const fetchDrivers = useCallback(async () => {
     try {
@@ -74,6 +82,15 @@ export default function AdminDeliverys() {
     return () => window.clearInterval(interval);
   }, [fetchDrivers]);
 
+  // Load store config once
+  useEffect(() => {
+    fetch('/api/configuracion')
+      .then(r => r.json())
+      .then(res => { if (res.data) setStoreConfig(res.data); })
+      .catch(() => {});
+  }, []);
+
+  // Initialize map (with default center — store marker added in separate effect)
   useEffect(() => {
     if (!mapRef.current || leafletMapRef.current || initStartedRef.current) return;
     initStartedRef.current = true;
@@ -89,7 +106,7 @@ export default function AdminDeliverys() {
       }
 
       const map = L.map(mapRef.current, {
-        center: STORE_CENTER,
+        center: DEFAULT_CENTER,
         zoom: 14,
         zoomControl: true,
       });
@@ -118,11 +135,43 @@ export default function AdminDeliverys() {
         leafletMapRef.current.remove();
         leafletMapRef.current = null;
         markersRef.current = {};
+        storeMarkerRef.current = null;
       }
       initStartedRef.current = false;
       setMapReady(false);
     };
   }, []);
+
+  // Add/update restaurant marker when map is ready and config is available
+  useEffect(() => {
+    if (!mapReady || !leafletMapRef.current || !storeConfig) return;
+
+    const addStoreMarker = async () => {
+      const L = await import('leaflet');
+      const map = leafletMapRef.current;
+      if (!map) return;
+
+      const pos: [number, number] = [storeConfig.sucursal_lat, storeConfig.sucursal_lng];
+
+      const storeIcon = L.divIcon({
+        className: '',
+        html: `<div style="background:#ff5c19;width:36px;height:36px;border-radius:50%;border:3px solid #fff;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,0.35);font-size:18px;">🏢</div>`,
+        iconSize: [36, 36],
+        iconAnchor: [18, 18],
+      });
+
+      if (storeMarkerRef.current) {
+        storeMarkerRef.current.setLatLng(pos);
+      } else {
+        const marker = L.marker(pos, { icon: storeIcon, zIndexOffset: -100 }).addTo(map);
+        marker.bindPopup(`<b>${storeConfig.sucursal_nombre}</b><br/>Restaurante`);
+        storeMarkerRef.current = marker;
+        map.setView(pos, map.getZoom());
+      }
+    };
+
+    addStoreMarker();
+  }, [mapReady, storeConfig]);
 
   useEffect(() => {
     if (!mapReady || !leafletMapRef.current) return;
@@ -175,18 +224,23 @@ export default function AdminDeliverys() {
         }
       }
 
+      const storePos: [number, number] = storeConfig
+        ? [storeConfig.sucursal_lat, storeConfig.sucursal_lng]
+        : DEFAULT_CENTER;
+
       if (located.length > 0) {
-        const bounds = L.latLngBounds(located.map(driver => [driver.lat!, driver.lng!] as [number, number]));
+        const allPoints: [number, number][] = [...located.map(d => [d.lat!, d.lng!] as [number, number]), storePos];
+        const bounds = L.latLngBounds(allPoints);
         map.fitBounds(bounds.pad(0.18), { maxZoom: 15, animate: true });
       } else {
-        map.setView(STORE_CENTER, 14);
+        map.setView(storePos, 14);
       }
 
       window.requestAnimationFrame(() => map.invalidateSize());
     };
 
     syncMarkers();
-  }, [drivers, mapReady]);
+  }, [drivers, mapReady, storeConfig]);
 
   const locatedCount = drivers.filter(driver => typeof driver.lat === 'number' && typeof driver.lng === 'number').length;
 

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
+import { descontarStockPorTransaccion } from '@/lib/server/inventario/descuento-stock.service';
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   try {
@@ -30,13 +31,23 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
     const body = await req.json();
     const { driver_nombre, estado } = body;
 
-    const data: any = {};
+    const ESTADOS_VALIDOS = new Set(['EN_CAMINO', 'ENTREGADO', 'CANCELADO']);
+    const data: Record<string, unknown> = {};
     if (driver_nombre) data.driver_nombre = driver_nombre;
-    if (estado) data.estado = estado; // Allows driver to set 'ENTREGADO'
+    if (estado && ESTADOS_VALIDOS.has(estado)) data.estado = estado;
 
-    const pedido = await prisma.transaccion.update({
-      where: { driver_link_id: token },
-      data,
+    const pedido = await prisma.$transaction(async (tx) => {
+      const actualizado = await tx.transaccion.update({
+        where: { driver_link_id: token },
+        data,
+      });
+
+      // Descuento de stock al entregar (anti-doble-descuento incluido en el servicio)
+      if (estado === 'ENTREGADO') {
+        await descontarStockPorTransaccion(tx, actualizado.id);
+      }
+
+      return actualizado;
     });
 
     return NextResponse.json({ data: pedido, message: 'Pedido actualizado' });

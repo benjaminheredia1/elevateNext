@@ -24,7 +24,7 @@ export interface WizardInitial {
 
 interface InsumoOpt { id: number; nombre: string; unidad_medida: string; costo_promedio: number; stock_actual: number; }
 interface CategoriaOpt { id: number; nombre: string; }
-interface MarcaOpt { id: number; nombre: string; }
+interface MarcaOpt { id: number; nombre: string; key?: string; color?: string; }
 
 const STEPS = ['Básicos', 'Precio & Foto', 'Receta', 'Revisar'];
 
@@ -135,13 +135,34 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, onClo
                 </div>
               </div>
               <div className="form-group full">
-                <label>Marca(s)</label>
-                <div className="menu-check">
-                  {marcas.map(m => (
-                    <label key={m.id}><input type="checkbox" checked={p.marcas.includes(m.id)} onChange={() => toggleMarca(m.id)} />{m.nombre}</label>
-                  ))}
-                  {marcas.length === 0 && <span className="form-hint">No hay marcas registradas.</span>}
+                <label>¿En qué menú aparecerá? <span style={{ color: 'var(--orange)' }}>*</span></label>
+                <div className="type-choice">
+                  {marcas.map(m => {
+                    const isElevate = m.nombre.toLowerCase().includes('elevate') || m.key?.toLowerCase() === 'elevate';
+                    return (
+                      <div
+                        key={m.id}
+                        className={`type-card ${p.marcas.includes(m.id) ? 'active' : ''}`}
+                        onClick={() => toggleMarca(m.id)}
+                        style={{ position: 'relative' }}
+                      >
+                        {p.marcas.includes(m.id) && (
+                          <span style={{ position: 'absolute', top: 8, right: 10, fontSize: 16 }}>✓</span>
+                        )}
+                        <h5>{isElevate ? '🥗 Gathering Elevate' : '🏋️ Elevate × Fitbull'}</h5>
+                        <p style={{ fontSize: '0.78rem' }}>
+                          {isElevate
+                            ? 'Bowls, ensaladas, wraps y bebidas saludables del menú principal'
+                            : 'Nutrición deportiva de alto rendimiento para atletas y gym'}
+                        </p>
+                      </div>
+                    );
+                  })}
+                  {marcas.length === 0 && (
+                    <span className="form-hint">No hay marcas. Ejecuta <code>npx prisma db seed</code> para crearlas.</span>
+                  )}
                 </div>
+                <span className="form-hint">Puedes asignar el producto a uno o ambos menús a la vez.</span>
               </div>
               <div className="form-group">
                 <label>Categoría</label>
