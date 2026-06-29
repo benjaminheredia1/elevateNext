@@ -20,11 +20,15 @@ async function main() {
   }
 
   // 2. Usuarios base con roles (idempotente vía upsert)
+  // NOTA: la contraseña solo se aplica en 'create', nunca en 'update',
+  // para que un cambio manual de contraseña no se revierta en cada deploy.
   const usuarios = [
     { email: 'benjaherediaruiz@gmail.com', username: 'admin', nombre: 'Admin',
       rol: Rol.DUENO, password: 'benja122', sucursal_id: null as number | null },
     { email: 'cajero@elevate.com', username: 'cajero', nombre: 'Cajero',
       rol: Rol.CAJERO, password: 'cajero123', sucursal_id: sucursal.id },
+    { email: 'saul@gmail.com', username: 'Saul', nombre: 'Saul',
+      rol: Rol.DUENO, password: 'terere25', sucursal_id: null as number | null },
   ]
 
   for (const u of usuarios) {
@@ -33,7 +37,6 @@ async function main() {
       where: { email: u.email },
       update: {
         username: u.username,
-        password: hash,
         rol: u.rol,
         activo: true,
         sucursal_id: u.sucursal_id,
