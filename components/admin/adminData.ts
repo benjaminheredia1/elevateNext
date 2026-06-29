@@ -4,6 +4,15 @@ export type ProductStatus = 'active' | 'inactive'
 export type OrderStatus = 'new' | 'preparing' | 'ontheway' | 'delivered' | 'cancelled'
 export type DriverStatus = 'available' | 'onroute' | 'offline'
 
+/* ===== Fase 1 — paridad con el wizard/tabla del zip ===== */
+export type PublishStatus = 'publicado' | 'borrador' | 'archivado'
+export type ProductType = 'elaborado' | 'reventa'
+/** Un ítem de receta = un insumo con su cantidad utilizada por porción. */
+export interface RecipeItem {
+  insumo_id: number
+  cantidad_utilizada: number
+}
+
 export interface AdminProduct {
   id: number
   name: string
@@ -16,6 +25,17 @@ export interface AdminProduct {
   calories: number
   protein: string
   sales: number
+  /* — campos de paridad (opcionales para no romper usos existentes) — */
+  type?: ProductType
+  publishStatus?: PublishStatus
+  /** Marcas reales (Marca/ProductoMarca) = "menús" del zip. */
+  marcaIds?: number[]
+  photoUrl?: string
+  recipe?: RecipeItem[]
+  resaleIngredientId?: number | null
+  /** costo calculado server-side (food cost) */
+  costoCalculado?: number
+  foodCostPct?: number
 }
 
 export interface OrderItem {

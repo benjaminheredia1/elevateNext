@@ -15,14 +15,14 @@ const ROL_OPTS: { label: string; value: RolFiltro }[] = [
   { label: 'Cliente', value: 'CLIENTE' },
 ];
 
-const ACCION_COLORS: Record<string, string> = {
-  CREO: '#22c55e',
-  MODIFICO: '#3b82f6',
-  ELIMINO: '#ef4444',
-  LOGIN: '#a855f7',
-  LOGOUT: '#888',
-  APERTURA_CAJA: '#f59e0b',
-  CIERRE_CAJA: '#f59e0b',
+const ACCION_CLASS: Record<string, string> = {
+  CREO: 'fresh',
+  MODIFICO: 'info',
+  ELIMINO: 'danger',
+  LOGIN: 'orange',
+  LOGOUT: '',
+  APERTURA_CAJA: 'warn',
+  CIERRE_CAJA: 'warn',
 };
 
 function fmt(d: string | Date) {
@@ -46,18 +46,18 @@ export default function AuditoriaPage() {
         </div>
       </div>
 
-      <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+      <div className="admin-toolbar">
         <input
           placeholder="Buscar detalle, entidad o usuario…"
           value={q}
           onChange={e => { setQ(e.target.value); setPage(1); }}
-          style={{ flex: 1, minWidth: 220, maxWidth: 360, padding: '8px 12px', borderRadius: 8, background: 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.1)', color: '#fff', fontSize: 13 }}
+          className="admin-search-field"
         />
-        <div style={{ display: 'flex', gap: 6 }}>
+        <div className="finance-filter-row" style={{ marginBottom: 0 }}>
           {ROL_OPTS.map(o => (
             <button
               key={o.value}
-              className={`admin-btn ${rol === o.value ? 'primary' : 'ghost'}`}
+              className={`finance-chip ${rol === o.value ? 'active' : ''}`}
               onClick={() => { setRol(o.value); setPage(1); }}
             >
               {o.label}
@@ -77,29 +77,29 @@ export default function AuditoriaPage() {
             emptyTitle="Sin registros de auditoría"
             rowKey={(row: any) => row.id}
             columns={[
-              { key: 'fecha', header: 'Fecha', render: (row: any) => <span style={{ fontSize: 12, color: '#aaa' }}>{fmt(row.created_at)}</span> },
+              { key: 'fecha', header: 'Fecha', render: (row: any) => <span className="admin-cell-muted">{fmt(row.created_at)}</span> },
               { key: 'usuario', header: 'Usuario', render: (row: any) => (
                 <div>
-                  <div style={{ fontWeight: 600, fontSize: 13 }}>{row.usuario_nombre}</div>
-                  <div style={{ fontSize: 11, color: '#888' }}>{row.rol}</div>
+                  <div className="admin-cell-title">{row.usuario_nombre}</div>
+                  <div className="admin-cell-sub">{row.rol}</div>
                 </div>
               )},
               { key: 'accion', header: 'Acción', render: (row: any) => (
-                <span style={{ color: ACCION_COLORS[row.accion] ?? '#fff', fontWeight: 700, fontSize: 12 }}>{row.accion}</span>
+                <span className={`admin-badge-soft ${ACCION_CLASS[row.accion] ?? ''}`}>{row.accion}</span>
               )},
               { key: 'entidad', header: 'Entidad', render: (row: any) => (
-                <span style={{ fontSize: 12 }}>{row.entidad}{row.entidad_id ? ` #${row.entidad_id}` : ''}</span>
+                <span className="admin-cell-muted">{row.entidad}{row.entidad_id ? ` #${row.entidad_id}` : ''}</span>
               )},
-              { key: 'detalle', header: 'Detalle', render: (row: any) => <span style={{ fontSize: 12, color: '#ccc' }}>{row.detalle}</span> },
+              { key: 'detalle', header: 'Detalle', render: (row: any) => <span className="admin-cell-muted">{row.detalle}</span> },
               { key: 'monto', header: 'Monto', className: 'num', render: (row: any) => row.monto != null ? <MoneyText value={row.monto} /> : '—' },
             ]}
           />
 
           {/* Paginación */}
           {data && data.pages > 1 && (
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 16 }}>
+            <div className="admin-pagination">
               <button className="admin-btn ghost" disabled={page <= 1} onClick={() => setPage(p => p - 1)}>Anterior</button>
-              <span style={{ color: '#888', fontSize: 13, alignSelf: 'center' }}>Pág. {page} / {data.pages}</span>
+              <span className="admin-page-count">Pág. {page} / {data.pages}</span>
               <button className="admin-btn ghost" disabled={page >= data.pages} onClick={() => setPage(p => p + 1)}>Siguiente</button>
             </div>
           )}

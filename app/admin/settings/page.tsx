@@ -1,177 +1,316 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
-import { motion } from 'framer-motion';
+import { useEffect, useRef, useState } from 'react';
+import AdminPanel from '@/components/admin/AdminPanel';
 import apiClient from '@/hooks/api';
 
-/* ─── Sección alertas ─── */
-function AlertasConfig() {
-  const [cfg, setCfg] = useState<any>(null);
-  const [saving, setSaving] = useState(false);
-  const [ok, setOk] = useState('');
+interface BusinessConfig {
+  id?: number;
+  sucursal_lat: number;
+  sucursal_lng: number;
+  sucursal_nombre: string;
+}
+
+interface AlertConfig {
+  whatsapp_habilitado: boolean;
+  destinatarios: string[];
+  hora_silencio_desde: string;
+  hora_silencio_hasta: string;
+  intervalo_minimo_min: number;
+  plantilla_mensaje: string;
+}
+
+interface AlertLog {
+  id: number;
+  enviado_at: string;
+  canal: string;
+  insumo_ids: number[];
+  estado: string;
+  preview: string;
+}
+
+const DEFAULT_BUSINESS: BusinessConfig = {
+  sucursal_lat: -17.7710,
+  sucursal_lng: -63.1900,
+  sucursal_nombre: 'Sucursal Principal',
+};
+
+const DEFAULT_ALERTS: AlertConfig = {
+  whatsapp_habilitado: false,
+  destinatarios: [],
+  hora_silencio_desde: '22:00',
+  hora_silencio_hasta: '07:00',
+  intervalo_minimo_min: 60,
+  plantilla_mensaje: 'Elevate - Alerta de inventario: {count} insumos bajo umbral.\n{list}',
+};
+
+export default function SettingsPage() {
+  const [business, setBusiness] = useState<BusinessConfig>(DEFAULT_BUSINESS);
+  const [alerts, setAlerts] = useState<AlertConfig>(DEFAULT_ALERTS);
+  const [recipients, setRecipients] = useState('');
+  const [logs, setLogs] = useState<AlertLog[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [savingBusiness, setSavingBusiness] = useState(false);
+  const [savingAlerts, setSavingAlerts] = useState(false);
+  const [notice, setNotice] = useState('');
+  const mapRef = useRef<HTMLDivElement>(null);
+  const mapInstance = useRef<import('leaflet').Map | null>(null);
+  const markerRef = useRef<import('leaflet').Marker | null>(null);
 
   useEffect(() => {
-    apiClient.get('/api/admin/configuracion-alertas').then(r => setCfg(r.data.data)).catch(() => {});
+    async function load() {
+      setLoading(true);
+      try {
+        const [businessRes, alertsRes, logsRes] = await Promise.all([
+          apiClient.get('/api/configuracion'),
+          apiClient.get('/api/admin/configuracion-alertas'),
+          apiClient.get('/api/admin/alertas'),
+        ]);
+        const loadedBusiness = businessRes.data?.data ?? DEFAULT_BUSINESS;
+        const loadedAlerts = alertsRes.data?.data ?? DEFAULT_ALERTS;
+        setBusiness(loadedBusiness);
+        setAlerts(loadedAlerts);
+        setRecipients((loadedAlerts.destinatarios ?? []).join(', '));
+        setLogs(logsRes.data?.data?.historial ?? []);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    load();
   }, []);
 
-  const save = async () => {
-    setSaving(true); setOk('');
-    try {
-      await apiClient.put('/api/admin/configuracion-alertas', cfg);
-      setOk('Configuración guardada ✓');
-      setTimeout(() => setOk(''), 3000);
-    } finally { setSaving(false); }
-  };
+  useEffect(() => {
+    if (loading || !mapRef.current || mapInstance.current) return;
+    let disposed = false;
 
-  const handleManualAlert = async () => {
+    async function initMap() {
+      const L = await import('leaflet');
+      await import('leaflet/dist/leaflet.css');
+      if (disposed || !mapRef.current) return;
+
+      if ((mapRef.current as HTMLDivElement & { _leaflet_id?: number })._leaflet_id) {
+        delete (mapRef.current as HTMLDivElement & { _leaflet_id?: number })._leaflet_id;
+      }
+
+      const map = L.map(mapRef.current, {
+        center: [business.sucursal_lat, business.sucursal_lng],
+        zoom: 14,
+      });
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+        attribution: '© OpenStreetMap © CARTO',
+        subdomains: 'abcd',
+        maxZoom: 19,
+      }).addTo(map);
+
+      const icon = L.divIcon({
+        className: '',
+        html: '<div style="background:#FF5C19;width:30px;height:30px;border-radius:50%;border:4px solid #fff;box-shadow:0 4px 14px rgba(20,52,42,.28);"></div>',
+        iconSize: [30, 30],
+        iconAnchor: [15, 15],
+      });
+
+      const marker = L.marker([business.sucursal_lat, business.sucursal_lng], { icon, draggable: true }).addTo(map);
+      marker.on('dragend', event => {
+        const { lat, lng } = (event.target as import('leaflet').Marker).getLatLng();
+        setBusiness(prev => ({ ...prev, sucursal_lat: lat, sucursal_lng: lng }));
+      });
+      map.on('click', event => {
+        marker.setLatLng(event.latlng);
+        setBusiness(prev => ({ ...prev, sucursal_lat: event.latlng.lat, sucursal_lng: event.latlng.lng }));
+      });
+
+      mapInstance.current = map;
+      markerRef.current = marker;
+      window.requestAnimationFrame(() => map.invalidateSize());
+      window.setTimeout(() => map.invalidateSize(), 120);
+    }
+
+    initMap();
+    return () => {
+      disposed = true;
+      if (mapInstance.current) {
+        mapInstance.current.remove();
+        mapInstance.current = null;
+        markerRef.current = null;
+      }
+    };
+  }, [business.sucursal_lat, business.sucursal_lng, loading]);
+
+  const saveBusiness = async () => {
+    setSavingBusiness(true);
+    setNotice('');
     try {
-      const res = await apiClient.post('/api/admin/alertas/enviar');
-      alert(res.data.message || 'Comando ejecutado');
-    } catch (e: any) {
-      alert(e.response?.data?.error || 'Error al enviar alerta');
+      const res = await apiClient.post('/api/configuracion', business);
+      setBusiness(res.data?.data ?? business);
+      setNotice('Datos del negocio guardados.');
+    } catch (err) {
+      console.error(err);
+      setNotice('No se pudo guardar la configuración.');
+    } finally {
+      setSavingBusiness(false);
     }
   };
 
-  if (!cfg) return <div style={{ color: '#666', fontSize: 13 }}>Cargando…</div>;
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      {/* Toggle principal */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <button type="button" onClick={() => setCfg((c: any) => ({ ...c, habilitado: !c.habilitado }))}
-          style={{ width: 44, height: 24, borderRadius: 12, border: 'none', cursor: 'pointer', position: 'relative', background: cfg.habilitado ? '#10b981' : '#374151', transition: 'background 0.2s' }}>
-          <span style={{ position: 'absolute', top: 3, left: cfg.habilitado ? 22 : 3, width: 18, height: 18, borderRadius: '50%', background: '#fff', transition: 'left 0.2s' }} />
-        </button>
-        <span style={{ color: '#ddd', fontSize: 14 }}>Habilitar alertas de inventario</span>
-      </div>
-
-      <div className="form-grid">
-        <div className="form-group">
-          <label>Destinatarios (separados por comas)</label>
-          <input type="text" value={cfg.destinatarios ?? ''} placeholder="+59170000000,+59171111111"
-            onChange={e => setCfg((c: any) => ({ ...c, destinatarios: e.target.value }))} />
-        </div>
-        <div className="form-group">
-          <label>Intervalo mín. entre alertas (min)</label>
-          <input type="number" value={cfg.intervalo_minutos ?? 60}
-            onChange={e => setCfg((c: any) => ({ ...c, intervalo_minutos: Number(e.target.value) }))} />
-        </div>
-        <div className="form-group">
-          <label>Inicio silencio (HH:MM)</label>
-          <input type="text" value={cfg.hora_silencio_inicio ?? ''} placeholder="22:00"
-            onChange={e => setCfg((c: any) => ({ ...c, hora_silencio_inicio: e.target.value }))} />
-        </div>
-        <div className="form-group">
-          <label>Fin silencio (HH:MM)</label>
-          <input type="text" value={cfg.hora_silencio_fin ?? ''} placeholder="08:00"
-            onChange={e => setCfg((c: any) => ({ ...c, hora_silencio_fin: e.target.value }))} />
-        </div>
-        <div className="form-group full">
-          <label>Plantilla del mensaje</label>
-          <textarea value={cfg.plantilla_mensaje ?? ''} rows={3}
-            onChange={e => setCfg((c: any) => ({ ...c, plantilla_mensaje: e.target.value }))}
-            placeholder="⚠️ Alerta inventario: {nombre} - Stock: {stock} {unidad}" />
-        </div>
-      </div>
-
-      {ok && <p style={{ color: '#10b981', fontSize: 13 }}>{ok}</p>}
-
-      <div style={{ display: 'flex', gap: 12 }}>
-        <button onClick={save} disabled={saving}
-          style={{ padding: '10px 20px', borderRadius: 10, cursor: saving ? 'not-allowed' : 'pointer', background: saving ? '#333' : 'linear-gradient(135deg,#ff5c19,#ff8c00)', border: 'none', color: '#fff', fontWeight: 700, alignSelf: 'flex-start' }}>
-          {saving ? 'Guardando…' : 'Guardar alertas'}
-        </button>
-        <button onClick={handleManualAlert}
-          style={{ padding: '10px 20px', borderRadius: 10, cursor: 'pointer', background: '#374151', border: '1px solid #4b5563', color: '#fff', fontWeight: 700, alignSelf: 'flex-start' }}>
-          Enviar alerta manual
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/* ─── Main ─── */
-export default function SettingsPage() {
-  const [config, setConfig] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-
-  const mapRef = useRef<HTMLDivElement>(null);
-  const leafletMapRef = useRef<any>(null);
-  const markerRef = useRef<any>(null);
-
-  useEffect(() => {
-    fetch('/api/configuracion')
-      .then(r => r.json())
-      .then(data => {
-        setConfig(data.data ?? { sucursal_lat: -17.7710, sucursal_lng: -63.1900, sucursal_nombre: 'Sucursal Principal' });
-        setLoading(false);
-      })
-      .catch(() => {
-        setConfig({ sucursal_lat: -17.7710, sucursal_lng: -63.1900, sucursal_nombre: 'Sucursal Principal' });
-        setLoading(false);
-      });
-  }, []);
-
-  useEffect(() => {
-    if (!config || !mapRef.current || leafletMapRef.current) return;
-    const initMap = async () => {
-      const L = await import('leaflet');
-      await import('leaflet/dist/leaflet.css');
-      const container = mapRef.current;
-      if (container && (container as any)._leaflet_id) (container as any)._leaflet_id = null;
-      const map = L.map(container!, { center: [config.sucursal_lat, config.sucursal_lng], zoom: 14 });
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { attribution: '© OpenStreetMap © CARTO' }).addTo(map);
-      leafletMapRef.current = map;
-      const icon = L.divIcon({ className: '', html: `<div style="background:#ff5c19;width:30px;height:30px;border-radius:50%;border:4px solid #fff;display:flex;align-items:center;justify-content:center;box-shadow:0 0 10px rgba(0,0,0,0.5);"><span style="font-size:16px;">🏢</span></div>`, iconSize: [30, 30], iconAnchor: [15, 15] });
-      markerRef.current = L.marker([config.sucursal_lat, config.sucursal_lng], { icon, draggable: true }).addTo(map);
-      markerRef.current.on('dragend', (e: any) => { const { lat, lng } = e.target.getLatLng(); setConfig((p: any) => ({ ...p, sucursal_lat: lat, sucursal_lng: lng })); });
-      map.on('click', (e: any) => { const { lat, lng } = e.latlng; markerRef.current.setLatLng([lat, lng]); setConfig((p: any) => ({ ...p, sucursal_lat: lat, sucursal_lng: lng })); });
-    };
-    initMap();
-  }, [config]);
-
-  const handleSave = async () => {
-    setSaving(true);
+  const saveAlerts = async () => {
+    setSavingAlerts(true);
+    setNotice('');
     try {
-      const res = await fetch('/api/configuracion', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config) });
-      if (res.ok) alert('Configuración guardada exitosamente');
-    } catch { alert('Error al guardar configuración'); }
-    finally { setSaving(false); }
+      const payload: AlertConfig = {
+        ...alerts,
+        destinatarios: recipients.split(',').map(item => item.trim()).filter(Boolean),
+      };
+      const res = await apiClient.put('/api/admin/configuracion-alertas', payload);
+      setAlerts(res.data?.data ?? payload);
+      setRecipients((res.data?.data?.destinatarios ?? payload.destinatarios).join(', '));
+      setNotice('Alertas guardadas.');
+    } catch (err) {
+      console.error(err);
+      setNotice('No se pudo guardar la configuración de alertas.');
+    } finally {
+      setSavingAlerts(false);
+    }
   };
 
-  if (loading) return <div style={{ padding: 40, color: '#fff' }}>Cargando configuración...</div>;
+  const sendTestAlert = async () => {
+    setNotice('');
+    try {
+      const res = await apiClient.post('/api/admin/alertas/enviar');
+      const logsRes = await apiClient.get('/api/admin/alertas');
+      setLogs(logsRes.data?.data?.historial ?? []);
+      setNotice(res.data?.message ?? 'Alerta procesada.');
+    } catch (err) {
+      console.error(err);
+      setNotice('No se pudo procesar la alerta.');
+    }
+  };
+
+  if (loading) {
+    return (
+      <AdminPanel>
+        <div className="empty-state"><h4>Cargando configuración</h4><p>Consultando datos del negocio y alertas.</p></div>
+      </AdminPanel>
+    );
+  }
 
   return (
-    <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 24 }}>
-      <h1 style={{ color: '#fff', fontSize: 24, fontWeight: 700 }}>Configuración General</h1>
-
-      {/* Mapa sucursal */}
-      <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 16, padding: 20 }}>
-        <h2 style={{ color: '#fff', fontSize: 18, marginBottom: 16 }}>Ubicación de la Sucursal Principal</h2>
-        <p style={{ color: '#888', fontSize: 14, marginBottom: 16 }}>Arrastra el marcador 🏢 o haz clic en el mapa para establecer el punto de recogida de pedidos.</p>
-        <div style={{ marginBottom: 16 }}>
-          <label style={{ display: 'block', color: '#888', fontSize: 12, marginBottom: 8, textTransform: 'uppercase' }}>Nombre de la Sucursal</label>
-          <input type="text" value={config.sucursal_nombre} onChange={e => setConfig({ ...config, sucursal_nombre: e.target.value })}
-            style={{ width: '100%', maxWidth: 400, padding: 12, borderRadius: 8, background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(255,255,255,0.2)', color: '#fff' }} />
+    <AdminPanel>
+      <div className="admin-settings">
+        <div className="admin-page-header">
+          <div>
+            <h1>Configuración</h1>
+            <p>Alertas de inventario por WhatsApp y datos del negocio</p>
+          </div>
         </div>
-        <div style={{ height: 400, borderRadius: 16, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.1)', marginBottom: 20 }}>
-          <div ref={mapRef} style={{ width: '100%', height: '100%', background: '#111' }} />
-        </div>
-        <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} onClick={handleSave} disabled={saving}
-          style={{ background: '#ff5c19', color: '#fff', padding: '12px 24px', borderRadius: 8, fontSize: 14, fontWeight: 600, border: 'none', cursor: 'pointer' }}>
-          {saving ? 'Guardando...' : 'Guardar Configuración'}
-        </motion.button>
-      </div>
 
-      {/* Alertas de inventario */}
-      <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 16, padding: 20 }}>
-        <h2 style={{ color: '#fff', fontSize: 18, marginBottom: 8 }}>🔔 Alertas de Inventario (WhatsApp)</h2>
-        <p style={{ color: '#888', fontSize: 13, marginBottom: 20 }}>
-          Configura notificaciones automáticas cuando insumos caigan por debajo del umbral crítico.
-        </p>
-        <AlertasConfig />
+        {notice && <div className="empty-state" style={{ padding: '14px 18px', marginBottom: 18 }}><p style={{ margin: 0 }}>{notice}</p></div>}
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.25fr) minmax(320px, .75fr)', gap: 18, alignItems: 'start' }}>
+          <div>
+            <section className="settings-section">
+              <h3>Alertas de WhatsApp</h3>
+              <p className="form-hint">Avisos agrupados cuando uno o más insumos cruzan su punto de reorden.</p>
+
+              <label className="switch" style={{ marginBottom: 18 }}>
+                <input
+                  type="checkbox"
+                  checked={alerts.whatsapp_habilitado}
+                  onChange={event => setAlerts(prev => ({ ...prev, whatsapp_habilitado: event.target.checked }))}
+                />
+                <span className="switch-track" />
+                <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{alerts.whatsapp_habilitado ? 'Activado' : 'Desactivado'}</span>
+              </label>
+
+              <div className="form-grid">
+                <label className="form-group full">
+                  <span>Destinatarios</span>
+                  <input value={recipients} onChange={event => setRecipients(event.target.value)} placeholder="+59170000000, +59171111111" />
+                  <span className="form-hint">Números separados por coma.</span>
+                </label>
+                <label className="form-group">
+                  <span>Intervalo mínimo</span>
+                  <input type="number" min={1} value={alerts.intervalo_minimo_min} onChange={event => setAlerts(prev => ({ ...prev, intervalo_minimo_min: Number(event.target.value) }))} />
+                </label>
+                <label className="form-group">
+                  <span>Zona horaria</span>
+                  <input value="America/La_Paz" readOnly />
+                </label>
+                <label className="form-group">
+                  <span>Silencio desde</span>
+                  <input type="time" value={alerts.hora_silencio_desde} onChange={event => setAlerts(prev => ({ ...prev, hora_silencio_desde: event.target.value }))} />
+                </label>
+                <label className="form-group">
+                  <span>Silencio hasta</span>
+                  <input type="time" value={alerts.hora_silencio_hasta} onChange={event => setAlerts(prev => ({ ...prev, hora_silencio_hasta: event.target.value }))} />
+                </label>
+                <label className="form-group full">
+                  <span>Plantilla del mensaje</span>
+                  <textarea rows={5} value={alerts.plantilla_mensaje} onChange={event => setAlerts(prev => ({ ...prev, plantilla_mensaje: event.target.value }))} />
+                  <span className="form-hint">Variables disponibles: {'{count}'}, {'{list}'}.</span>
+                </label>
+              </div>
+              <div style={{ display: 'flex', gap: 10, marginTop: 16, flexWrap: 'wrap' }}>
+                <button className="admin-btn primary" onClick={saveAlerts} disabled={savingAlerts} type="button">{savingAlerts ? 'Guardando...' : 'Guardar configuración'}</button>
+                <button className="admin-btn secondary" onClick={sendTestAlert} type="button">Enviar prueba</button>
+              </div>
+            </section>
+
+            <section className="settings-section">
+              <h3>Datos del negocio</h3>
+              <p className="form-hint">Valores base para operación, mapas y reportes.</p>
+              <div className="form-grid">
+                <label className="form-group">
+                  <span>Nombre</span>
+                  <input value="Elevate" readOnly />
+                </label>
+                <label className="form-group">
+                  <span>Moneda</span>
+                  <input value="Bs." readOnly />
+                </label>
+                <label className="form-group">
+                  <span>Sucursal</span>
+                  <input value={business.sucursal_nombre} onChange={event => setBusiness(prev => ({ ...prev, sucursal_nombre: event.target.value }))} />
+                </label>
+                <label className="form-group">
+                  <span>Latitud</span>
+                  <input type="number" step="0.000001" value={business.sucursal_lat} onChange={event => setBusiness(prev => ({ ...prev, sucursal_lat: Number(event.target.value) }))} />
+                </label>
+                <label className="form-group">
+                  <span>Longitud</span>
+                  <input type="number" step="0.000001" value={business.sucursal_lng} onChange={event => setBusiness(prev => ({ ...prev, sucursal_lng: Number(event.target.value) }))} />
+                </label>
+              </div>
+              <div style={{ height: 360, borderRadius: 12, overflow: 'hidden', border: '1px solid var(--line)', margin: '16px 0' }}>
+                <div ref={mapRef} style={{ width: '100%', height: '100%' }} />
+              </div>
+              <button className="admin-btn primary" onClick={saveBusiness} disabled={savingBusiness} type="button">{savingBusiness ? 'Guardando...' : 'Guardar datos del negocio'}</button>
+            </section>
+          </div>
+
+          <section className="settings-section">
+            <h3>Registro de alertas</h3>
+            <p className="form-hint">{logs.length} alertas registradas.</p>
+            {logs.length === 0 ? (
+              <div className="empty-state" style={{ padding: '24px 0' }}>
+                <p>Aún no se han disparado alertas de inventario.</p>
+              </div>
+            ) : (
+              logs.map(log => (
+                <div key={log.id} className="alert-log-item">
+                  <span className={`alert-log-badge ${log.estado}`}>{log.estado}</span>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: '0.78rem', color: 'var(--slate)', marginBottom: 4 }}>
+                      {new Date(log.enviado_at).toLocaleString('es-BO')} · {log.insumo_ids.length} insumo(s)
+                    </div>
+                    <pre className="alert-log-preview">{log.preview}</pre>
+                  </div>
+                </div>
+              ))
+            )}
+          </section>
+        </div>
       </div>
-    </div>
+    </AdminPanel>
   );
 }

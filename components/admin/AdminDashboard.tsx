@@ -1,14 +1,23 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { motion } from 'framer-motion';
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import apiClient from '@/hooks/api';
-import KpiCard from '@/components/ui/KpiCard';
-import MoneyText from '@/components/ui/MoneyText';
-import StatusBadge from '@/components/ui/StatusBadge';
+import { foodCostColor } from './inventoryData';
 
-/* ===== Types ===== */
-interface Stats {
+type Period = 'hoy' | '7d' | '30d';
+
+interface DashboardDay {
   kpis: {
     ganancia_hoy: number;
     ventas: number;
@@ -32,14 +41,16 @@ interface Stats {
     sucursal?: { nombre: string };
   } | null;
   pedidos_por_hora: { hora: string; pedidos: number }[];
-  pedidos_recientes: {
-    id: number;
-    cliente_nombre: string | null;
-    total: number;
-    estado: string;
-    created_at: string;
-    transaccionesDetalles_id: { producto: { nombre: string } }[];
-  }[];
+  pedidos_recientes: PedidoReciente[];
+}
+
+interface PedidoReciente {
+  id: number;
+  cliente_nombre: string | null;
+  total: number;
+  estado: string;
+  created_at: string;
+  transaccionesDetalles_id: { producto: { nombre: string } }[];
 }
 
 interface InsumoAlerta {
@@ -52,300 +63,467 @@ interface InsumoAlerta {
   porcentaje: number;
 }
 
-const ESTADO_COLORS: Record<string, string> = {
-  PENDIENTE: '#f59e0b',
-  EN_PREPARACION: '#3b82f6',
-  EN_CAMINO: '#8b5cf6',
-  ENTREGADO: '#10b981',
-  CANCELADO: '#ef4444',
-  PAGADO: '#10b981',
-};
-
-const ESTADO_LABELS: Record<string, string> = {
-  PENDIENTE: 'Pendiente',
-  EN_PREPARACION: 'Preparando',
-  EN_CAMINO: 'En camino',
-  ENTREGADO: 'Entregado',
-  CANCELADO: 'Cancelado',
-  PAGADO: 'Pagado',
-};
-
-function StatCard({ label, value, sub, color, icon }: {
-  label: string; value: string | number; sub?: string; color: string; icon: React.ReactNode;
-}) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      style={{
-        background: 'rgba(255,255,255,0.04)',
-        border: '1px solid rgba(255,255,255,0.08)',
-        borderRadius: 16,
-        padding: '20px 24px',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 16,
-        flex: 1,
-        minWidth: 180,
-      }}
-    >
-      <div style={{
-        width: 48, height: 48, borderRadius: 12,
-        background: `${color}20`, border: `1px solid ${color}40`,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        color, flexShrink: 0,
-      }}>
-        {icon}
-      </div>
-      <div>
-        <div style={{ color: '#888', fontSize: 12, marginBottom: 4 }}>{label}</div>
-        <div style={{ color: '#fff', fontSize: 24, fontWeight: 700 }}>{value}</div>
-        {sub && <div style={{ color: color, fontSize: 12, marginTop: 2 }}>{sub}</div>}
-      </div>
-    </motion.div>
-  );
+interface TrendPoint {
+  day: string;
+  date: string;
+  revenue: number;
+  orders: number;
 }
 
-function MiniBar({ porcentaje, nivel }: { porcentaje: number; nivel: string }) {
-  const color = nivel === 'critico' ? '#ef4444' : nivel === 'advertencia' ? '#f59e0b' : '#10b981';
-  return (
-    <div style={{ height: 6, background: 'rgba(255,255,255,0.08)', borderRadius: 3, overflow: 'hidden' }}>
-      <motion.div
-        initial={{ width: 0 }}
-        animate={{ width: `${Math.min(100, porcentaje)}%` }}
-        transition={{ duration: 0.8, ease: 'easeOut' }}
-        style={{ height: '100%', background: color, borderRadius: 3 }}
-      />
-    </div>
-  );
+const PERIOD_LABELS: Record<Period, string> = {
+  hoy: 'Hoy',
+  '7d': 'Semana',
+  '30d': 'Mes',
+};
+
+const PERIOD_DAYS: Record<Period, number> = {
+  hoy: 1,
+  '7d': 7,
+  '30d': 30,
+};
+
+const STATUS_META: Record<string, { label: string; color: string; bg: string; activity: string }> = {
+  PENDIENTE: { label: 'Pendiente', color: 'var(--amber)', bg: 'rgba(232,163,23,.14)', activity: 'order' },
+  EN_PREPARACION: { label: 'Preparando', color: 'var(--info)', bg: 'rgba(59,130,196,.14)', activity: 'prep' },
+  EN_CAMINO: { label: 'En camino', color: 'var(--kale)', bg: 'rgba(20,52,42,.12)', activity: 'driver' },
+  ENTREGADO: { label: 'Entregado', color: 'var(--fresh)', bg: 'rgba(31,169,113,.14)', activity: 'done' },
+  PAGADO: { label: 'Pagado', color: 'var(--fresh)', bg: 'rgba(31,169,113,.14)', activity: 'done' },
+  CANCELADO: { label: 'Cancelado', color: 'var(--danger)', bg: 'rgba(229,72,77,.14)', activity: 'alert' },
+};
+
+function isoDate(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function dateRange(days: number) {
+  const today = new Date();
+  return Array.from({ length: days }, (_, index) => {
+    const date = new Date(today);
+    date.setDate(today.getDate() - (days - 1 - index));
+    return date;
+  });
+}
+
+function money(value: number) {
+  return `Bs ${new Intl.NumberFormat('es-BO', {
+    maximumFractionDigits: 0,
+  }).format(Math.round(value || 0))}`;
+}
+
+function percent(value: number) {
+  return `${Math.round(value || 0)}%`;
+}
+
+function compactTime(value: string) {
+  return new Intl.DateTimeFormat('es-BO', {
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(value));
+}
+
+function buildEmptyDay(): DashboardDay {
+  return {
+    kpis: { ganancia_hoy: 0, ventas: 0, pedidos: 0, ticket_promedio: 0, pedidos_pendientes: 0 },
+    contabilidad_hoy: { ingresos: 0, cmv: 0, otros_gastos: 0, utilidad: 0 },
+    mas_vendidos: [],
+    alertas_inventario: [],
+    turno_activo: null,
+    pedidos_por_hora: [],
+    pedidos_recientes: [],
+  };
+}
+
+function aggregateTopProducts(days: DashboardDay[]) {
+  const map = new Map<number, { producto_id: number; nombre: string; cantidad: number; total: number }>();
+  for (const day of days) {
+    for (const item of day.mas_vendidos ?? []) {
+      const current = map.get(item.producto_id) ?? {
+        producto_id: item.producto_id,
+        nombre: item.nombre,
+        cantidad: 0,
+        total: 0,
+      };
+      current.cantidad += Number(item.cantidad || 0);
+      current.total += Number(item.total || 0);
+      map.set(item.producto_id, current);
+    }
+  }
+  return Array.from(map.values()).sort((a, b) => b.cantidad - a.cantidad).slice(0, 5);
+}
+
+function EmptyMini({ children }: { children: React.ReactNode }) {
+  return <div className="alert-empty">{children}</div>;
 }
 
 export default function AdminDashboard() {
-  const [stats, setStats] = useState<Stats | null>(null);
+  const [period, setPeriod] = useState<Period>('hoy');
+  const [liveTime, setLiveTime] = useState(new Date());
+  const [days, setDays] = useState<DashboardDay[]>([]);
+  const [trend, setTrend] = useState<TrendPoint[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    async function fetchData() {
-      try {
-        const statsRes = await apiClient.get('/api/admin/dashboard');
-        setStats(statsRes.data);
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setLoading(false);
-      }
-    }
-    fetchData();
-    const interval = setInterval(fetchData, 30000);
-    return () => clearInterval(interval);
+    const timer = window.setInterval(() => setLiveTime(new Date()), 1000);
+    return () => window.clearInterval(timer);
   }, []);
 
-  if (loading) {
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 300 }}>
-        <motion.div
-          animate={{ rotate: 360 }}
-          transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-          style={{ width: 32, height: 32, border: '3px solid #ff5c19', borderTopColor: 'transparent', borderRadius: '50%' }}
-        />
-      </div>
-    );
-  }
+  useEffect(() => {
+    let cancelled = false;
 
-  const alertas = stats?.alertas_inventario ?? [];
-  const maxPedidos = Math.max(...(stats?.pedidos_por_hora.map(p => p.pedidos) ?? [1]), 1);
+    async function fetchPeriod() {
+      setLoading(true);
+      setError(null);
+
+      try {
+        const dates = dateRange(PERIOD_DAYS[period]);
+        const responses = await Promise.all(
+          dates.map(date => apiClient.get<DashboardDay>(`/api/admin/dashboard?fecha=${isoDate(date)}`))
+        );
+        if (cancelled) return;
+
+        const loadedDays = responses.map(res => res.data ?? buildEmptyDay());
+        setDays(loadedDays);
+        setTrend(loadedDays.map((day, index) => ({
+          day: dates[index].toLocaleDateString('es-BO', { weekday: 'short' }),
+          date: isoDate(dates[index]),
+          revenue: Number(day.kpis?.ventas ?? 0),
+          orders: Number(day.kpis?.pedidos ?? 0),
+        })));
+      } catch (err) {
+        console.error(err);
+        if (!cancelled) {
+          setDays([]);
+          setTrend([]);
+          setError('No se pudo cargar el dashboard.');
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    fetchPeriod();
+    const interval = window.setInterval(fetchPeriod, period === 'hoy' ? 30000 : 120000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [period]);
+
+  const summary = useMemo(() => {
+    const today = days[days.length - 1] ?? buildEmptyDay();
+    const ingresos = days.reduce((sum, day) => sum + Number(day.contabilidad_hoy?.ingresos ?? day.kpis?.ventas ?? 0), 0);
+    const cmv = days.reduce((sum, day) => sum + Number(day.contabilidad_hoy?.cmv ?? 0), 0);
+    const otrosGastos = days.reduce((sum, day) => sum + Number(day.contabilidad_hoy?.otros_gastos ?? 0), 0);
+    const utilidad = ingresos - cmv - otrosGastos;
+    const pedidos = days.reduce((sum, day) => sum + Number(day.kpis?.pedidos ?? 0), 0);
+    const ticket = pedidos ? ingresos / pedidos : 0;
+    const foodCostPct = ingresos ? (cmv / ingresos) * 100 : 0;
+    const grossMarginPct = ingresos ? ((ingresos - cmv) / ingresos) * 100 : 0;
+    const alertas = today.alertas_inventario ?? [];
+    const topProducts = aggregateTopProducts(days);
+    const recentOrders = today.pedidos_recientes ?? [];
+
+    return {
+      today,
+      ingresos,
+      cmv,
+      utilidad,
+      pedidos,
+      ticket,
+      foodCostPct,
+      grossMarginPct,
+      alertas,
+      topProducts,
+      recentOrders,
+    };
+  }, [days]);
+
+  const maxTopSales = Math.max(...summary.topProducts.map(item => item.cantidad), 1);
+  const hasTrend = trend.some(point => point.revenue > 0 || point.orders > 0);
+  const activity = [
+    ...summary.recentOrders.slice(0, 4).map(order => {
+      const meta = STATUS_META[order.estado] ?? STATUS_META.PENDIENTE;
+      return {
+        key: `order-${order.id}`,
+        type: meta.activity,
+        text: `Pedido #${order.id} · ${meta.label}`,
+        time: compactTime(order.created_at),
+      };
+    }),
+    ...summary.alertas.slice(0, 1).map(alerta => ({
+      key: `alert-${alerta.id}`,
+      type: 'alert',
+      text: `Stock bajo: ${alerta.nombre}`,
+      time: liveTime.toLocaleTimeString('es-BO', { hour: '2-digit', minute: '2-digit' }),
+    })),
+  ];
 
   return (
-    <div style={{ padding: '0 4px' }}>
-      <h1 style={{ color: '#fff', fontSize: 22, fontWeight: 700, marginBottom: 20 }}>
-        Dashboard
-        <span style={{ color: '#ff5c19', marginLeft: 8, fontSize: 14, fontWeight: 400 }}>
-          {new Date().toLocaleDateString('es-BO', { weekday: 'long', day: 'numeric', month: 'long' })}
-        </span>
-      </h1>
-
-      {/* ===== KPI CARDS ===== */}
-      <div className="kpi-grid">
-        <KpiCard label="Ganancia hoy" value={<MoneyText value={stats?.kpis.ganancia_hoy ?? 0} signed />} highlight />
-        <KpiCard label="Ventas" value={<MoneyText value={stats?.kpis.ventas ?? 0} />} accent="var(--fresh)" />
-        <KpiCard label="Pedidos" value={stats?.kpis.pedidos ?? 0} />
-        <KpiCard label="Ticket promedio" value={<MoneyText value={stats?.kpis.ticket_promedio ?? 0} />} />
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 24 }}>
-        {/* ===== HOURLY CHART ===== */}
-        <div style={{
-          background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
-          borderRadius: 16, padding: '20px 24px',
-        }}>
-          <h3 style={{ color: '#fff', fontSize: 14, fontWeight: 600, marginBottom: 16 }}>
-            Pedidos por hora
-          </h3>
-          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height: 100 }}>
-            {stats?.pedidos_por_hora.map((item, i) => (
-              <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-                <motion.div
-                  initial={{ height: 0 }}
-                  animate={{ height: maxPedidos === 0 ? 4 : `${(item.pedidos / maxPedidos) * 80}px` }}
-                  transition={{ duration: 0.6, delay: i * 0.04 }}
-                  style={{
-                    width: '100%', borderRadius: 4,
-                    background: item.pedidos > 0
-                      ? 'linear-gradient(180deg, #ff5c19 0%, #ff7a42 100%)'
-                      : 'rgba(255,255,255,0.08)',
-                    minHeight: 4,
-                  }}
-                  title={`${item.hora}: ${item.pedidos} pedidos`}
-                />
-                {i % 3 === 0 && (
-                  <span style={{ color: '#555', fontSize: 9, whiteSpace: 'nowrap' }}>{item.hora}</span>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div style={{
-          background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
-          borderRadius: 16, padding: '20px 24px',
-        }}>
-          <h3 style={{ color: '#fff', fontSize: 14, fontWeight: 600, marginBottom: 16 }}>Contabilidad de hoy</h3>
-          <div className="finance-list">
-            <div className="finance-row"><span>Ingresos</span><strong><MoneyText value={stats?.contabilidad_hoy.ingresos ?? 0} /></strong></div>
-            <div className="finance-row"><span>CMV</span><strong><MoneyText value={stats?.contabilidad_hoy.cmv ?? 0} /></strong></div>
-            <div className="finance-row"><span>Otros gastos</span><strong><MoneyText value={stats?.contabilidad_hoy.otros_gastos ?? 0} /></strong></div>
-            <div className="finance-row"><span>Utilidad</span><strong><MoneyText value={stats?.contabilidad_hoy.utilidad ?? 0} signed /></strong></div>
-          </div>
-        </div>
-
-        <div style={{
-          background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
-          borderRadius: 16, padding: '20px 24px',
-        }}>
-          <h3 style={{ color: '#fff', fontSize: 14, fontWeight: 600, marginBottom: 16 }}>Más vendidos hoy</h3>
-          {!stats?.mas_vendidos?.length ? (
-            <p style={{ color: '#666', fontSize: 13 }}>Sin ventas registradas hoy.</p>
-          ) : (
-            <div className="finance-list">
-              {stats.mas_vendidos.map(item => (
-                <div key={item.producto_id} className="finance-row">
-                  <span>{item.nombre} x{item.cantidad}</span>
-                  <strong><MoneyText value={item.total} /></strong>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* ===== INSUMO ALERTS ===== */}
-        <div style={{
-          background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
-          borderRadius: 16, padding: '20px 24px',
-        }}>
-          <h3 style={{ color: '#fff', fontSize: 14, fontWeight: 600, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="#f59e0b" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-            Alertas de Insumos
-            {alertas.length > 0 && (
-              <span style={{ background: '#ef4444', color: '#fff', borderRadius: 10, padding: '1px 6px', fontSize: 11 }}>
-                {alertas.length}
-              </span>
-            )}
-          </h3>
-
-          {alertas.length === 0 ? (
-            <div style={{ color: '#10b981', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12"/></svg>
-              Todos los insumos con stock suficiente
-            </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 160, overflowY: 'auto' }}>
-              {alertas.map(insumo => (
-                <div key={insumo.id}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                    <span style={{ color: '#ddd', fontSize: 12, fontWeight: 500 }}>{insumo.nombre}</span>
-                    <span style={{
-                      fontSize: 11, padding: '1px 6px', borderRadius: 4, fontWeight: 600,
-                      background: insumo.nivel === 'critico' ? 'rgba(239,68,68,0.2)' : 'rgba(245,158,11,0.2)',
-                      color: insumo.nivel === 'critico' ? '#ef4444' : '#f59e0b',
-                    }}>
-                      {insumo.stock_actual} / {insumo.stock_minimo} {insumo.unidad_medida}
-                    </span>
-                  </div>
-                  <MiniBar porcentaje={insumo.porcentaje} nivel={insumo.nivel} />
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div style={{
-        background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
-        borderRadius: 16, padding: '16px 24px', marginBottom: 24, display: 'flex', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap',
-      }}>
+    <div className="admin-dashboard">
+      <div className="admin-page-header">
         <div>
-          <h3 style={{ color: '#fff', fontSize: 14, fontWeight: 600, marginBottom: 6 }}>Turno de caja</h3>
-          <p style={{ color: '#888', margin: 0, fontSize: 13 }}>
-            {stats?.turno_activo ? `${stats.turno_activo.sucursal?.nombre ?? 'Sucursal'} · ${stats.turno_activo.cajero?.nombre ?? stats.turno_activo.cajero?.email ?? 'Cajero'}` : 'No hay turno abierto'}
-          </p>
+          <h1>Dashboard</h1>
+          <p>¿Cómo va el negocio?</p>
         </div>
-        <StatusBadge status={stats?.turno_activo ? 'abierto' : 'cerrado'} label={stats?.turno_activo ? 'Abierto' : 'Cerrado'} />
-      </div>
-
-      {/* ===== RECENT ORDERS ===== */}
-      <div style={{
-        background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
-        borderRadius: 16, padding: '20px 24px',
-      }}>
-        <h3 style={{ color: '#fff', fontSize: 14, fontWeight: 600, marginBottom: 16 }}>Pedidos Recientes</h3>
-        {!stats?.pedidos_recientes?.length ? (
-          <p style={{ color: '#666', fontSize: 13 }}>No hay pedidos aún.</p>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-            {stats.pedidos_recientes.map((p, i) => (
-              <motion.div
-                key={p.id}
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: i * 0.07 }}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 12,
-                  padding: '12px 0',
-                  borderBottom: i < stats.pedidos_recientes.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none',
-                }}
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div className="period-selector" aria-label="Periodo del dashboard">
+            {(Object.keys(PERIOD_LABELS) as Period[]).map(option => (
+              <button
+                key={option}
+                className={`period-btn ${period === option ? 'active' : ''}`}
+                onClick={() => setPeriod(option)}
+                type="button"
               >
-                <div style={{
-                  width: 36, height: 36, borderRadius: 10,
-                  background: 'rgba(255,92,25,0.15)', border: '1px solid rgba(255,92,25,0.2)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  color: '#ff5c19', fontWeight: 700, fontSize: 13, flexShrink: 0,
-                }}>
-                  #{p.id}
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ color: '#fff', fontSize: 13, fontWeight: 600 }}>
-                    {p.cliente_nombre ?? 'Cliente'}
-                  </div>
-                  <div style={{ color: '#666', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {p.transaccionesDetalles_id.map(d => d.producto.nombre).join(', ')}
-                  </div>
-                </div>
-                <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                  <div style={{ color: '#fff', fontSize: 13, fontWeight: 600 }}>Bs. {p.total}</div>
-                  <span style={{
-                    fontSize: 10, padding: '2px 6px', borderRadius: 4,
-                    background: `${ESTADO_COLORS[p.estado] ?? '#888'}20`,
-                    color: ESTADO_COLORS[p.estado] ?? '#888',
-                    fontWeight: 600,
-                  }}>
-                    {ESTADO_LABELS[p.estado] ?? p.estado}
-                  </span>
-                </div>
-              </motion.div>
+                {PERIOD_LABELS[option]}
+              </button>
             ))}
           </div>
-        )}
+          <div className="admin-live-clock">
+            <span className="live-dot" />
+            {liveTime.toLocaleTimeString('es-BO', { hour: '2-digit', minute: '2-digit' })}
+          </div>
+        </div>
       </div>
+
+      {error && (
+        <div className="empty-state" style={{ marginBottom: 18 }}>
+          <h4>{error}</h4>
+          <p>Revisa tu sesión o intenta nuevamente en unos segundos.</p>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="empty-state">
+          <motion.div
+            animate={{ rotate: 360 }}
+            transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+            style={{
+              width: 32,
+              height: 32,
+              border: '3px solid var(--orange)',
+              borderTopColor: 'transparent',
+              borderRadius: '50%',
+              margin: '0 auto 12px',
+            }}
+          />
+          <h4>Cargando dashboard</h4>
+          <p>Consultando ventas, pedidos e inventario.</p>
+        </div>
+      ) : (
+        <>
+          <div className="kpi-grid">
+            <div className="kpi-card">
+              <div className="kpi-header">
+                <span className="kpi-label">Ventas {PERIOD_LABELS[period].toLowerCase()}</span>
+              </div>
+              <div className="kpi-value" style={{ color: 'var(--orange)' }}>{money(summary.ingresos)}</div>
+              <div className="kpi-spark">
+                <ResponsiveContainer width="100%" height={36}>
+                  <AreaChart data={trend} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="dash-sales-spark" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#FF5C19" stopOpacity={0.3} />
+                        <stop offset="100%" stopColor="#FF5C19" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <Area type="monotone" dataKey="revenue" stroke="#FF5C19" strokeWidth={2} fill="url(#dash-sales-spark)" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            <div className="kpi-card">
+              <div className="kpi-header">
+                <span className="kpi-label">Pedidos {PERIOD_LABELS[period].toLowerCase()}</span>
+              </div>
+              <div className="kpi-value" style={{ color: 'var(--info)' }}>{summary.pedidos}</div>
+              <div className="kpi-bar"><div className="kpi-bar-fill" style={{ width: `${Math.min(100, summary.pedidos * 6)}%`, background: 'var(--info)' }} /></div>
+            </div>
+
+            <div className="kpi-card">
+              <div className="kpi-header">
+                <span className="kpi-label">Ticket promedio</span>
+              </div>
+              <div className="kpi-value" style={{ color: 'var(--kale)' }}>{money(summary.ticket)}</div>
+              <div className="kpi-bar"><div className="kpi-bar-fill" style={{ width: summary.ticket > 0 ? '68%' : '0%', background: 'var(--kale)' }} /></div>
+            </div>
+
+            <div className="kpi-card">
+              <div className="kpi-header">
+                <span className="kpi-label">Margen bruto</span>
+                <span className={`kpi-change ${summary.grossMarginPct >= 60 ? 'up' : 'down'}`}>{summary.grossMarginPct >= 60 ? '▲' : '▼'}</span>
+              </div>
+              <div className="kpi-value" style={{ color: 'var(--fresh)' }}>{percent(summary.grossMarginPct)}</div>
+              <div className="kpi-bar"><div className="kpi-bar-fill" style={{ width: `${Math.min(100, summary.grossMarginPct)}%`, background: 'var(--fresh)' }} /></div>
+            </div>
+
+            <div className="kpi-card">
+              <div className="kpi-header">
+                <span className="kpi-label">Food Cost</span>
+              </div>
+              <div className="kpi-value" style={{ color: foodCostColor(summary.foodCostPct) }}>{percent(summary.foodCostPct)}</div>
+              <div className="kpi-bar"><div className="kpi-bar-fill" style={{ width: `${Math.min(100, summary.foodCostPct)}%`, background: foodCostColor(summary.foodCostPct) }} /></div>
+            </div>
+
+            <div className="kpi-card">
+              <div className="kpi-header">
+                <span className="kpi-label">Insumos críticos</span>
+                {summary.alertas.length > 0 && <span className="kpi-change down">{summary.alertas.length}</span>}
+              </div>
+              <div className="kpi-value" style={{ color: summary.alertas.length ? 'var(--danger)' : 'var(--fresh)' }}>{summary.alertas.length}</div>
+              <div className="kpi-bar"><div className="kpi-bar-fill" style={{ width: `${Math.min(100, summary.alertas.length * 20)}%`, background: summary.alertas.length ? 'var(--danger)' : 'var(--fresh)' }} /></div>
+            </div>
+          </div>
+
+          <div className="dashboard-grid">
+            <div className="dash-card span-8">
+              <div className="dash-card-header">
+                <h3>Ventas — tendencia</h3>
+                <span className="dash-card-sub">{period === 'hoy' ? 'Hoy' : `Últimos ${PERIOD_DAYS[period]} días`}</span>
+              </div>
+              {hasTrend ? (
+                <ResponsiveContainer width="100%" height={240}>
+                  <AreaChart data={trend} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="dash-sales-trend" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#FF5C19" stopOpacity={0.28} />
+                        <stop offset="100%" stopColor="#FF5C19" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#E4EAE5" vertical={false} />
+                    <XAxis dataKey="day" tick={{ fill: '#5C6B63', fontSize: 11 }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fill: '#5C6B63', fontSize: 11 }} axisLine={false} tickLine={false} />
+                    <Tooltip
+                      contentStyle={{
+                        background: '#fff',
+                        border: '1px solid #E4EAE5',
+                        borderRadius: 10,
+                        fontSize: 12,
+                        fontFamily: 'Inter, sans-serif',
+                        boxShadow: '0 4px 16px rgba(20,52,42,.1)',
+                      }}
+                      formatter={(value, name) => {
+                        const numeric = Array.isArray(value) ? Number(value[0] ?? 0) : Number(value ?? 0);
+                        return [name === 'revenue' ? money(numeric) : numeric, name === 'revenue' ? 'Ventas' : 'Pedidos'];
+                      }}
+                      labelFormatter={(_, payload) => payload?.[0]?.payload?.date ?? ''}
+                    />
+                    <Area type="monotone" dataKey="revenue" name="Ventas" stroke="#FF5C19" strokeWidth={2.5} fill="url(#dash-sales-trend)" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              ) : (
+                <EmptyMini>Aún no hay ventas en este periodo.</EmptyMini>
+              )}
+            </div>
+
+            <div className="dash-card span-4">
+              <div className="dash-card-header">
+                <h3>Alertas de inventario</h3>
+                <Link className="dash-card-link" href="/admin/insumos">Ver →</Link>
+              </div>
+              {summary.alertas.length === 0 ? (
+                <EmptyMini>Sin alertas. Todo en stock.</EmptyMini>
+              ) : (
+                <div className="alert-card-list">
+                  {summary.alertas.slice(0, 5).map(insumo => (
+                    <div key={insumo.id} className="alert-row">
+                      <span
+                        className="alert-row-dot"
+                        style={{ background: insumo.nivel === 'critico' ? 'var(--danger)' : 'var(--amber)' }}
+                      />
+                      <span className="alert-row-name">{insumo.nombre}</span>
+                      <span className="alert-row-qty">{insumo.stock_actual} {insumo.unidad_medida}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="dash-card span-6">
+              <div className="dash-card-header">
+                <h3>Más vendidos</h3>
+                <span className="dash-card-sub">por unidades</span>
+              </div>
+              {summary.topProducts.length === 0 ? (
+                <EmptyMini>Aún no hay ventas registradas.</EmptyMini>
+              ) : (
+                <div className="top-products">
+                  {summary.topProducts.map((item, index) => (
+                    <div key={item.producto_id} className="top-product-row">
+                      <span className="top-rank">#{index + 1}</span>
+                      <div className="top-product-info">
+                        <span className="top-product-name">{item.nombre}</span>
+                        <span className="top-product-cat">{money(item.total)}</span>
+                      </div>
+                      <div className="top-product-bar-wrap">
+                        <div className="top-product-bar" style={{ width: `${(item.cantidad / maxTopSales) * 100}%` }} />
+                      </div>
+                      <span className="top-product-sales">{item.cantidad}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="dash-card span-6">
+              <div className="dash-card-header">
+                <h3>Actividad</h3>
+                <span className="dash-card-sub">tiempo real</span>
+              </div>
+              {activity.length === 0 ? (
+                <EmptyMini>Sin actividad reciente.</EmptyMini>
+              ) : (
+                <div className="activity-feed">
+                  {activity.map(item => (
+                    <div key={item.key} className="activity-item">
+                      <div className={`activity-dot ${item.type}`} />
+                      <div className="activity-content">
+                        <span className="activity-text">{item.text}</span>
+                        <span className="activity-time">{item.time}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="dash-card orders-card">
+              <div className="dash-card-header">
+                <h3>Pedidos recientes</h3>
+                <Link href="/admin/orders" className="dash-card-link">Ver todos →</Link>
+              </div>
+              {summary.recentOrders.length === 0 ? (
+                <EmptyMini>Sin pedidos recientes.</EmptyMini>
+              ) : (
+                <div className="recent-orders-table">
+                  <div className="rot-header">
+                    <span>Pedido</span>
+                    <span>Cliente</span>
+                    <span>Total</span>
+                    <span>Estado</span>
+                  </div>
+                  {summary.recentOrders.map(order => {
+                    const meta = STATUS_META[order.estado] ?? {
+                      label: order.estado,
+                      color: 'var(--slate)',
+                      bg: 'var(--canvas)',
+                    };
+                    return (
+                      <div key={order.id} className="rot-row">
+                        <span className="rot-id">#{order.id}</span>
+                        <span className="rot-customer">{order.cliente_nombre ?? 'Cliente'}</span>
+                        <span className="rot-total">{money(order.total)}</span>
+                        <span className="rot-status" style={{ color: meta.color, background: meta.bg }}>{meta.label}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

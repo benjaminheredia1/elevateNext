@@ -36,9 +36,11 @@ const Icons = {
   analitica: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>,
 };
 
+// Nav del zip (8 secciones). Las secciones extra se irán sumando aquí a medida
+// que se reconstruyan sobre el nuevo diseño. Las rutas apuntan a nuestras páginas Next.
 const NAV_GROUPS = [
   {
-    label: 'OPERACIÓN',
+    label: 'Operación',
     items: [
       { to: '/admin', label: 'Dashboard', icon: Icons.dashboard, end: true, alertKey: 'dashboard' },
       { to: '/admin/orders', label: 'Pedidos', icon: Icons.orders, alertKey: 'orders' },
@@ -46,40 +48,39 @@ const NAV_GROUPS = [
     ],
   },
   {
-    label: 'CLIENTES',
-    items: [
-      { to: '/admin/clientes', label: 'Clientes', icon: Icons.clientes },
-    ],
-  },
-  {
-    label: 'CATÁLOGO',
+    label: 'Catálogo',
     items: [
       { to: '/admin/products', label: 'Productos', icon: Icons.products },
       { to: '/admin/category', label: 'Categorías', icon: Icons.category },
-      { to: '/admin/insumos', label: 'Insumos', icon: Icons.insumos, alertKey: 'insumos' },
-      { to: '/admin/recetas', label: 'Recetas', icon: Icons.recetas },
-      { to: '/admin/reglasHorarias', label: 'Horarios', icon: Icons.horarios },
+      { to: '/admin/insumos', label: 'Inventario', icon: Icons.insumos, alertKey: 'insumos' },
     ],
   },
   {
-    label: 'FINANZAS',
+    label: 'Negocio',
     items: [
-      { to: '/admin/analitica', label: 'Analítica', icon: Icons.analitica },
-      { to: '/admin/contabilidad', label: 'Contabilidad', icon: Icons.contabilidad },
-      { to: '/admin/flujo-caja', label: 'Flujo de Caja', icon: Icons.flujo },
+      { to: '/admin/analitica', label: 'Analítica & Finanzas', icon: Icons.analitica },
+      { to: '/admin/settings', label: 'Configuración', icon: Icons.settings },
+    ],
+  },
+  {
+    label: 'Finanzas',
+    items: [
       { to: '/admin/caja', label: 'Caja', icon: Icons.caja },
+      { to: '/admin/flujo-caja', label: 'Flujo de Caja', icon: Icons.flujo },
+      { to: '/admin/contabilidad', label: 'Contabilidad', icon: Icons.contabilidad },
+      { to: '/admin/cuentas-cobrar', label: 'Cuentas por Cobrar', icon: Icons.cobrar },
+      { to: '/admin/cuentas-pagar', label: 'Cuentas por Pagar', icon: Icons.pagar },
       { to: '/admin/gastos-fijos', label: 'Gastos Fijos', icon: Icons.contabilidad },
+      { to: '/admin/activos-fijos', label: 'Activos Fijos', icon: Icons.activos },
     ],
   },
   {
-    label: 'ADMINISTRACIÓN',
+    label: 'Gestión',
     items: [
-      { to: '/admin/activos-fijos', label: 'Activos Fijos', icon: Icons.activos },
-      { to: '/admin/cuentas-cobrar', label: 'Por Cobrar', icon: Icons.cobrar },
-      { to: '/admin/cuentas-pagar', label: 'Por Pagar', icon: Icons.pagar },
+      { to: '/admin/clientes', label: 'Clientes', icon: Icons.clientes },
+      { to: '/admin/reglasHorarias', label: 'Horarios', icon: Icons.horarios },
       { to: '/admin/usuarios', label: 'Usuarios', icon: Icons.usuarios },
       { to: '/admin/auditoria', label: 'Auditoría', icon: Icons.auditoria },
-      { to: '/admin/settings', label: 'Configuración', icon: Icons.settings },
     ],
   },
 ];
@@ -209,7 +210,7 @@ export default function AdminPanel({ children }: { children: React.ReactNode }) 
 
       <aside className={`admin-sidebar ${sidebarOpen ? 'open' : ''}`}>
         <div className="admin-sidebar-header">
-          <img src="/elevate.png" alt="Elevate" className="admin-logo" />
+          <img src="/elevate-logo-light.png" alt="Elevate" className="admin-logo" />
           <span className="admin-badge">Admin</span>
         </div>
 

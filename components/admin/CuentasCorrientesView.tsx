@@ -60,12 +60,14 @@ function NuevaCuentaModal({
   };
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.55)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <form onSubmit={submit} className="dash-card" style={{ width: 'min(500px, 100%)', gridColumn: 'auto' }}>
-        <div className="dash-card-header">
-          <h3>{tipo === 'POR_COBRAR' ? 'Nueva cuenta por cobrar' : 'Nueva cuenta por pagar'}</h3>
+    <div className="admin-modal-overlay">
+      <form onSubmit={submit} className="admin-modal">
+        <div className="admin-modal-header">
+          <h2>{tipo === 'POR_COBRAR' ? 'Nueva cuenta por cobrar' : 'Nueva cuenta por pagar'}</h2>
+          <button type="button" className="admin-modal-close" onClick={onClose}>×</button>
         </div>
-        <div className="form-grid">
+        <div className="admin-modal-body">
+          <div className="form-grid">
           <div className="form-group full">
             <label>{tipo === 'POR_COBRAR' ? 'Deudor' : 'Acreedor'}</label>
             <input value={form.contraparte} onChange={e => setForm({ ...form, contraparte: e.target.value })} required />
@@ -82,8 +84,9 @@ function NuevaCuentaModal({
             <label>Vencimiento</label>
             <input type="date" value={form.vencimiento ?? ''} onChange={e => setForm({ ...form, vencimiento: e.target.value || null })} />
           </div>
+          </div>
         </div>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
+        <div className="admin-modal-footer">
           <button type="button" className="admin-btn ghost" onClick={onClose}>Cancelar</button>
           <button type="submit" className="admin-btn primary" disabled={saving}>Guardar</button>
         </div>
@@ -107,17 +110,20 @@ function PagoModal({
   const [monto, setMonto] = useState(0);
   if (!cuenta) return null;
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.55)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <form onSubmit={e => { e.preventDefault(); onSubmit(cuenta.id, Number(monto)); }} className="dash-card" style={{ width: 'min(380px, 100%)', gridColumn: 'auto' }}>
-        <div className="dash-card-header">
-          <h3>Registrar pago</h3>
+    <div className="admin-modal-overlay">
+      <form onSubmit={e => { e.preventDefault(); onSubmit(cuenta.id, Number(monto)); }} className="admin-modal compact">
+        <div className="admin-modal-header">
+          <h2>Registrar pago</h2>
+          <button type="button" className="admin-modal-close" onClick={onClose}>×</button>
         </div>
-        <p style={{ color: '#aaa', fontSize: 13, marginBottom: 12 }}>{cuenta.contraparte} — Saldo: <b><MoneyText value={cuenta.saldo} /></b></p>
-        <div className="form-group">
-          <label>Monto a pagar (Bs.)</label>
-          <input type="number" min="0.01" max={cuenta.saldo} step="0.01" value={monto || ''} onChange={e => setMonto(Number(e.target.value))} required autoFocus />
+        <div className="admin-modal-body">
+          <div className="finance-modal-note">{cuenta.contraparte} · Saldo: <strong><MoneyText value={cuenta.saldo} /></strong></div>
+          <div className="form-group">
+            <label>Monto a pagar (Bs.)</label>
+            <input type="number" min="0.01" max={cuenta.saldo} step="0.01" value={monto || ''} onChange={e => setMonto(Number(e.target.value))} required autoFocus />
+          </div>
         </div>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
+        <div className="admin-modal-footer">
           <button type="button" className="admin-btn ghost" onClick={onClose}>Cancelar</button>
           <button type="submit" className="admin-btn primary" disabled={saving}>Confirmar</button>
         </div>
@@ -174,11 +180,11 @@ export default function CuentasCorrientesView({ tipo }: { tipo: TipoCuenta }) {
           </div>
 
           {/* Filtros */}
-          <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+          <div className="finance-filter-row">
             {ESTADOS.map(e => (
               <button
                 key={e.value}
-                className={`admin-btn ${filtro === e.value ? 'primary' : 'ghost'}`}
+                className={`finance-chip ${filtro === e.value ? 'active' : ''}`}
                 onClick={() => setFiltro(e.value)}
               >
                 {e.label}
@@ -202,7 +208,7 @@ export default function CuentasCorrientesView({ tipo }: { tipo: TipoCuenta }) {
                 key: 'acciones',
                 header: '',
                 render: (row: any) => (
-                  <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <div className="admin-actions">
                     <button
                       className="admin-btn ghost"
                       disabled={row.estado === 'PAGADA' || pago.isPending}

@@ -37,12 +37,14 @@ function FormModal({
   };
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.55)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <form onSubmit={submit} className="dash-card" style={{ width: 'min(520px, 100%)', gridColumn: 'auto' }}>
-        <div className="dash-card-header">
-          <h3>{form.id ? 'Editar gasto fijo' : 'Nuevo gasto fijo'}</h3>
+    <div className="admin-modal-overlay">
+      <form onSubmit={submit} className="admin-modal">
+        <div className="admin-modal-header">
+          <h2>{form.id ? 'Editar gasto fijo' : 'Nuevo gasto fijo'}</h2>
+          <button type="button" className="admin-modal-close" onClick={onClose}>×</button>
         </div>
-        <div className="form-grid">
+        <div className="admin-modal-body">
+          <div className="form-grid">
           <div className="form-group full">
             <label>Concepto</label>
             <input value={form.concepto} onChange={e => setForm({ ...form, concepto: e.target.value })} required />
@@ -68,8 +70,9 @@ function FormModal({
               <option value="false">Inactivo</option>
             </select>
           </div>
+          </div>
         </div>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
+        <div className="admin-modal-footer">
           <button type="button" className="admin-btn ghost" onClick={onClose}>Cancelar</button>
           <button type="submit" className="admin-btn primary" disabled={saving}>Guardar</button>
         </div>
@@ -123,7 +126,7 @@ export default function GastosFijosPage() {
                 key: 'acciones',
                 header: '',
                 render: (row: any) => (
-                  <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                  <div className="admin-actions">
                     <button className="admin-btn ghost" onClick={() => setEditing(row)}>Editar</button>
                     <button className="admin-btn ghost" onClick={() => eliminar.mutate(row.id)} disabled={!row.activo || eliminar.isPending}>Desactivar</button>
                   </div>

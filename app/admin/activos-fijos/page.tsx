@@ -65,12 +65,14 @@ function FormModal({
   };
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.55)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <form onSubmit={submit} className="dash-card" style={{ width: 'min(560px, 100%)', gridColumn: 'auto', maxHeight: '90vh', overflowY: 'auto' }}>
-        <div className="dash-card-header">
-          <h3>{form.id ? 'Editar activo fijo' : 'Nuevo activo fijo'}</h3>
+    <div className="admin-modal-overlay">
+      <form onSubmit={submit} className="admin-modal wide">
+        <div className="admin-modal-header">
+          <h2>{form.id ? 'Editar activo fijo' : 'Nuevo activo fijo'}</h2>
+          <button type="button" className="admin-modal-close" onClick={onClose}>×</button>
         </div>
-        <div className="form-grid">
+        <div className="admin-modal-body">
+          <div className="form-grid">
           <div className="form-group full">
             <label>Nombre</label>
             <input value={form.nombre} onChange={e => setForm({ ...form, nombre: e.target.value })} required />
@@ -101,8 +103,9 @@ function FormModal({
             <label>Notas</label>
             <input value={form.notas ?? ''} onChange={e => setForm({ ...form, notas: e.target.value })} placeholder="Opcional" />
           </div>
+          </div>
         </div>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
+        <div className="admin-modal-footer">
           <button type="button" className="admin-btn ghost" onClick={onClose}>Cancelar</button>
           <button type="submit" className="admin-btn primary" disabled={saving}>Guardar</button>
         </div>
@@ -154,12 +157,12 @@ export default function ActivosFijosPage() {
           {/* Resumen por categoría */}
           <div className="dash-card" style={{ marginBottom: 16 }}>
             <div className="dash-card-header"><h3>Por categoría</h3></div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12, padding: '12px 0' }}>
+            <div className="finance-category-grid">
               {Object.entries(resumen).map(([cat, vals]) => (
-                <div key={cat} style={{ background: 'rgba(255,255,255,.04)', borderRadius: 8, padding: '10px 14px' }}>
-                  <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>{cat}</div>
-                  <div style={{ fontWeight: 700, fontSize: 15 }}><MoneyText value={vals.valor_actual} /></div>
-                  <div style={{ fontSize: 11, color: '#666' }}>{vals.cantidad} activo{vals.cantidad !== 1 ? 's' : ''}</div>
+                <div key={cat} className="finance-category-card">
+                  <div className="finance-category-label">{cat}</div>
+                  <div className="finance-category-value"><MoneyText value={vals.valor_actual} /></div>
+                  <div className="finance-category-sub">{vals.cantidad} activo{vals.cantidad !== 1 ? 's' : ''}</div>
                 </div>
               ))}
             </div>
@@ -181,7 +184,7 @@ export default function ActivosFijosPage() {
                 key: 'acciones',
                 header: '',
                 render: (row: any) => (
-                  <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                  <div className="admin-actions">
                     <button className="admin-btn ghost" onClick={() => setEditing(row)}>Editar</button>
                     <button
                       className="admin-btn ghost"
