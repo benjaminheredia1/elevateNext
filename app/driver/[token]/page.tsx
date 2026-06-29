@@ -75,6 +75,11 @@ export default function DriverPage({ params }: { params: Promise<{ token: string
 
       leafletMapRef.current = map;
 
+      // Ensure GPS tracking is active now that the map is ready
+      if (watchIdRef.current === null) {
+        startTracking();
+      }
+
       const boundsPoints: [number, number][] = [];
 
       // Restaurant Marker

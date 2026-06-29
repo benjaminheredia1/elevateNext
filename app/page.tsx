@@ -141,18 +141,30 @@ export default function Home() {
     const handleScroll = () => setScrolled(window.scrollY > 50);
     window.addEventListener('scroll', handleScroll);
 
-    fetch('/api/productos')
-      .then(r => r.json())
-      .then(res => {
-        if (res.data) {
-          const mapped = res.data.slice(0, 6).map((p: any) => {
+    // Fetch from both brands in parallel, interleave up to 3 from each
+    Promise.all([
+      fetch('/api/productos?marca=elevate').then(r => r.json()),
+      fetch('/api/productos?marca=fitbull').then(r => r.json()),
+    ])
+      .then(([elevateRes, fitbullRes]) => {
+        const elevateItems: any[] = elevateRes.data ?? [];
+        const fitbullItems: any[] = fitbullRes.data ?? [];
+
+        const combined: any[] = [];
+        for (let i = 0; i < 3; i++) {
+          if (elevateItems[i]) combined.push(elevateItems[i]);
+          if (fitbullItems[i]) combined.push(fitbullItems[i]);
+        }
+
+        if (combined.length > 0) {
+          const mapProduct = (p: any) => {
             const catName = p.categoria_id?.[0]?.categoria?.nombre || 'General';
             let iconName = 'bowl';
             const catLower = catName.toLowerCase();
             if (catLower.includes('wrap')) iconName = 'wrap';
-            else if (catLower.includes('bebida') || catLower.includes('batido')) iconName = 'cup';
+            else if (catLower.includes('bebida') || catLower.includes('batido') || catLower.includes('smoothie')) iconName = 'cup';
             else if (catLower.includes('ensalada')) iconName = 'salad';
-            
+            else if (catLower.includes('snack')) iconName = 'nut';
             return {
               id: p.id,
               name: p.nombre,
@@ -161,11 +173,14 @@ export default function Home() {
               category: catName,
               tag: null,
               icon: Icons[iconName as keyof typeof Icons] || Icons.bowl,
-              calories: 400,
-              protein: '30g',
+              calories: p.calorias ?? null,
+              protein: p.proteina ?? null,
             };
-          });
-          setFeaturedProducts(mapped);
+          };
+          setFeaturedProducts(combined.slice(0, 6).map(mapProduct));
+        } else {
+          // Fallback a datos estáticos si aún no hay productos publicados
+          setFeaturedProducts(featured as any[]);
         }
       })
       .catch(console.error);
@@ -368,10 +383,12 @@ export default function Home() {
                   <div className="product-category">{product.category}</div>
                   <h3>{product.name}</h3>
                   <p>{product.description}</p>
-                  <div className="product-macros">
-                    <span className="macro-badge">{product.calories} kcal</span>
-                    <span className="macro-badge protein">{product.protein} proteína</span>
-                  </div>
+                  {(product.calories || product.protein) && (
+                    <div className="product-macros">
+                      {product.calories && <span className="macro-badge">{product.calories} kcal</span>}
+                      {product.protein && <span className="macro-badge protein">{product.protein} proteína</span>}
+                    </div>
+                  )}
                   <div className="product-footer">
                     <div className="product-price"><span className="currency">Bs. </span>{product.price}</div>
                     <motion.button

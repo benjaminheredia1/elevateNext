@@ -267,7 +267,12 @@ export default function AdminPanel({ children }: { children: React.ReactNode }) 
             </div>
           </div>
           <button
-            onClick={() => { localStorage.removeItem('token'); router.push('/login'); }}
+            onClick={() => {
+              localStorage.removeItem('token');
+              localStorage.removeItem('rol');
+              localStorage.removeItem('user');
+              router.push('/login');
+            }}
             style={{
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
               width: '100%', padding: '10px 16px', borderRadius: 8, cursor: 'pointer',

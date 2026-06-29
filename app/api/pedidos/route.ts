@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    const alertas: { nombre: string; stock_actual: number; stock_minimo: number; unidad_medida: string }[] = [];
+
 
     for (const item of items) {
       // Find or create product
@@ -98,46 +98,12 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      // Consume insumos based on recipes
-      const recetas = await prisma.recetasProducto.findMany({
-        where: { producto_id: producto.id },
-        include: { insumo: true },
-      });
-
-      for (const receta of recetas) {
-        const consumido = receta.cantidad_utilizada * Number(item.cantidad);
-        const nuevoStock = receta.insumo.stock_actual - consumido;
-        const stockFinal = Math.max(0, nuevoStock);
-
-        await prisma.insumo.update({
-          where: { id: receta.insumo_id },
-          data: { stock_actual: stockFinal },
-        });
-
-        await prisma.movimientoInterno.create({
-          data: {
-            insumo_id: receta.insumo_id,
-            tipo_movimiento: 'PRODUCCION',
-            cantidad: consumido,
-            descripcion: `Pedido #${transaccion.id} — ${item.nombre} x${item.cantidad}`,
-          },
-        });
-
-        if (stockFinal <= receta.insumo.stock_minimo) {
-          alertas.push({
-            nombre: receta.insumo.nombre,
-            stock_actual: stockFinal,
-            stock_minimo: receta.insumo.stock_minimo,
-            unidad_medida: receta.insumo.unidad_medida,
-          });
-        }
-      }
+      // Transaccion detalle created (inventory deduction is handled in PUT /api/pedidos/[id] when state changes)
     }
 
     return NextResponse.json(
       {
         data: transaccion,
-        alertas,
         message: 'Pedido creado exitosamente',
       },
       { status: 201 }

@@ -24,7 +24,9 @@ export async function GET() {
             : i.stock_actual <= i.stock_minimo * 1.5
               ? 'advertencia'
               : 'ok',
-          porcentaje: Math.min(100, (i.stock_actual / (i.stock_minimo * 2)) * 100),
+          porcentaje: i.stock_minimo > 0
+            ? Math.min(100, Math.round((i.stock_actual / (i.stock_minimo * 2)) * 100))
+            : (i.stock_actual > 0 ? 100 : 0),
         })),
       },
     });

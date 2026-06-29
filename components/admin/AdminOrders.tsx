@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AnimatePresence } from 'framer-motion';
+import { AnimatePresence, motion } from 'framer-motion';
 import apiClient from '@/hooks/api';
 
 type EstadoPedido = 'PENDIENTE' | 'EN_PREPARACION' | 'EN_CAMINO' | 'ENTREGADO' | 'CANCELADO' | 'PAGADO';
@@ -126,7 +126,14 @@ function PedidoCard({
 
       <AnimatePresence initial={false}>
         {expanded && (
-          <div className="order-card-detail">
+          <motion.div
+            className="order-card-detail"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.22, ease: 'easeInOut' }}
+            style={{ overflow: 'hidden' }}
+          >
             <div className="ocd-section">
               <h4>Items del pedido</h4>
               <div className="ocd-items">
@@ -189,7 +196,7 @@ function PedidoCard({
                 {pedido.driver_link_id ? 'Copiar link repartidor' : 'Generar link repartidor'}
               </button>
             </div>
-          </div>
+          </motion.div>
         )}
       </AnimatePresence>
     </div>

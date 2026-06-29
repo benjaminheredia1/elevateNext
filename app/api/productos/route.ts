@@ -1,10 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
+    const { searchParams } = new URL(req.url);
+    const marca = searchParams.get('marca');
+
+    const whereClause: any = { estado_publicacion: 'PUBLICADO', disponible: true };
+    if (marca) {
+      whereClause.marcas = { some: { marca: { key: marca } } };
+    }
+
     const productos = await prisma.producto.findMany({
-      where: { estado_publicacion: 'PUBLICADO', disponible: true },
+      where: whereClause,
       include: {
         categoria_id: { include: { categoria: true } },
         recetaProducto_id: { include: { insumo: true } },
@@ -57,16 +65,41 @@ export async function GET() {
 
     return NextResponse.json({ data });
   } catch (error) {
-    return NextResponse.json({ error: 'Error al obtener productos' }, { status: 500 });
+    console.error('GET /api/productos error:', error);
+    return NextResponse.json({ error: 'Error al obtener productos', details: String(error) }, { status: 500 });
   }
 }
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { nombre, descripcion, precio, imagen_url, disponible } = body;
+    const { nombre, descripcion, precio, imagen_url, disponible, estado_publicacion, marcas } = body;
+    
+    const productoData: any = { 
+      nombre, 
+      descripcion, 
+      precio: Number(precio), 
+      imagen_url, 
+      disponible: disponible ?? true,
+      estado_publicacion: estado_publicacion ?? 'BORRADOR',
+    };
+
+    if (marcas && marcas.length > 0) {
+      // Find the brands by key
+      const dbMarcas = await prisma.marca.findMany({
+        where: { key: { in: marcas } }
+      });
+      if (dbMarcas.length > 0) {
+        productoData.marcas = {
+          create: dbMarcas.map(m => ({
+            marca: { connect: { id: m.id } }
+          }))
+        };
+      }
+    }
+
     const producto = await prisma.producto.create({
-      data: { nombre, descripcion, precio: Number(precio), imagen_url, disponible: disponible ?? true },
+      data: productoData,
     });
     return NextResponse.json({ data: producto }, { status: 201 });
   } catch (error) {

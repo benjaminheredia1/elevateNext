@@ -529,7 +529,7 @@ const ROUTE_COORDS: [number, number][] = [
   [-17.7818, -63.1735], // Tu dirección (destino)
 ]
 
-function DeliveryMap({ currentStep, totalSteps }: { currentStep: number; totalSteps: number }) {
+function DeliveryMap({ currentStep, totalSteps, driverPos }: { currentStep: number; totalSteps: number; driverPos?: [number, number] | null }) {
   const mapRef = useRef<HTMLDivElement>(null)
   const leafletMapRef = useRef<import('leaflet').Map | null>(null)
   const riderMarkerRef = useRef<import('leaflet').Marker | null>(null)
@@ -541,6 +541,7 @@ function DeliveryMap({ currentStep, totalSteps }: { currentStep: number; totalSt
 
   // Get interpolated lat/lng for the rider along the route
   const getRiderLatLng = (step: number): [number, number] => {
+    if (driverPos) return driverPos;
     const t = step / (totalSteps - 1)
     if (t <= 0) return ROUTE_COORDS[0]
     if (t >= 1) return ROUTE_COORDS[ROUTE_COORDS.length - 1]
@@ -694,7 +695,7 @@ function DeliveryMap({ currentStep, totalSteps }: { currentStep: number; totalSt
     }
 
     updateMap()
-  }, [currentStep, isDelivered])
+  }, [currentStep, isDelivered, driverPos])
 
   const progress = currentStep / (totalSteps - 1)
 
@@ -732,21 +733,65 @@ function DeliveryMap({ currentStep, totalSteps }: { currentStep: number; totalSt
   )
 }
 
+const PEDIDO_STORAGE_KEY = 'elevate_pedido_activo';
+
 /* ===== Order Tracker ===== */
 function OrderTracker({ onClose, pedidoId }: { onClose: () => void; pedidoId?: number }) {
+
   const [currentStep, setCurrentStep] = useState(0)
   const [showConfetti, setShowConfetti] = useState(false)
+  const [driverPos, setDriverPos] = useState<[number, number] | null>(null)
   const fallbackRef = useRef(`#${Math.floor(Math.random() * 9000) + 1000}`)
   const orderNumber = pedidoId ? `#${pedidoId}` : fallbackRef.current
 
   useEffect(() => {
-    if (currentStep < ORDER_STEPS.length - 1) {
-      const timer = setTimeout(() => {
-        setCurrentStep(prev => prev + 1)
-      }, 3000)
-      return () => clearTimeout(timer)
-    } else {
+    if (!pedidoId) {
+      // Demo fallback if no pedidoId
+      if (currentStep < ORDER_STEPS.length - 1) {
+        const timer = setTimeout(() => setCurrentStep(prev => prev + 1), 3000)
+        return () => clearTimeout(timer)
+      }
+      return;
+    }
+
+    let pollingInterval: NodeJS.Timeout;
+    const fetchStatus = async () => {
+      try {
+        const res = await fetch(`/api/pedidos/${pedidoId}`);
+        const data = await res.json();
+        if (data.data) {
+          const { estado, driver_lat, driver_lng } = data.data;
+          
+          let stepIndex = 0;
+          if (estado === 'EN_PREPARACION') stepIndex = 1;
+          else if (estado === 'EN_CAMINO') stepIndex = 2;
+          else if (estado === 'ENTREGADO' || estado === 'PAGADO') stepIndex = 3;
+
+          setCurrentStep(stepIndex);
+
+          if (driver_lat && driver_lng) {
+            setDriverPos([driver_lat, driver_lng]);
+          }
+
+          if (stepIndex === ORDER_STEPS.length - 1) {
+             clearInterval(pollingInterval);
+          }
+        }
+      } catch (err) {
+        console.error('Error fetching order status:', err);
+      }
+    };
+
+    fetchStatus();
+    pollingInterval = setInterval(fetchStatus, 5000);
+
+    return () => clearInterval(pollingInterval);
+  }, [pedidoId, currentStep]);
+
+  useEffect(() => {
+    if (currentStep === ORDER_STEPS.length - 1) {
       setShowConfetti(true)
+      try { localStorage.removeItem(PEDIDO_STORAGE_KEY) } catch {}
       const t = setTimeout(() => setShowConfetti(false), 3000)
       return () => clearTimeout(t)
     }
@@ -831,7 +876,7 @@ function OrderTracker({ onClose, pedidoId }: { onClose: () => void; pedidoId?: n
         </div>
 
         {/* Delivery Map */}
-        <DeliveryMap currentStep={currentStep} totalSteps={ORDER_STEPS.length} />
+        <DeliveryMap currentStep={currentStep} totalSteps={ORDER_STEPS.length} driverPos={driverPos} />
 
         {currentStep === ORDER_STEPS.length - 1 && (
           <motion.button
@@ -859,6 +904,20 @@ export function useShop() {
   const [orderTrackerOpen, setOrderTrackerOpen] = useState(false)
   const [addedProductId, setAddedProductId] = useState<number | null>(null)
   const [currentPedidoId, setCurrentPedidoId] = useState<number | undefined>(undefined)
+
+  // Restore active order from localStorage after mount (avoids SSR mismatch)
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(PEDIDO_STORAGE_KEY)
+      if (saved) {
+        const id = Number(saved)
+        if (!isNaN(id) && id > 0) {
+          setCurrentPedidoId(id)
+          setOrderTrackerOpen(true)
+        }
+      }
+    } catch {}
+  }, [])
 
   // Lock body scroll when overlays open
   useEffect(() => {
@@ -907,8 +966,17 @@ export function useShop() {
     setCurrentPedidoId(pedidoId)
     setCheckoutOpen(false)
     setCart([])
+    if (pedidoId) {
+      try { localStorage.setItem(PEDIDO_STORAGE_KEY, String(pedidoId)) } catch {}
+    }
     setTimeout(() => setOrderTrackerOpen(true), 300)
   }
+
+  const clearActivePedido = useCallback(() => {
+    setCurrentPedidoId(undefined)
+    setOrderTrackerOpen(false)
+    try { localStorage.removeItem(PEDIDO_STORAGE_KEY) } catch {}
+  }, [])
 
   return {
     cart,
@@ -919,6 +987,7 @@ export function useShop() {
     removeItem,
     openCart,
     currentPedidoId,
+    clearActivePedido,
     // internal state exposed for ShopOverlays
     cartOpen,
     setCartOpen,
@@ -932,6 +1001,8 @@ export function useShop() {
 }
 
 export type ShopState = ReturnType<typeof useShop>
+
+
 
 /* ===== ShopOverlays: FAB + cart drawer + checkout + tracker ===== */
 export function ShopOverlays({ shop }: { shop: ShopState }) {
@@ -992,7 +1063,7 @@ export function ShopOverlays({ shop }: { shop: ShopState }) {
       <AnimatePresence>
         {shop.orderTrackerOpen && (
           <OrderTracker
-            onClose={() => shop.setOrderTrackerOpen(false)}
+            onClose={shop.clearActivePedido}
             pedidoId={shop.currentPedidoId}
           />
         )}
