@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { useAuth } from '@/hooks/auth';
+import { useAuth, homeForRole } from '@/hooks/auth';
 import { useRouter } from 'next/navigation';
 import AlertPopup from '@/components/AlertPopup';
 
@@ -18,18 +18,16 @@ export default function LoginPage() {
   useEffect(() => {
     const token = localStorage.getItem('token');
     if (!token) return;
-    useAuth.verify(token).then((valid) => {
-      if (valid) router.replace('/admin');
-    });
+    useAuth.me()
+      .then((data) => { if (data?.rol) router.replace(homeForRole(data.rol)); })
+      .catch(() => {});
   }, [router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const response = await useAuth.login(email, password);
-      if (response.status === 200 || response.status === 201) {
-        router.push('/admin');
-      }
+      const data = await useAuth.login(email, password);
+      router.push(homeForRole(data?.user?.rol));
     } catch (error: unknown) {
       const err = error as { response?: { data?: { message?: string; title?: string } } };
       setErrorMessage(err?.response?.data?.message ?? 'Error al iniciar sesión');

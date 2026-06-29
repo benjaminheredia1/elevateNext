@@ -1,41 +1,83 @@
 import prisma from '../lib/prisma'
 import bcrypt from 'bcryptjs'
+import { Rol, TipoCuenta } from '@prisma/client'
 
 async function main() {
-  const email = 'benjaherediaruiz@gmail.com'
-  const password = 'benja122'
-  
-  // Check if admin already exists
-  const existingAdmin = await prisma.usuario.findUnique({
-    where: { email }
-  })
-
-  if (!existingAdmin) {
-    const passwordHash = await bcrypt.hash(password, 10)
-    
-    await prisma.usuario.create({
+  // 1. Sucursal por defecto (migra datos de Configuracion si existe)
+  let sucursal = await prisma.sucursal.findFirst()
+  if (!sucursal) {
+    const config = await prisma.configuracion.findFirst()
+    sucursal = await prisma.sucursal.create({
       data: {
-        nombre: 'Admin',
+        nombre: config?.sucursal_nombre ?? 'Sucursal Principal',
+        lat: config?.sucursal_lat ?? null,
+        lng: config?.sucursal_lng ?? null,
+      },
+    })
+    console.log(`✅ Sucursal creada: ${sucursal.nombre}`)
+  } else {
+    console.log(`ℹ️ Sucursal ya existe: ${sucursal.nombre}`)
+  }
+
+  // 2. Usuarios base con roles (idempotente vía upsert)
+  const usuarios = [
+    { email: 'benjaherediaruiz@gmail.com', username: 'admin', nombre: 'Admin',
+      rol: Rol.DUENO, password: 'benja122', sucursal_id: null as number | null },
+    { email: 'cajero@elevate.com', username: 'cajero', nombre: 'Cajero',
+      rol: Rol.CAJERO, password: 'cajero123', sucursal_id: sucursal.id },
+  ]
+
+  for (const u of usuarios) {
+    const hash = await bcrypt.hash(u.password, 10)
+    await prisma.usuario.upsert({
+      where: { email: u.email },
+      update: {
+        username: u.username,
+        password: hash,
+        rol: u.rol,
+        activo: true,
+        sucursal_id: u.sucursal_id,
+      },
+      create: {
+        nombre: u.nombre,
         apellido_paterno: 'Sistema',
         apellido_materno: '',
-        email: email,
-        password: passwordHash,
+        email: u.email,
+        username: u.username,
+        password: hash,
         token: '',
-        rol: 'ADMIN'
-      }
+        rol: u.rol,
+        activo: true,
+        sucursal_id: u.sucursal_id,
+      },
     })
-    console.log(`✅ Default admin created: ${email}`)
-  } else {
-    console.log(`ℹ️ Admin already exists: ${email}`)
-    
-    // Ensure rol is ADMIN
-    if (existingAdmin.rol !== 'ADMIN') {
-      await prisma.usuario.update({
-        where: { email },
-        data: { rol: 'ADMIN' }
+    console.log(`✅ Usuario ${u.username} (${u.rol})`)
+  }
+
+  // 3. Cuentas financieras (Efectivo / QR) de la sucursal
+  const sucParaCuentas = await prisma.sucursal.findFirst()
+  if (sucParaCuentas) {
+    for (const tipo of [TipoCuenta.EFECTIVO, TipoCuenta.QR]) {
+      await prisma.cuentaFinanciera.upsert({
+        where: { sucursal_id_tipo: { sucursal_id: sucParaCuentas.id, tipo } },
+        update: {},
+        create: { sucursal_id: sucParaCuentas.id, tipo, nombre: `Caja ${tipo}` },
       })
-      console.log(`✅ Updated existing user to ADMIN role`)
     }
+    console.log('✅ Cuentas financieras (EFECTIVO, QR)')
+  }
+  // 4. Marcas (FASE 5A) — upsert idempotente por key
+  const marcas = [
+    { key: 'elevate', nombre: 'Elevate', color: '#22c55e' },
+    { key: 'fitbull', nombre: 'Fitbull', color: '#f59e0b' },
+  ]
+  for (const m of marcas) {
+    await prisma.marca.upsert({
+      where: { key: m.key },
+      update: { nombre: m.nombre, color: m.color },
+      create: m,
+    })
+    console.log(`✅ Marca: ${m.nombre} (${m.key})`)
   }
 }
 

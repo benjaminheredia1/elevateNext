@@ -37,7 +37,7 @@ const ESTADO_META: Record<string, { label: string; color: string; bg: string }> 
 };
 
 const PAGO_ICONS: Record<string, string> = {
-  cash: '💵', transfer: '🏦', qr: '📱',
+  cash: '💵', EFECTIVO: '💵', transfer: '🏦', BANCO: '🏦', qr: '📱', QR: '📱', TARJETA: '💳',
 };
 
 function EstadoBadge({ estado }: { estado: string }) {
@@ -295,7 +295,7 @@ export default function AdminOrders() {
           cliente_direccion: 'Dirección simulada de prueba',
           cliente_lat: -17.7710 + (Math.random() - 0.5) * 0.05,
           cliente_lng: -63.1900 + (Math.random() - 0.5) * 0.05,
-          metodo_pago: 'cash',
+          metodo_pago: 'EFECTIVO',
           items: [
             { nombre: 'Bowl Proteico Andino', cantidad: 1, precio: 45 }
           ],

@@ -1,0 +1,18 @@
+
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: elevate_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: elevate_user
+      POSTGRES_PASSWORD: elevate_pass123
+      POSTGRES_DB: elevate_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - elevate_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  elevate_postgres_data:

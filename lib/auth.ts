@@ -1,59 +1,66 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import prisma from './prisma';
+import type { Rol } from '@prisma/client';
 
 const SECRET_JWT = process.env.SECRET_JWT!;
 const SALT_ROUNDS = Number(process.env.SALT_ROUNDS ?? 10);
+
+export interface TokenPayload {
+  sub: string;     // id del usuario
+  email: string;
+  rol: Rol;
+}
+
+function signToken(user: { id: number; email: string; rol: Rol }): string {
+  const payload: TokenPayload = { sub: String(user.id), email: user.email, rol: user.rol };
+  return jwt.sign(payload, SECRET_JWT, { expiresIn: '1200m' });
+}
 
 export async function register(
   email: string,
   password: string,
   apellido_paterno: string,
   apellido_materno: string,
-  nombre: string
+  nombre: string,
 ) {
   const password_hash = await bcrypt.hash(password, SALT_ROUNDS);
-  const payload = { email, password };
-  const access_token = jwt.sign(payload, SECRET_JWT, { expiresIn: '1200m' });
-
   const user = await prisma.usuario.create({
-    data: {
-      email,
-      password: password_hash,
-      apellido_paterno,
-      apellido_materno,
-      nombre,
-      token: access_token,
-    },
+    data: { email, password: password_hash, apellido_paterno, apellido_materno, nombre, token: '' },
   });
-
-  return { access_token, user };
+  const access_token = signToken(user);
+  await prisma.usuario.update({ where: { id: user.id }, data: { token: access_token } });
+  const { password: _omit, ...safeUser } = user;
+  return { access_token, user: { ...safeUser, token: access_token } };
 }
 
 export async function login(email: string, password: string) {
   const user = await prisma.usuario.findFirst({ where: { email } });
   if (!user) throw new Error('Usuario no encontrado');
-
+  if (!user.activo) throw new Error('Usuario inactivo');
   const password_valid = await bcrypt.compare(password, user.password);
   if (!password_valid) throw new Error('Contraseña incorrecta');
 
-  const payload = { email, password };
-  const access_token = jwt.sign(payload, SECRET_JWT, { expiresIn: '1200m' });
-
-  await prisma.usuario.updateMany({
+  const access_token = signToken(user);
+  await prisma.usuario.update({
     where: { id: user.id },
-    data: { token: access_token },
+    data: { token: access_token, ultimo_acceso: new Date() },
   });
+  const { password: _omit, ...safeUser } = user;
+  return { access_token, user: { ...safeUser, token: access_token } };
+}
 
-  return { access_token, user };
+export function verifyToken(token: string): TokenPayload | null {
+  try {
+    return jwt.verify(token, SECRET_JWT) as TokenPayload;
+  } catch {
+    return null;
+  }
 }
 
 export async function validateToken(token: string): Promise<boolean> {
-  try {
-    jwt.verify(token, SECRET_JWT);
-    const user = await prisma.usuario.findFirst({ where: { token } });
-    return !!user;
-  } catch {
-    return false;
-  }
+  const payload = verifyToken(token);
+  if (!payload) return false;
+  const user = await prisma.usuario.findUnique({ where: { id: Number(payload.sub) } });
+  return !!user && user.activo;
 }
