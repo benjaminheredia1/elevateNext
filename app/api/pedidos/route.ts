@@ -93,7 +93,7 @@ export async function POST(req: NextRequest) {
           transaccion_id: transaccion.id,
           producto_id: producto.id,
           precio_unitario: Number(item.precio),
-          descuentoAplicado: 0,
+          descuentoAplicado: item.descuentoAplicado ? Number(item.descuentoAplicado) : 0,
           cantidad: Number(item.cantidad),
         },
       });

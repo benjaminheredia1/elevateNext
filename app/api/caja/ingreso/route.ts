@@ -7,7 +7,7 @@ import * as caja from '@/lib/server/caja/caja.service';
 export async function POST(req: NextRequest) {
   try {
     const session = await requireAuth(req);
-    requireRole(session, ['CAJERO']);
+    requireRole(session, ['CAJERO', 'DUENO', 'ADMIN']);
     const dto = MovimientoManualDTO.parse(await req.json());
     const mov = await caja.registrarMovimientoManual(session, 'INGRESO_EXTRA', dto, { ip: getClientIp(req), userAgent: req.headers.get('user-agent') });
     return NextResponse.json(mov, { status: 201 });
