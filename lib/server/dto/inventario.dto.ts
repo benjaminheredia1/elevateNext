@@ -31,11 +31,16 @@ const ItemRecetaSchema = z.object({
   cantidad_utilizada: z.number().positive(),
 });
 
+const ImagenProductoSchema = z.string().trim().refine(
+  (value) => value.startsWith('/uploads/') || z.string().url().safeParse(value).success,
+  'La imagen debe ser una URL válida o una ruta interna /uploads/...',
+);
+
 export const ProductoConFichaSchema = z.object({
   nombre:             z.string().min(1),
   descripcion:        z.string().min(1),
   precio:             z.number().positive(),
-  imagen_url:         z.string().url().optional(),
+  imagen_url:         ImagenProductoSchema.optional(),
   disponible:         z.boolean().optional().default(true),
   tipo:               z.enum(['ELABORADO', 'REVENTA']).optional().default('ELABORADO'),
   estado_publicacion: z.enum(['BORRADOR', 'PUBLICADO', 'ARCHIVADO']).optional().default('BORRADOR'),

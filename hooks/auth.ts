@@ -27,8 +27,8 @@ function authHeader() {
 }
 
 export const useAuth = {
-  login: async (email: string, password: string) => {
-    const response = await apiClient.post('/login', { email, password });
+  login: async (identifier: string, password: string) => {
+    const response = await apiClient.post('/login', { identifier, password });
     const body = response.data; // { access_token, user }
     if (typeof window !== 'undefined') {
       localStorage.setItem('token', body.access_token);

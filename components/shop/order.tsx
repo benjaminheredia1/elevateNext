@@ -22,7 +22,8 @@ export type AddableProduct = {
   category: string
 }
 
-type PaymentMethod = 'cash' | 'transfer' | 'qr'
+type PaymentMethod = 'cash' | 'card' | 'qr'
+type TipoEntrega = 'recojo' | 'delivery'
 
 type OrderStatus = 'confirmed' | 'preparing' | 'ontheway' | 'delivered'
 
@@ -172,6 +173,77 @@ function CartDrawer({
   )
 }
 
+/* ===== Location Picker (Leaflet) — pick delivery point on a map ===== */
+function LocationPicker({ lat, lng, onChange }: { lat: number | null; lng: number | null; onChange: (lat: number, lng: number) => void }) {
+  const mapRef = useRef<HTMLDivElement>(null)
+  const leafletMapRef = useRef<import('leaflet').Map | null>(null)
+  const markerRef = useRef<import('leaflet').Marker | null>(null)
+  const onChangeRef = useRef(onChange)
+  onChangeRef.current = onChange
+
+  const DEFAULT_CENTER: [number, number] = [-17.7833, -63.1821] // Santa Cruz de la Sierra
+
+  useEffect(() => {
+    if (!mapRef.current || leafletMapRef.current) return
+
+    const initMap = async () => {
+      const container = mapRef.current
+      if (!container || (container as unknown as { _leaflet_id?: number })._leaflet_id) return
+      const L = await import('leaflet')
+      if (leafletMapRef.current || (container as unknown as { _leaflet_id?: number })._leaflet_id) return
+
+      const start: [number, number] = (lat != null && lng != null) ? [lat, lng] : DEFAULT_CENTER
+      const map = L.map(container, { center: start, zoom: 15, zoomControl: true, attributionControl: false })
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        subdomains: 'abcd',
+        maxZoom: 19,
+      }).addTo(map)
+
+      const pinIcon = L.divIcon({
+        className: '',
+        html: `<div class="lf-dest-marker"><div class="lf-dest-pin"></div></div>`,
+        iconSize: [40, 52],
+        iconAnchor: [12, 40],
+      })
+      const marker = L.marker(start, { icon: pinIcon, draggable: true }).addTo(map)
+      markerRef.current = marker
+
+      marker.on('dragend', () => {
+        const p = marker.getLatLng()
+        onChangeRef.current(p.lat, p.lng)
+      })
+      map.on('click', (e: import('leaflet').LeafletMouseEvent) => {
+        marker.setLatLng(e.latlng)
+        onChangeRef.current(e.latlng.lat, e.latlng.lng)
+      })
+
+      leafletMapRef.current = map
+      map.whenReady(() => map.invalidateSize())
+      setTimeout(() => map.invalidateSize(), 350)
+    }
+
+    initMap()
+
+    return () => {
+      if (leafletMapRef.current) {
+        leafletMapRef.current.remove()
+        leafletMapRef.current = null
+        markerRef.current = null
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Reflect externally-set coords (e.g. "use my location") on the map
+  useEffect(() => {
+    if (!leafletMapRef.current || !markerRef.current || lat == null || lng == null) return
+    markerRef.current.setLatLng([lat, lng])
+    leafletMapRef.current.setView([lat, lng], 16)
+  }, [lat, lng])
+
+  return <div ref={mapRef} style={{ width: '100%', height: 200, borderRadius: 12, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.12)' }} />
+}
+
 /* ===== Checkout Modal ===== */
 function CheckoutModal({
   cart,
@@ -182,11 +254,19 @@ function CheckoutModal({
   onClose: () => void
   onOrderComplete: (pedidoId?: number) => void
 }) {
-  const [step, setStep] = useState<'datos' | 'summary' | 'payment' | 'qr' | 'confirming'>('datos')
+  const [step, setStep] = useState<'entrega' | 'payment' | 'datos' | 'qr' | 'confirming'>('entrega')
+  const [tipoEntrega, setTipoEntrega] = useState<TipoEntrega | null>(null)
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | null>(null)
   const [nombre, setNombre] = useState('')
+  const [nit, setNit] = useState('')
+  const [email, setEmail] = useState('')
   const [telefono, setTelefono] = useState('')
   const [direccion, setDireccion] = useState('')
+  const [lat, setLat] = useState<number | null>(null)
+  const [lng, setLng] = useState<number | null>(null)
+  const [gpsError, setGpsError] = useState('')
+  const [gpsLoading, setGpsLoading] = useState(false)
+  const [codigoDescuento, setCodigoDescuento] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState('')
   const total = cart.reduce((acc, item) => acc + item.price * item.quantity, 0)
@@ -194,8 +274,24 @@ function CheckoutModal({
   const qrData = encodeURIComponent(`Elevate Food | Pago Bs.${total} | ${nombre || 'Cliente'}`)
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${qrData}&bgcolor=1e1e1e&color=ff5c19&margin=10`
 
-  const handlePaymentSelect = (method: PaymentMethod) => {
-    setPaymentMethod(method)
+  const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
+  const datosCompletos = Boolean(
+    nombre.trim() && nit.trim() && emailValid && telefono.trim() &&
+    (tipoEntrega === 'recojo' || (direccion.trim() && lat != null && lng != null))
+  )
+
+  const handleUsarUbicacion = () => {
+    setGpsError('')
+    if (!('geolocation' in navigator)) {
+      setGpsError('Tu navegador no soporta geolocalización.')
+      return
+    }
+    setGpsLoading(true)
+    navigator.geolocation.getCurrentPosition(
+      pos => { setLat(pos.coords.latitude); setLng(pos.coords.longitude); setGpsLoading(false) },
+      () => { setGpsError('No se pudo obtener tu ubicación. Tócala en el mapa.'); setGpsLoading(false) },
+      { enableHighAccuracy: true, timeout: 10000 }
+    )
   }
 
   const submitOrder = async (): Promise<number | undefined> => {
@@ -207,8 +303,14 @@ function CheckoutModal({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           cliente_nombre: nombre || 'Cliente',
+          cliente_nit: nit,
+          cliente_email: email,
           cliente_telefono: telefono,
           cliente_direccion: direccion,
+          cliente_lat: lat,
+          cliente_lng: lng,
+          tipo_entrega: tipoEntrega,
+          codigo_descuento: codigoDescuento,
           metodo_pago: paymentMethod,
           items: cart.map(i => ({ nombre: i.name, precio: i.price, cantidad: i.quantity })),
           total,
@@ -225,7 +327,8 @@ function CheckoutModal({
     }
   }
 
-  const handleConfirmPayment = async () => {
+  const handleConfirmDatos = async () => {
+    if (!datosCompletos) return
     if (paymentMethod === 'qr') {
       setStep('qr')
     } else {
@@ -259,8 +362,8 @@ function CheckoutModal({
 
         {/* Step indicators */}
         <div className="modal-steps">
-          {['Datos', 'Resumen', 'Pago', 'Confirmar'].map((s, i) => {
-            const currentStep = step === 'datos' ? 0 : step === 'summary' ? 1 : step === 'payment' ? 2 : step === 'qr' ? 2 : 3
+          {['Entrega', 'Pago', 'Datos', 'Confirmar'].map((s, i) => {
+            const currentStep = step === 'entrega' ? 0 : step === 'payment' ? 1 : step === 'datos' ? 2 : step === 'qr' ? 3 : 3
             return (
               <div key={s} className={`modal-step ${i <= currentStep ? 'active' : ''}`}>
                 <div className="modal-step-dot">{i < currentStep ? '✓' : i + 1}</div>
@@ -271,106 +374,53 @@ function CheckoutModal({
         </div>
 
         <AnimatePresence mode="wait">
-          {/* ===== DATOS STEP ===== */}
-          {step === 'datos' && (
+          {/* ===== ENTREGA STEP ===== */}
+          {step === 'entrega' && (
             <motion.div
-              key="datos"
+              key="entrega"
               className="modal-content"
               initial={{ opacity: 0, x: 30 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -30 }}
               transition={{ duration: 0.3 }}
             >
-              <h2 className="modal-title">Datos de Entrega</h2>
-              <p className="modal-subtitle">Ingresa tus datos para recibir tu pedido</p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginBottom: 20 }}>
+              <h2 className="modal-title">¿Cómo quieres tu pedido?</h2>
+              <p className="modal-subtitle">Elige cómo deseas recibirlo</p>
+              <div className="payment-methods">
                 {[
-                  { label: 'Tu nombre', value: nombre, setter: setNombre, placeholder: 'Ej: Carlos Perez', required: true },
-                  { label: 'Teléfono', value: telefono, setter: setTelefono, placeholder: 'Ej: 70000000', required: false },
-                  { label: 'Dirección de entrega', value: direccion, setter: setDireccion, placeholder: 'Ej: Av. Roca y Coronado #342', required: false },
-                ].map(field => (
-                  <div key={field.label}>
-                    <label style={{ display: 'block', color: '#aaa', fontSize: 12, marginBottom: 6, fontWeight: 500 }}>
-                      {field.label} {field.required && <span style={{ color: '#ff5c19' }}>*</span>}
-                    </label>
-                    <input
-                      type="text"
-                      value={field.value}
-                      onChange={e => field.setter(e.target.value)}
-                      placeholder={field.placeholder}
-                      style={{
-                        width: '100%', padding: '10px 14px', borderRadius: 10, boxSizing: 'border-box',
-                        background: 'rgba(255,255,255,0.06)', border: `1px solid ${field.value ? 'rgba(255,92,25,0.4)' : 'rgba(255,255,255,0.12)'}`,
-                        color: '#fff', fontSize: 14, outline: 'none', transition: 'border-color 0.2s',
-                      }}
-                    />
-                  </div>
+                  { id: 'recojo' as TipoEntrega, label: 'Recoger en el local', sublabel: 'Pasa por tu pedido a la tienda', icon: Icons.home },
+                  { id: 'delivery' as TipoEntrega, label: 'Delivery', sublabel: 'Te lo llevamos a tu ubicación', icon: Icons.truck },
+                ].map(opt => (
+                  <motion.button
+                    key={opt.id}
+                    className={`payment-method-btn ${tipoEntrega === opt.id ? 'selected' : ''}`}
+                    onClick={() => setTipoEntrega(opt.id)}
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                  >
+                    <div className="payment-method-icon">{opt.icon}</div>
+                    <div className="payment-method-info">
+                      <span className="payment-method-label">{opt.label}</span>
+                      <span className="payment-method-sub">{opt.sublabel}</span>
+                    </div>
+                    <div className={`payment-method-check ${tipoEntrega === opt.id ? 'visible' : ''}`}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                    </div>
+                  </motion.button>
                 ))}
               </div>
               <motion.button
                 className="modal-primary-btn"
-                whileHover={nombre ? { scale: 1.02 } : {}}
-                whileTap={nombre ? { scale: 0.98 } : {}}
-                onClick={() => { if (nombre.trim()) setStep('summary') }}
-                disabled={!nombre.trim()}
-                style={{ opacity: nombre.trim() ? 1 : 0.5, cursor: nombre.trim() ? 'pointer' : 'not-allowed' }}
+                whileHover={tipoEntrega ? { scale: 1.02 } : {}}
+                whileTap={tipoEntrega ? { scale: 0.98 } : {}}
+                onClick={() => { if (tipoEntrega) setStep('payment') }}
+                disabled={!tipoEntrega}
+                style={{ opacity: tipoEntrega ? 1 : 0.5, cursor: tipoEntrega ? 'pointer' : 'not-allowed' }}
               >
                 Continuar {Icons.arrowRight}
               </motion.button>
-            </motion.div>
-          )}
-
-          {/* ===== SUMMARY STEP ===== */}
-          {step === 'summary' && (
-            <motion.div
-              key="summary"
-              className="modal-content"
-              initial={{ opacity: 0, x: 30 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -30 }}
-              transition={{ duration: 0.3 }}
-            >
-              <h2 className="modal-title">Resumen del Pedido</h2>
-              <div className="modal-order-items">
-                {cart.map(item => (
-                  <div key={item.id} className="modal-order-item">
-                    <div className="modal-order-item-icon">{item.icon}</div>
-                    <div className="modal-order-item-info">
-                      <span className="modal-order-item-name">{item.name}</span>
-                      <span className="modal-order-item-qty">x{item.quantity}</span>
-                    </div>
-                    <span className="modal-order-item-price">Bs. {item.price * item.quantity}</span>
-                  </div>
-                ))}
-              </div>
-              <div className="modal-total-box">
-                <div className="modal-total-row">
-                  <span>Delivery estimado</span>
-                  <span className="modal-delivery-time">{Icons.clock} 30-45 min</span>
-                </div>
-                <div className="modal-total-row big">
-                  <span>Total a pagar</span>
-                  <span className="modal-total-price">Bs. {total}</span>
-                </div>
-              </div>
-              {nombre && (
-                <div style={{ background: 'rgba(255,92,25,0.08)', borderRadius: 10, padding: '10px 14px', marginBottom: 12, fontSize: 13, color: '#aaa' }}>
-                  📍 <strong style={{ color: '#fff' }}>{nombre}</strong>
-                  {telefono && <> · 📞 {telefono}</>}
-                  {direccion && <div style={{ marginTop: 4 }}>🏠 {direccion}</div>}
-                </div>
-              )}
-              <div className="modal-actions">
-                <button className="modal-back-btn" onClick={() => setStep('datos')}>← Volver</button>
-                <motion.button
-                  className="modal-primary-btn"
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  onClick={() => setStep('payment')}
-                >
-                  Elegir método de pago {Icons.arrowRight}
-                </motion.button>
-              </div>
             </motion.div>
           )}
 
@@ -386,16 +436,22 @@ function CheckoutModal({
             >
               <h2 className="modal-title">Método de Pago</h2>
               <p className="modal-subtitle">Selecciona cómo deseas pagar</p>
+              <div
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, background: 'rgba(255,92,25,0.08)', borderRadius: 10, padding: '8px 14px', marginBottom: 16, fontSize: 13, color: '#aaa' }}
+              >
+                <span>{tipoEntrega === 'delivery' ? '🛵 Delivery' : '🏪 Recoger en el local'}</span>
+                <button type="button" onClick={() => setStep('entrega')} style={{ background: 'none', border: 'none', color: '#ff5c19', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>Cambiar</button>
+              </div>
               <div className="payment-methods">
                 {[
-                  { id: 'cash' as PaymentMethod, label: 'Efectivo', sublabel: 'Paga al recibir tu pedido', icon: Icons.cash },
-                  { id: 'transfer' as PaymentMethod, label: 'Transferencia', sublabel: 'Banco Unión / Tigo Money', icon: Icons.transfer },
+                  { id: 'cash' as PaymentMethod, label: 'Efectivo', sublabel: tipoEntrega === 'delivery' ? 'Paga al recibir tu pedido' : 'Paga en el local', icon: Icons.cash },
+                  { id: 'card' as PaymentMethod, label: 'Tarjeta', sublabel: 'Débito o crédito', icon: Icons.transfer },
                   { id: 'qr' as PaymentMethod, label: 'Código QR', sublabel: 'Escanea y paga al instante', icon: Icons.qr },
                 ].map(method => (
                   <motion.button
                     key={method.id}
                     className={`payment-method-btn ${paymentMethod === method.id ? 'selected' : ''}`}
-                    onClick={() => handlePaymentSelect(method.id)}
+                    onClick={() => setPaymentMethod(method.id)}
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
                   >
@@ -412,20 +468,134 @@ function CheckoutModal({
                   </motion.button>
                 ))}
               </div>
+              <div className="modal-actions">
+                <button className="modal-back-btn" onClick={() => setStep('entrega')}>← Volver</button>
+                <motion.button
+                  className="modal-primary-btn"
+                  whileHover={paymentMethod ? { scale: 1.02 } : {}}
+                  whileTap={paymentMethod ? { scale: 0.98 } : {}}
+                  onClick={() => { if (paymentMethod) setStep('datos') }}
+                  disabled={!paymentMethod}
+                  style={{ opacity: paymentMethod ? 1 : 0.5, cursor: paymentMethod ? 'pointer' : 'not-allowed' }}
+                >
+                  Continuar {Icons.arrowRight}
+                </motion.button>
+              </div>
+            </motion.div>
+          )}
+
+          {/* ===== DATOS STEP ===== */}
+          {step === 'datos' && (
+            <motion.div
+              key="datos"
+              className="modal-content"
+              initial={{ opacity: 0, x: 30 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -30 }}
+              transition={{ duration: 0.3 }}
+            >
+              <h2 className="modal-title">Datos de Facturación</h2>
+              <p className="modal-subtitle">Completa tus datos para emitir tu pedido</p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginBottom: 18 }}>
+                {[
+                  { label: 'Nombre o razón social', value: nombre, setter: setNombre, placeholder: 'Ej: Carlos Pérez', type: 'text', required: true },
+                  { label: 'NIT / C.I.', value: nit, setter: setNit, placeholder: 'Ej: 1234567 o 9876543 SC', type: 'text', required: true },
+                  { label: 'Correo electrónico', value: email, setter: setEmail, placeholder: 'tu@correo.com', type: 'email', required: true },
+                  { label: 'Celular de contacto', value: telefono, setter: setTelefono, placeholder: 'Ej: 70000000', type: 'tel', required: true },
+                  { label: 'Código de descuento', value: codigoDescuento, setter: setCodigoDescuento, placeholder: 'Opcional', type: 'text', required: false },
+                ].map(field => {
+                  const invalidEmail = field.type === 'email' && field.value.length > 0 && !emailValid
+                  return (
+                    <div key={field.label}>
+                      <label style={{ display: 'block', color: '#aaa', fontSize: 12, marginBottom: 6, fontWeight: 500 }}>
+                        {field.label} {field.required && <span style={{ color: '#ff5c19' }}>*</span>}
+                      </label>
+                      <input
+                        type={field.type}
+                        value={field.value}
+                        onChange={e => field.setter(e.target.value)}
+                        placeholder={field.placeholder}
+                        style={{
+                          width: '100%', padding: '10px 14px', borderRadius: 10, boxSizing: 'border-box',
+                          background: 'rgba(255,255,255,0.06)',
+                          border: `1px solid ${invalidEmail ? 'rgba(239,68,68,0.6)' : field.value ? 'rgba(255,92,25,0.4)' : 'rgba(255,255,255,0.12)'}`,
+                          color: '#fff', fontSize: 14, outline: 'none', transition: 'border-color 0.2s',
+                        }}
+                      />
+                      {invalidEmail && <span style={{ color: '#ef4444', fontSize: 11 }}>Correo no válido</span>}
+                    </div>
+                  )
+                })}
+
+                {tipoEntrega === 'delivery' && (
+                  <>
+                    <div>
+                      <label style={{ display: 'block', color: '#aaa', fontSize: 12, marginBottom: 6, fontWeight: 500 }}>
+                        Dirección de entrega <span style={{ color: '#ff5c19' }}>*</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={direccion}
+                        onChange={e => setDireccion(e.target.value)}
+                        placeholder="Ej: Av. Roca y Coronado #342"
+                        style={{
+                          width: '100%', padding: '10px 14px', borderRadius: 10, boxSizing: 'border-box',
+                          background: 'rgba(255,255,255,0.06)', border: `1px solid ${direccion ? 'rgba(255,92,25,0.4)' : 'rgba(255,255,255,0.12)'}`,
+                          color: '#fff', fontSize: 14, outline: 'none', transition: 'border-color 0.2s',
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                        <label style={{ color: '#aaa', fontSize: 12, fontWeight: 500 }}>
+                          Ubicación en el mapa <span style={{ color: '#ff5c19' }}>*</span>
+                        </label>
+                        <button
+                          type="button"
+                          onClick={handleUsarUbicacion}
+                          disabled={gpsLoading}
+                          style={{ background: 'none', border: 'none', color: '#ff5c19', fontWeight: 600, fontSize: 12, cursor: gpsLoading ? 'wait' : 'pointer' }}
+                        >
+                          {gpsLoading ? 'Ubicando…' : '📍 Usar mi ubicación'}
+                        </button>
+                      </div>
+                      <LocationPicker lat={lat} lng={lng} onChange={(la, ln) => { setLat(la); setLng(ln); }} />
+                      <span style={{ display: 'block', marginTop: 6, fontSize: 11, color: lat != null ? '#4caf50' : '#888' }}>
+                        {lat != null && lng != null
+                          ? `✓ Ubicación marcada (${lat.toFixed(5)}, ${lng.toFixed(5)})`
+                          : 'Toca el mapa o usa tu ubicación para marcar dónde entregar.'}
+                      </span>
+                      {gpsError && <span style={{ display: 'block', fontSize: 11, color: '#ef4444' }}>{gpsError}</span>}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <div className="modal-total-box">
+                <div className="modal-total-row">
+                  <span>{tipoEntrega === 'delivery' ? 'Entrega estimada' : 'Listo para recoger'}</span>
+                  <span className="modal-delivery-time">{Icons.clock} 30-45 min</span>
+                </div>
+                <div className="modal-total-row big">
+                  <span>Total a pagar</span>
+                  <span className="modal-total-price">Bs. {total}</span>
+                </div>
+              </div>
+
               {submitError && (
                 <div style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 8, padding: '10px 14px', marginBottom: 14, color: '#ef4444', fontSize: 13 }}>
                   {submitError}
                 </div>
               )}
               <div className="modal-actions">
-                <button className="modal-back-btn" onClick={() => setStep('summary')}>← Volver</button>
+                <button className="modal-back-btn" onClick={() => setStep('payment')}>← Volver</button>
                 <motion.button
                   className="modal-primary-btn"
-                  whileHover={paymentMethod && !isSubmitting ? { scale: 1.02 } : {}}
-                  whileTap={paymentMethod && !isSubmitting ? { scale: 0.98 } : {}}
-                  onClick={handleConfirmPayment}
-                  disabled={!paymentMethod || isSubmitting}
-                  style={{ opacity: paymentMethod && !isSubmitting ? 1 : 0.5, cursor: paymentMethod && !isSubmitting ? 'pointer' : 'not-allowed' }}
+                  whileHover={datosCompletos && !isSubmitting ? { scale: 1.02 } : {}}
+                  whileTap={datosCompletos && !isSubmitting ? { scale: 0.98 } : {}}
+                  onClick={handleConfirmDatos}
+                  disabled={!datosCompletos || isSubmitting}
+                  style={{ opacity: datosCompletos && !isSubmitting ? 1 : 0.5, cursor: datosCompletos && !isSubmitting ? 'pointer' : 'not-allowed' }}
                 >
                   {isSubmitting ? '⏳ Procesando...' : paymentMethod === 'qr' ? 'Ver Código QR' : 'Confirmar Pedido'} {!isSubmitting && Icons.arrowRight}
                 </motion.button>
@@ -473,7 +643,7 @@ function CheckoutModal({
                 </div>
               </div>
               <div className="modal-actions">
-                <button className="modal-back-btn" onClick={() => setStep('payment')}>← Volver</button>
+                <button className="modal-back-btn" onClick={() => setStep('datos')}>← Volver</button>
                 <motion.button
                   className="modal-primary-btn"
                   whileHover={{ scale: 1.02 }}

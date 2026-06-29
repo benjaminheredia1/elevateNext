@@ -17,6 +17,7 @@ export default function MenuPage() {
   const shop = useShop();
   const [activeCat, setActiveCat] = useState('Todos');
   const [dbProducts, setDbProducts] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const brandKey = (brand === 'fitbull' || brand === 'elevate' ? brand : null);
@@ -24,6 +25,7 @@ export default function MenuPage() {
 
     setDbProducts([]);
     setActiveCat('Todos');
+    setLoading(true);
 
     fetch(`/api/productos?marca=${brandKey}`)
       .then(r => r.json())
@@ -53,25 +55,24 @@ export default function MenuPage() {
         });
         setDbProducts(mapped);
       })
-      .catch(console.error);
+      .catch(console.error)
+      .finally(() => setLoading(false));
   }, [brand]);
 
   const brandKey = (brand === 'fitbull' || brand === 'elevate' ? brand : null) as BrandKey | null;
   const data = brandKey ? BRANDS[brandKey] : null;
 
-  const isUsingStaticData = dbProducts.length === 0;
+  const isEmpty = !loading && dbProducts.length === 0;
 
   const categories = useMemo(() => {
-    if (isUsingStaticData) return data?.categories || ['Todos'];
     const cats = Array.from(new Set(dbProducts.map(p => p.category)));
     return ['Todos', ...cats];
-  }, [dbProducts, data, isUsingStaticData]);
+  }, [dbProducts]);
 
   const filtered = useMemo(() => {
-    const dataSource = isUsingStaticData ? (data?.products || []) : dbProducts;
-    if (activeCat === 'Todos') return dataSource;
-    return dataSource.filter((p: any) => p.category === activeCat);
-  }, [data, dbProducts, activeCat, isUsingStaticData]);
+    if (activeCat === 'Todos') return dbProducts;
+    return dbProducts.filter((p: any) => p.category === activeCat);
+  }, [dbProducts, activeCat]);
 
   if (!data) {
     return (
@@ -148,7 +149,7 @@ export default function MenuPage() {
       {/* ===== PRODUCTS GRID ===== */}
       <section className="menu-products">
         <div className="container">
-          {isUsingStaticData && (
+          {isEmpty && (
             <motion.div
               initial={{ opacity: 0, y: -8 }}
               animate={{ opacity: 1, y: 0 }}
@@ -222,7 +223,7 @@ export default function MenuPage() {
               </TiltCard>
             ))}
           </motion.div>
-          {filtered.length === 0 && <p className="menu-empty-cat">No hay productos en esta categoría.</p>}
+          {!loading && !isEmpty && filtered.length === 0 && <p className="menu-empty-cat">No hay productos en esta categoría.</p>}
         </div>
       </section>
 

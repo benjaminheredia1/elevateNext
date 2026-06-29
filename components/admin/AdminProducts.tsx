@@ -94,8 +94,8 @@ export default function AdminProducts() {
       load();
     } catch (e: unknown) {
       const err = e as { response?: { data?: { error?: string } } };
-      setActionError(err?.response?.data?.error ?? 'No se pudo cambiar el estado. Verifica que tenga receta y foto.');
-      setTimeout(() => setActionError(''), 4000);
+      setActionError(err?.response?.data?.error ?? 'No se pudo cambiar el estado. Verifica nombre, descripcion, precio, imagen, menu y receta.');
+      setTimeout(() => setActionError(''), 6000);
     }
   };
 
@@ -209,7 +209,7 @@ export default function AdminProducts() {
                       <button className="action-btn edit" onClick={() => openEdit(p)} title="Editar">{EditIcon}</button>
                       {pub === 'PUBLICADO'
                         ? <button className="action-btn" onClick={() => setEstado(p.id, 'BORRADOR')} title="Despublicar">⏸</button>
-                        : <button className="action-btn" onClick={() => setEstado(p.id, 'PUBLICADO')} title="Publicar" disabled={noRecipe}>▶</button>}
+                        : <button className="action-btn" onClick={() => setEstado(p.id, 'PUBLICADO')} title="Publicar">▶</button>}
                       {deleteConfirm === p.id ? (
                         <div className="delete-confirm">
                           <button className="action-btn confirm-yes" onClick={() => remove(p.id)}>Sí</button>

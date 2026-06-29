@@ -7,7 +7,7 @@ import { useRouter } from 'next/navigation';
 import AlertPopup from '@/components/AlertPopup';
 
 export default function LoginPage() {
-  const [email, setEmail] = useState('');
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [btnHovered, setBtnHovered] = useState(false);
   const router = useRouter();
@@ -26,7 +26,7 @@ export default function LoginPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const data = await useAuth.login(email, password);
+      const data = await useAuth.login(identifier, password);
       router.push(homeForRole(data?.user?.rol));
     } catch (error: unknown) {
       const err = error as { response?: { data?: { message?: string; title?: string } } };
@@ -60,19 +60,18 @@ export default function LoginPage() {
 
           <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
             <div>
-              <label htmlFor="email" style={{ display: 'block', color: 'rgba(255,255,255,0.65)', fontSize: 13, fontWeight: 600, marginBottom: 8, letterSpacing: '0.01em' }}>Correo Electrónico</label>
+              <label htmlFor="email" style={{ display: 'block', color: 'rgba(255,255,255,0.65)', fontSize: 13, fontWeight: 600, marginBottom: 8, letterSpacing: '0.01em' }}>Correo o usuario</label>
               <div style={{ position: 'relative' }}>
                 <svg style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', opacity: 0.45, flexShrink: 0 }} width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="white" strokeWidth={1.8}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
                 </svg>
-                <input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="tu@correo.com" required style={{ width: '100%', padding: '13px 16px 13px 42px', borderRadius: 12, background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.12)', color: '#fff', fontSize: 15, outline: 'none', boxSizing: 'border-box', transition: 'border-color 0.25s' }} onFocus={(e) => (e.target.style.borderColor = 'rgba(255,92,25,0.7)')} onBlur={(e) => (e.target.style.borderColor = 'rgba(255,255,255,0.12)')} />
+                <input id="email" type="text" value={identifier} onChange={(e) => setIdentifier(e.target.value)} placeholder="tu@correo.com o usuario" required style={{ width: '100%', padding: '13px 16px 13px 42px', borderRadius: 12, background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.12)', color: '#fff', fontSize: 15, outline: 'none', boxSizing: 'border-box', transition: 'border-color 0.25s' }} onFocus={(e) => (e.target.style.borderColor = 'rgba(255,92,25,0.7)')} onBlur={(e) => (e.target.style.borderColor = 'rgba(255,255,255,0.12)')} />
               </div>
             </div>
 
             <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <div style={{ marginBottom: 8 }}>
                 <label htmlFor="password" style={{ color: 'rgba(255,255,255,0.65)', fontSize: 13, fontWeight: 600, letterSpacing: '0.01em' }}>Contraseña</label>
-                <a href="#" style={{ color: '#ff5c19', fontSize: 12, fontWeight: 600, textDecoration: 'none' }} onMouseEnter={(e) => ((e.target as HTMLAnchorElement).style.color = '#ff7a42')} onMouseLeave={(e) => ((e.target as HTMLAnchorElement).style.color = '#ff5c19')}>¿Olvidaste tu contraseña?</a>
               </div>
               <div style={{ position: 'relative' }}>
                 <svg style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', opacity: 0.45 }} width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="white" strokeWidth={1.8}>
@@ -89,11 +88,6 @@ export default function LoginPage() {
               </motion.svg>
             </motion.button>
           </form>
-
-          <p style={{ textAlign: 'center', color: 'rgba(255,255,255,0.4)', fontSize: 14, marginTop: 28, marginBottom: 0 }}>
-            ¿No tienes una cuenta?{' '}
-            <a href="#" style={{ color: '#fff', fontWeight: 700, textDecoration: 'none', borderBottom: '2px solid #ff5c19', paddingBottom: 1 }} onMouseEnter={(e) => ((e.target as HTMLAnchorElement).style.color = '#ff5c19')} onMouseLeave={(e) => ((e.target as HTMLAnchorElement).style.color = '#fff')}>Regístrate</a>
-          </p>
         </div>
       </motion.div>
     </div>
