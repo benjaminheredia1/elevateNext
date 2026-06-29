@@ -9,6 +9,7 @@ import type { Rol } from '@prisma/client';
 import prisma from '@/lib/prisma';
 import { logAudit } from '@/lib/server/audit/audit.service';
 import { NotFoundError, ValidationError } from '@/lib/server/errors';
+import { enviarAlerta } from '@/lib/server/alertas/whatsapp.service';
 
 // ─────────────────────────────────────────────
 // Tipos auxiliares
@@ -287,16 +288,7 @@ export async function evaluarAlertas(
   if (!config) return;
 
   const ids = bajoUmbral.map((i) => i.id);
-  const preview = bajoUmbral
-    .map((i) => `${i.nombre}: ${i.stock_actual} ${i.unidad_medida}`)
-    .join('\n');
-
-  await tx.registroAlerta.create({
-    data: {
-      canal:      'whatsapp',
-      insumo_ids: ids,
-      estado:     'simulated',
-      preview,
-    },
-  });
+  // Llamamos al servicio real en lugar de sólo simular
+  // Como hace llamadas externas, no le pasamos 'tx' (usa el cliente Prisma global)
+  await enviarAlerta({ insumos: bajoUmbral, cfg: config });
 }

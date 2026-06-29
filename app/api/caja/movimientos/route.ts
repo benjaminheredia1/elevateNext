@@ -6,7 +6,7 @@ import * as caja from '@/lib/server/caja/caja.service';
 export async function GET(req: NextRequest) {
   try {
     const session = await requireAuth(req);
-    requireRole(session, ['CAJERO']);
+    requireRole(session, ['CAJERO', 'DUENO', 'ADMIN']);
     const data = await caja.getMovimientos(session);
     return NextResponse.json(data);
   } catch (e) { return handleApiError(e); }
