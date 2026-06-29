@@ -89,8 +89,22 @@ body {
   padding: 16px 12px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 10px;
   overflow-y: auto;
+}
+
+.admin-nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.admin-nav-group-label {
+  padding: 8px 14px 4px;
+  color: var(--slate);
+  font-size: 0.64rem;
+  font-weight: 800;
+  letter-spacing: 0.09em;
 }
 
 .admin-nav-link {
@@ -250,6 +264,18 @@ body {
 .period-btn { background: transparent; border: none; color: var(--slate); padding: 6px 14px; border-radius: 7px; font-size: 0.82rem; font-weight: 600; cursor: pointer; transition: all .15s; }
 .period-btn.active { background: var(--surface-2); color: var(--ink); }
 .period-btn:hover:not(.active) { background: var(--kale-700); color: var(--ink-dim); }
+
+.admin-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 20px; }
+.admin-tab { background: transparent; border: none; border-bottom: 2px solid transparent; color: var(--slate); padding: 10px 16px; font-size: 0.9rem; font-weight: 600; cursor: pointer; margin-bottom: -1px; }
+.admin-tab.active { color: var(--ink); border-bottom-color: var(--orange); }
+.finance-grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 18px; }
+.finance-grid > * { grid-column: span 6; }
+.finance-grid .span-12 { grid-column: span 12; }
+.finance-list { display: flex; flex-direction: column; gap: 10px; }
+.finance-row { display: flex; justify-content: space-between; gap: 16px; padding: 10px 0; border-bottom: 1px solid var(--line); color: var(--ink); }
+.finance-row:last-child { border-bottom: none; }
+.finance-row span:first-child { color: var(--slate); }
+.finance-row strong { font-variant-numeric: tabular-nums; }
 
 /* ===== KPI CARDS ===== */
 .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 18px; margin-bottom: 26px; }

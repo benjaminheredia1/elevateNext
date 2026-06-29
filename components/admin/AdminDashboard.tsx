@@ -2,14 +2,35 @@
 
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
+import apiClient from '@/hooks/api';
+import KpiCard from '@/components/ui/KpiCard';
+import MoneyText from '@/components/ui/MoneyText';
+import StatusBadge from '@/components/ui/StatusBadge';
 
 /* ===== Types ===== */
 interface Stats {
-  pedidos_hoy: number;
-  ingresos_hoy: number;
-  pedidos_pendientes: number;
-  insumos_criticos: number;
-  insumos_advertencia: number;
+  kpis: {
+    ganancia_hoy: number;
+    ventas: number;
+    pedidos: number;
+    ticket_promedio: number;
+    pedidos_pendientes: number;
+  };
+  contabilidad_hoy: {
+    ingresos: number;
+    cmv: number;
+    otros_gastos: number;
+    utilidad: number;
+  };
+  mas_vendidos: { producto_id: number; nombre: string; cantidad: number; total: number }[];
+  alertas_inventario: InsumoAlerta[];
+  turno_activo: {
+    id: number;
+    estado: string;
+    fecha_apertura: string;
+    cajero?: { nombre: string | null; email: string };
+    sucursal?: { nombre: string };
+  } | null;
   pedidos_por_hora: { hora: string; pedidos: number }[];
   pedidos_recientes: {
     id: number;
@@ -101,20 +122,13 @@ function MiniBar({ porcentaje, nivel }: { porcentaje: number; nivel: string }) {
 
 export default function AdminDashboard() {
   const [stats, setStats] = useState<Stats | null>(null);
-  const [alertas, setAlertas] = useState<InsumoAlerta[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function fetchData() {
       try {
-        const [statsRes, alertasRes] = await Promise.all([
-          fetch('/api/stats'),
-          fetch('/api/alertas'),
-        ]);
-        const statsData = await statsRes.json();
-        const alertasData = await alertasRes.json();
-        setStats(statsData.data);
-        setAlertas(alertasData.data?.resumen?.filter((i: InsumoAlerta) => i.nivel !== 'ok') ?? []);
+        const statsRes = await apiClient.get('/api/admin/dashboard');
+        setStats(statsRes.data);
       } catch (err) {
         console.error(err);
       } finally {
@@ -138,6 +152,7 @@ export default function AdminDashboard() {
     );
   }
 
+  const alertas = stats?.alertas_inventario ?? [];
   const maxPedidos = Math.max(...(stats?.pedidos_por_hora.map(p => p.pedidos) ?? [1]), 1);
 
   return (
@@ -150,33 +165,11 @@ export default function AdminDashboard() {
       </h1>
 
       {/* ===== KPI CARDS ===== */}
-      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 24 }}>
-        <StatCard
-          label="Pedidos hoy"
-          value={stats?.pedidos_hoy ?? 0}
-          color="#ff5c19"
-          icon={<svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>}
-        />
-        <StatCard
-          label="Ingresos hoy"
-          value={`Bs. ${(stats?.ingresos_hoy ?? 0).toFixed(2)}`}
-          color="#10b981"
-          icon={<svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>}
-        />
-        <StatCard
-          label="Pendientes"
-          value={stats?.pedidos_pendientes ?? 0}
-          sub={stats?.pedidos_pendientes ? 'Requieren atención' : 'Al día ✓'}
-          color="#f59e0b"
-          icon={<svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>}
-        />
-        <StatCard
-          label="Insumos críticos"
-          value={stats?.insumos_criticos ?? 0}
-          sub={stats?.insumos_criticos ? '¡Requieren reposición!' : 'Stock OK'}
-          color={stats?.insumos_criticos ? '#ef4444' : '#10b981'}
-          icon={<svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>}
-        />
+      <div className="kpi-grid">
+        <KpiCard label="Ganancia hoy" value={<MoneyText value={stats?.kpis.ganancia_hoy ?? 0} signed />} highlight />
+        <KpiCard label="Ventas" value={<MoneyText value={stats?.kpis.ventas ?? 0} />} accent="var(--fresh)" />
+        <KpiCard label="Pedidos" value={stats?.kpis.pedidos ?? 0} />
+        <KpiCard label="Ticket promedio" value={<MoneyText value={stats?.kpis.ticket_promedio ?? 0} />} />
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 24 }}>
@@ -210,6 +203,38 @@ export default function AdminDashboard() {
               </div>
             ))}
           </div>
+        </div>
+
+        <div style={{
+          background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
+          borderRadius: 16, padding: '20px 24px',
+        }}>
+          <h3 style={{ color: '#fff', fontSize: 14, fontWeight: 600, marginBottom: 16 }}>Contabilidad de hoy</h3>
+          <div className="finance-list">
+            <div className="finance-row"><span>Ingresos</span><strong><MoneyText value={stats?.contabilidad_hoy.ingresos ?? 0} /></strong></div>
+            <div className="finance-row"><span>CMV</span><strong><MoneyText value={stats?.contabilidad_hoy.cmv ?? 0} /></strong></div>
+            <div className="finance-row"><span>Otros gastos</span><strong><MoneyText value={stats?.contabilidad_hoy.otros_gastos ?? 0} /></strong></div>
+            <div className="finance-row"><span>Utilidad</span><strong><MoneyText value={stats?.contabilidad_hoy.utilidad ?? 0} signed /></strong></div>
+          </div>
+        </div>
+
+        <div style={{
+          background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
+          borderRadius: 16, padding: '20px 24px',
+        }}>
+          <h3 style={{ color: '#fff', fontSize: 14, fontWeight: 600, marginBottom: 16 }}>Más vendidos hoy</h3>
+          {!stats?.mas_vendidos?.length ? (
+            <p style={{ color: '#666', fontSize: 13 }}>Sin ventas registradas hoy.</p>
+          ) : (
+            <div className="finance-list">
+              {stats.mas_vendidos.map(item => (
+                <div key={item.producto_id} className="finance-row">
+                  <span>{item.nombre} x{item.cantidad}</span>
+                  <strong><MoneyText value={item.total} /></strong>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* ===== INSUMO ALERTS ===== */}
@@ -252,6 +277,19 @@ export default function AdminDashboard() {
             </div>
           )}
         </div>
+      </div>
+
+      <div style={{
+        background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
+        borderRadius: 16, padding: '16px 24px', marginBottom: 24, display: 'flex', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap',
+      }}>
+        <div>
+          <h3 style={{ color: '#fff', fontSize: 14, fontWeight: 600, marginBottom: 6 }}>Turno de caja</h3>
+          <p style={{ color: '#888', margin: 0, fontSize: 13 }}>
+            {stats?.turno_activo ? `${stats.turno_activo.sucursal?.nombre ?? 'Sucursal'} · ${stats.turno_activo.cajero?.nombre ?? stats.turno_activo.cajero?.email ?? 'Cajero'}` : 'No hay turno abierto'}
+          </p>
+        </div>
+        <StatusBadge status={stats?.turno_activo ? 'abierto' : 'cerrado'} label={stats?.turno_activo ? 'Abierto' : 'Cerrado'} />
       </div>
 
       {/* ===== RECENT ORDERS ===== */}

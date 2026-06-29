@@ -1,0 +1,58 @@
+import prisma from '@/lib/prisma';
+import { Prisma } from '@prisma/client';
+import type { RangoFechas } from './rango';
+
+function toNumber(value: Prisma.Decimal): number {
+  return Number(value.toFixed(2));
+}
+
+function add(map: Map<string, Prisma.Decimal>, key: string, value: Prisma.Decimal) {
+  map.set(key, (map.get(key) ?? new Prisma.Decimal(0)).plus(value));
+}
+
+export async function flujoCaja(rango: RangoFechas, sucursal?: number) {
+  const movimientos = await prisma.movimientoCaja.findMany({
+    where: {
+      created_at: { gte: rango.desde, lte: rango.hasta },
+      ...(sucursal ? { turno: { sucursal_id: sucursal } } : {}),
+    },
+    include: { cuenta: true, turno: true, transaccion: true },
+    orderBy: { created_at: 'desc' },
+  });
+
+  let entradas = new Prisma.Decimal(0);
+  let salidas = new Prisma.Decimal(0);
+  const porMetodo = new Map<string, Prisma.Decimal>();
+  const porCategoria = new Map<string, Prisma.Decimal>();
+
+  for (const mov of movimientos) {
+    const monto = mov.monto;
+    if (monto.gte(0)) entradas = entradas.plus(monto);
+    else salidas = salidas.plus(monto.abs());
+    add(porMetodo, mov.metodo_pago, monto);
+    add(porCategoria, mov.categoria ?? mov.tipo, monto);
+  }
+
+  const flujoNeto = entradas.minus(salidas);
+
+  return {
+    rango,
+    entradas: toNumber(entradas),
+    salidas: toNumber(salidas),
+    flujo_neto: toNumber(flujoNeto),
+    por_metodo: Array.from(porMetodo.entries()).map(([metodo, monto]) => ({ metodo, monto: toNumber(monto) })),
+    por_categoria: Array.from(porCategoria.entries()).map(([categoria, monto]) => ({ categoria, monto: toNumber(monto) })),
+    movimientos: movimientos.map(m => ({
+      id: m.id,
+      tipo: m.tipo,
+      metodo_pago: m.metodo_pago,
+      categoria: m.categoria,
+      concepto: m.concepto,
+      monto: toNumber(m.monto),
+      created_at: m.created_at,
+      cuenta: m.cuenta.nombre,
+      turno_id: m.turno_id,
+      transaccion_id: m.transaccion_id,
+    })),
+  };
+}

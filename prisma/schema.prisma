@@ -18,88 +18,178 @@ enum EstadoTransaccion {
   PAGADO
 }
 
+enum Rol {
+  DUENO
+  ADMIN
+  CAJERO
+  CLIENTE
+}
+
+enum AccionAuditoria {
+  CREO
+  MODIFICO
+  ELIMINO
+  LOGIN
+  LOGOUT
+  APERTURA_CAJA
+  CIERRE_CAJA
+}
+
+enum TipoCuenta {
+  EFECTIVO
+  QR
+  TARJETA
+  BANCO
+}
+
+enum EstadoTurno {
+  ABIERTO
+  CERRADO
+}
+
+enum TipoMovimientoCaja {
+  VENTA
+  INGRESO_EXTRA
+  GASTO_OPERATIVO
+  COMPRA_INSUMO
+  AJUSTE
+  RETIRO
+}
+
+enum CanalVenta {
+  WEB
+  PICKUP
+  SALON
+}
+
+enum Frecuencia {
+  MENSUAL
+  QUINCENAL
+  SEMANAL
+  ANUAL
+}
+
+enum EstadoCuenta {
+  PENDIENTE
+  PARCIAL
+  PAGADA
+}
+
+enum TipoCuentaCxCxP {
+  POR_COBRAR
+  POR_PAGAR
+}
+
 model Usuario {
-  id               Int            @id @default(autoincrement())
-  nombre           String
-  apellido_paterno String
-  apellido_materno String
-  email            String         @unique
-  password         String
-  token            String
-  rol              String         @default("USER")
-  transaccion_id   Transaccion[]
-  cajas            Caja[]
-  created_at       DateTime       @default(now())
-  update_at        DateTime       @updatedAt
+  id                   Int                 @id @default(autoincrement())
+  nombre               String
+  apellido_paterno     String
+  apellido_materno     String
+  email                String              @unique
+  username             String?             @unique
+  password             String
+  token                String
+  rol                  Rol                 @default(CLIENTE)
+  activo               Boolean             @default(true)
+  ultimo_acceso        DateTime?
+  sucursal_id          Int?
+  sucursal             Sucursal?           @relation(fields: [sucursal_id], references: [id])
+  transaccion_id       Transaccion[]       @relation("UsuarioTransacciones")
+  transacciones_cajero Transaccion[]       @relation("CajeroTransacciones")
+  turnos_caja          CajaTurno[]
+  movimientos_caja     MovimientoCaja[]
+  cajas                Caja[]
+  auditorias           RegistroAuditoria[]
+  created_at           DateTime            @default(now())
+  update_at            DateTime            @updatedAt
 }
 
 model Cliente {
-  id           Int           @id @default(autoincrement())
-  nombre       String
-  telefono     String?
-  direccion    String?
+  id            Int           @id @default(autoincrement())
+  nombre        String
+  telefono      String?
+  direccion     String?
   transacciones Transaccion[]
-  created_at   DateTime      @default(now())
-  update_at    DateTime      @updatedAt
+  created_at    DateTime      @default(now())
+  update_at     DateTime      @updatedAt
 }
 
 model Transaccion {
-  id                       Int                     @id @default(autoincrement())
-  usuario_id               Int?
-  usuario                  Usuario?                @relation(fields: [usuario_id], references: [id])
-  
-  cliente_id               Int?
-  cliente                  Cliente?                @relation(fields: [cliente_id], references: [id])
-  
-  cliente_nombre           String?
-  cliente_telefono         String?
-  cliente_direccion        String?
-  cliente_lat              Float?
-  cliente_lng              Float?
-  metodo_pago              String?
-  total                    Float
-  estado                   EstadoTransaccion       @default(PENDIENTE)
-  
+  id         Int      @id @default(autoincrement())
+  usuario_id Int?
+  usuario    Usuario? @relation("UsuarioTransacciones", fields: [usuario_id], references: [id])
+
+  cliente_id Int?
+  cliente    Cliente? @relation(fields: [cliente_id], references: [id])
+
+  cliente_nombre    String?
+  cliente_telefono  String?
+  cliente_direccion String?
+  cliente_lat       Float?
+  cliente_lng       Float?
+  metodo_pago       TipoCuenta?
+  total             Float
+  estado            EstadoTransaccion @default(PENDIENTE)
+
+  // Operación presencial / canal
+  canal       CanalVenta?
+  es_cortesia Boolean     @default(false)
+  turno_id    Int?
+  turno       CajaTurno?  @relation(fields: [turno_id], references: [id])
+  cajero_id   Int?
+  cajero      Usuario?    @relation("CajeroTransacciones", fields: [cajero_id], references: [id])
+
   // Driver tracking fields
-  driver_nombre            String?
-  driver_lat               Float?
-  driver_lng               Float?
-  driver_link_id           String?                 @unique
+  driver_nombre  String?
+  driver_lat     Float?
+  driver_lng     Float?
+  driver_link_id String? @unique
 
   transaccionesDetalles_id TransaccionesDetalles[]
+  movimientos              MovimientoCaja[]
+  movimientos_internos     MovimientoInterno[]
   created_at               DateTime                @default(now())
   update_at                DateTime                @updatedAt
 }
 
 model Categoria {
-  id           Int                @id @default(autoincrement())
+  id           Int                  @id @default(autoincrement())
   nombre       String
   detalles     String
   categoria_id CategoriasProducto[]
-  created_at   DateTime           @default(now())
-  update_at    DateTime           @updatedAt
+  created_at   DateTime             @default(now())
+  update_at    DateTime             @updatedAt
 }
 
 model Producto {
-  id                       Int                   @id @default(autoincrement())
+  id                       Int                     @id @default(autoincrement())
   nombre                   String
   descripcion              String
   precio                   Float
   imagen_url               String?
-  disponible               Boolean               @default(true)
+  disponible               Boolean                 @default(true)
+  // FASE 5A — tipo, publicación, nutrición y marcas
+  tipo                     ProductoTipo            @default(ELABORADO)
+  estado_publicacion       EstadoPublicacion       @default(BORRADOR)
+  insumo_reventa_id        Int?
+  insumo_reventa           Insumo?                 @relation("InsumoReventa", fields: [insumo_reventa_id], references: [id])
+  ventas_acumuladas        Int                     @default(0)
+  calorias                 Int?
+  proteina                 String?
   categoria_id             CategoriasProducto[]
-  created_at               DateTime              @default(now())
-  update_at                DateTime              @updatedAt
+  created_at               DateTime                @default(now())
+  update_at                DateTime                @updatedAt
   recetaProducto_id        RecetasProducto[]
   promocionProducto_id     PromocionProducto[]
   transaccionesDetalles_id TransaccionesDetalles[]
+  marcas                   ProductoMarca[]
 }
 
 model TransaccionesDetalles {
   id                Int         @id @default(autoincrement())
   transaccion_id    Int
   precio_unitario   Float
-  descuentoAplicado Float        @default(0)
+  descuentoAplicado Float       @default(0)
   producto_id       Int
   cantidad          Float
   transaccion       Transaccion @relation(fields: [transaccion_id], references: [id], onDelete: Cascade)
@@ -107,7 +197,7 @@ model TransaccionesDetalles {
 }
 
 model CategoriasProducto {
-  id           Int      @id @default(autoincrement())
+  id           Int       @id @default(autoincrement())
   categoria_id Int
   producto_id  Int
   categoria    Categoria @relation(fields: [categoria_id], references: [id])
@@ -125,28 +215,36 @@ enum Unidad_medida {
 }
 
 model Insumo {
-  id                    Int                @id @default(autoincrement())
-  nombre                String
-  stock_actual          Float
-  stock_minimo          Float
-  unidad_medida         Unidad_medida
-  costo_promedio        Float              @default(0)
-  es_mixto              Boolean            @default(false)
-  movimientoInterno_id  MovimientoInterno[]
-  recetaProducto_id     RecetasProducto[]
-  insumos_mixtos_padre  InsumoMixtoDetalle[] @relation("InsumoPadre")
-  insumos_mixtos_hijo   InsumoMixtoDetalle[] @relation("InsumoHijo")
-  created_at            DateTime           @default(now())
-  update_at             DateTime           @updatedAt
+  id                   Int                  @id @default(autoincrement())
+  nombre               String
+  stock_actual         Float
+  stock_minimo         Float
+  unidad_medida        Unidad_medida
+  costo_promedio       Float                @default(0)
+  es_mixto             Boolean              @default(false)
+  // FASE 5A — campos de inventario avanzado
+  punto_critico        Float                @default(0)
+  categoria_insumo     String?
+  rendimiento          Float?
+  proveedor            String?
+  proveedor_telefono   String?
+  uso_diario_promedio  Float?
+  movimientoInterno_id MovimientoInterno[]
+  recetaProducto_id    RecetasProducto[]
+  insumos_mixtos_padre InsumoMixtoDetalle[] @relation("InsumoPadre")
+  insumos_mixtos_hijo  InsumoMixtoDetalle[] @relation("InsumoHijo")
+  productos_reventa    Producto[]           @relation("InsumoReventa")
+  created_at           DateTime             @default(now())
+  update_at            DateTime             @updatedAt
 }
 
 model InsumoMixtoDetalle {
-  id               Int      @id @default(autoincrement())
-  insumo_padre_id  Int
-  insumo_hijo_id   Int
-  cantidad         Float
-  insumo_padre     Insumo   @relation("InsumoPadre", fields: [insumo_padre_id], references: [id])
-  insumo_hijo      Insumo   @relation("InsumoHijo", fields: [insumo_hijo_id], references: [id])
+  id              Int    @id @default(autoincrement())
+  insumo_padre_id Int
+  insumo_hijo_id  Int
+  cantidad        Float
+  insumo_padre    Insumo @relation("InsumoPadre", fields: [insumo_padre_id], references: [id])
+  insumo_hijo     Insumo @relation("InsumoHijo", fields: [insumo_hijo_id], references: [id])
 }
 
 model RecetasProducto {
@@ -164,6 +262,20 @@ enum Tipo_movimiento {
   INGRESO
   EGRESO
   PRODUCCION
+  VENTA
+  MERMA
+  AJUSTE
+}
+
+enum ProductoTipo {
+  ELABORADO
+  REVENTA
+}
+
+enum EstadoPublicacion {
+  BORRADOR
+  PUBLICADO
+  ARCHIVADO
 }
 
 model MovimientoInterno {
@@ -172,22 +284,27 @@ model MovimientoInterno {
   tipo_movimiento Tipo_movimiento
   cantidad        Float
   descripcion     String
+  // FASE 5A — trazabilidad extendida
+  costo_unitario  Float?
+  responsable     String?
+  transaccion_id  Int?
   insumo          Insumo          @relation(fields: [insumo_id], references: [id])
+  transaccion     Transaccion?    @relation(fields: [transaccion_id], references: [id])
   created_at      DateTime        @default(now())
   update_at       DateTime        @updatedAt
 }
 
 model PromocionProducto {
-  id                      Int                  @id @default(autoincrement())
+  id                      Int                   @id @default(autoincrement())
   producto_id             Int
   key                     String
   promocion_descuentos_id Int
   promocionDescuentos     PromocionesDescuentos @relation(fields: [promocion_descuentos_id], references: [id])
-  producto                Producto             @relation(fields: [producto_id], references: [id])
+  producto                Producto              @relation(fields: [producto_id], references: [id])
 }
 
 model PromocionesDescuentos {
-  id                   Int                @id @default(autoincrement())
+  id                   Int                 @id @default(autoincrement())
   nombre               String
   valor                String
   promocionProducto_id PromocionProducto[]
@@ -217,17 +334,17 @@ enum EstadoCaja {
 }
 
 model Caja {
-  id              Int        @id @default(autoincrement())
-  monto_inicial   Float      @default(0)
-  monto_final     Float?
-  ingresos        Float      @default(0)
-  egresos         Float      @default(0)
-  estado          EstadoCaja @default(ABIERTA)
-  fecha_apertura  DateTime   @default(now())
-  fecha_cierre    DateTime?
-  usuario_id      Int
-  usuario         Usuario    @relation(fields: [usuario_id], references: [id])
-  gastos          Gasto[]
+  id             Int        @id @default(autoincrement())
+  monto_inicial  Float      @default(0)
+  monto_final    Float?
+  ingresos       Float      @default(0)
+  egresos        Float      @default(0)
+  estado         EstadoCaja @default(ABIERTA)
+  fecha_apertura DateTime   @default(now())
+  fecha_cierre   DateTime?
+  usuario_id     Int
+  usuario        Usuario    @relation(fields: [usuario_id], references: [id])
+  gastos         Gasto[]
 }
 
 model Gasto {
@@ -239,3 +356,210 @@ model Gasto {
   created_at  DateTime @default(now())
 }
 
+/**
+ * ===== Multi-sucursal (generaliza Configuracion) =====
+ */
+model Sucursal {
+  id         Int                @id @default(autoincrement())
+  nombre     String
+  direccion  String?
+  lat        Float?
+  lng        Float?
+  activa     Boolean            @default(true)
+  usuarios   Usuario[]
+  cuentas    CuentaFinanciera[]
+  turnos     CajaTurno[]
+  created_at DateTime           @default(now())
+  update_at  DateTime           @updatedAt
+}
+
+/**
+ * ===== Auditoria (trazabilidad, append-only) =====
+ */
+model RegistroAuditoria {
+  id         Int             @id @default(autoincrement())
+  usuario_id Int
+  rol        Rol
+  accion     AccionAuditoria
+  entidad    String
+  entidad_id String?
+  detalle    String
+  monto      Decimal?        @db.Decimal(12, 2)
+  ip         String?
+  user_agent String?
+  created_at DateTime        @default(now())
+
+  usuario Usuario @relation(fields: [usuario_id], references: [id])
+
+  @@index([usuario_id])
+  @@index([created_at])
+  @@index([entidad])
+}
+
+model GastoFijo {
+  id            Int        @id @default(autoincrement())
+  concepto      String
+  categoria     String
+  monto         Decimal    @db.Decimal(12, 2)
+  frecuencia    Frecuencia @default(MENSUAL)
+  activo        Boolean    @default(true)
+  creado_por_id Int
+  created_at    DateTime   @default(now())
+  update_at     DateTime   @updatedAt
+
+  @@index([activo])
+  @@index([categoria])
+}
+
+/**
+ * ===== CUENTAS FINANCIERAS (Caja Efectivo / QR / Banco) =====
+ */
+model CuentaFinanciera {
+  id          Int              @id @default(autoincrement())
+  sucursal_id Int
+  tipo        TipoCuenta
+  nombre      String
+  saldo       Decimal          @default(0) @db.Decimal(12, 2)
+  sucursal    Sucursal         @relation(fields: [sucursal_id], references: [id])
+  movimientos MovimientoCaja[]
+  created_at  DateTime         @default(now())
+  update_at   DateTime         @updatedAt
+
+  @@unique([sucursal_id, tipo])
+}
+
+/**
+ * ===== TURNO DE CAJA (apertura / cierre) =====
+ */
+model CajaTurno {
+  id                  Int              @id @default(autoincrement())
+  sucursal_id         Int
+  cajero_id           Int
+  estado              EstadoTurno      @default(ABIERTO)
+  apertura_efectivo   Decimal          @default(0) @db.Decimal(12, 2)
+  apertura_qr         Decimal          @default(0) @db.Decimal(12, 2)
+  fecha_apertura      DateTime         @default(now())
+  ventas_efectivo     Decimal          @default(0) @db.Decimal(12, 2)
+  ventas_qr           Decimal          @default(0) @db.Decimal(12, 2)
+  esperado_efectivo   Decimal?         @db.Decimal(12, 2)
+  esperado_qr         Decimal?         @db.Decimal(12, 2)
+  real_efectivo       Decimal?         @db.Decimal(12, 2)
+  real_qr             Decimal?         @db.Decimal(12, 2)
+  diferencia_efectivo Decimal?         @db.Decimal(12, 2)
+  diferencia_qr       Decimal?         @db.Decimal(12, 2)
+  observaciones       String?
+  fecha_cierre        DateTime?
+  sucursal            Sucursal         @relation(fields: [sucursal_id], references: [id])
+  cajero              Usuario          @relation(fields: [cajero_id], references: [id])
+  movimientos         MovimientoCaja[]
+  ventas              Transaccion[]
+  created_at          DateTime         @default(now())
+  update_at           DateTime         @updatedAt
+
+  @@index([sucursal_id, estado])
+  @@index([fecha_apertura])
+}
+
+/**
+ * ===== MOVIMIENTO DE CAJA (libro del turno) =====
+ */
+model CuentaCorriente {
+  id            Int             @id @default(autoincrement())
+  tipo          TipoCuentaCxCxP
+  contraparte   String
+  concepto      String
+  monto         Decimal         @db.Decimal(12, 2)
+  monto_pagado  Decimal         @default(0) @db.Decimal(12, 2)
+  vencimiento   DateTime?
+  estado        EstadoCuenta    @default(PENDIENTE)
+  creado_por_id Int
+  created_at    DateTime        @default(now())
+  update_at     DateTime        @updatedAt
+
+  @@index([tipo, estado])
+}
+
+model ActivoFijo {
+  id               Int      @id @default(autoincrement())
+  nombre           String
+  categoria        String
+  fecha_compra     DateTime
+  valor_original   Decimal  @db.Decimal(12, 2)
+  valor_actual     Decimal  @db.Decimal(12, 2)
+  depreciacion_pct Decimal? @db.Decimal(5, 2)
+  notas            String?
+  activo           Boolean  @default(true)
+  creado_por_id    Int
+  created_at       DateTime @default(now())
+  update_at        DateTime @updatedAt
+
+  @@index([activo])
+  @@index([categoria])
+}
+
+model MovimientoCaja {
+  id             Int                @id @default(autoincrement())
+  turno_id       Int?
+  cuenta_id      Int
+  tipo           TipoMovimientoCaja
+  metodo_pago    TipoCuenta
+  monto          Decimal            @db.Decimal(12, 2)
+  concepto       String
+  categoria      String?
+  transaccion_id Int?
+  es_cortesia    Boolean            @default(false)
+  creado_por_id  Int
+  created_at     DateTime           @default(now())
+
+  turno       CajaTurno?       @relation(fields: [turno_id], references: [id])
+  cuenta      CuentaFinanciera @relation(fields: [cuenta_id], references: [id])
+  transaccion Transaccion?     @relation(fields: [transaccion_id], references: [id])
+  creado_por  Usuario          @relation(fields: [creado_por_id], references: [id])
+
+  @@index([turno_id])
+  @@index([created_at])
+  @@index([tipo, metodo_pago])
+}
+
+// ===== FASE 5A — Inventario avanzado =====
+
+model Marca {
+  id         Int             @id @default(autoincrement())
+  key        String          @unique // "elevate" | "fitbull"
+  nombre     String
+  color      String?
+  productos  ProductoMarca[]
+  created_at DateTime        @default(now())
+  update_at  DateTime        @updatedAt
+}
+
+model ProductoMarca {
+  id          Int      @id @default(autoincrement())
+  producto_id Int
+  marca_id    Int
+  producto    Producto @relation(fields: [producto_id], references: [id], onDelete: Cascade)
+  marca       Marca    @relation(fields: [marca_id], references: [id], onDelete: Cascade)
+
+  @@unique([producto_id, marca_id])
+}
+
+model ConfiguracionAlertas {
+  id                   Int      @id @default(1)
+  whatsapp_habilitado  Boolean  @default(false)
+  destinatarios        String[] @default([])
+  hora_silencio_desde  String   @default("22:00")
+  hora_silencio_hasta  String   @default("07:00")
+  intervalo_minimo_min Int      @default(60)
+  plantilla_mensaje    String   @default("Elevate - Alerta de inventario: {count} insumos bajo umbral.\n{list}")
+  created_at           DateTime @default(now())
+  update_at            DateTime @updatedAt
+}
+
+model RegistroAlerta {
+  id         Int      @id @default(autoincrement())
+  enviado_at DateTime @default(now())
+  canal      String   @default("whatsapp")
+  insumo_ids Int[]    @default([])
+  estado     String // sent | failed | simulated
+  preview    String
+}

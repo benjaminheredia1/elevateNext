@@ -1,7 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react'
+import { AnimatePresence } from 'framer-motion'
 import { categories, type AdminProduct, type ProductStatus } from './adminData'
+import AdminProductWizard from './AdminProductWizard'
 
 export default function AdminProducts() {
   const [products, setProducts] = useState<AdminProduct[]>([])
@@ -10,6 +12,7 @@ export default function AdminProducts() {
   const [modalOpen, setModalOpen] = useState(false)
   const [editProduct, setEditProduct] = useState<AdminProduct | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null)
+  const [wizardOpen, setWizardOpen] = useState(false)
 
   useEffect(() => {
     fetch('/api/productos')
@@ -46,7 +49,7 @@ export default function AdminProducts() {
     return matchSearch && matchCat
   })
 
-  const openCreate = () => { setEditProduct({ ...emptyProduct, id: Date.now() }); setModalOpen(true) }
+  const openCreate = () => setWizardOpen(true)
   const openEdit = (p: AdminProduct) => { setEditProduct({ ...p }); setModalOpen(true) }
   const closeModal = () => { setModalOpen(false); setEditProduct(null) }
 
@@ -200,6 +203,16 @@ export default function AdminProducts() {
           </div>
         </div>
       )}
+
+      {/* Product Wizard */}
+      <AnimatePresence>
+        {wizardOpen && (
+          <AdminProductWizard
+            onClose={() => setWizardOpen(false)}
+            onSuccess={() => { setWizardOpen(false); fetch('/api/productos').then(r => r.json()).then(res => { if (res.data) setProducts(res.data.map((p: any) => ({ id: p.id, name: p.nombre, description: p.descripcion ?? '', price: p.precio, cost: Math.round(p.precio * 0.4), category: p.categoria_id?.[0]?.categoria?.nombre || 'Bowls', stock: 20, status: p.disponible ? 'active' : 'inactive', calories: 400, protein: '30g', sales: 0 }))) }) }}
+          />
+        )}
+      </AnimatePresence>
     </div>
   )
 }

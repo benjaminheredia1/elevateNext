@@ -6,7 +6,7 @@ import 'primeicons/primeicons.css';
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   return (
-    <ProtectedRoute redirectTo="/login">
+    <ProtectedRoute redirectTo="/login" roles={['DUENO', 'ADMIN']}>
       {children}
     </ProtectedRoute>
   );

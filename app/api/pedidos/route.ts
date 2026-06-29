@@ -1,5 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
+import { TipoCuenta } from '@prisma/client';
+
+function normalizeMetodoPago(value: unknown): TipoCuenta {
+  if (value === 'EFECTIVO' || value === 'cash') return TipoCuenta.EFECTIVO;
+  if (value === 'QR' || value === 'qr') return TipoCuenta.QR;
+  if (value === 'BANCO' || value === 'transfer') return TipoCuenta.BANCO;
+  if (value === 'TARJETA') return TipoCuenta.TARJETA;
+  return TipoCuenta.EFECTIVO;
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -54,7 +63,7 @@ export async function POST(req: NextRequest) {
         cliente_direccion,
         cliente_lat: cliente_lat ? Number(cliente_lat) : null,
         cliente_lng: cliente_lng ? Number(cliente_lng) : null,
-        metodo_pago: metodo_pago ?? 'cash',
+        metodo_pago: normalizeMetodoPago(metodo_pago),
         total: Number(total),
         estado: 'PENDIENTE',
       },

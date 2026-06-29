@@ -1,0 +1,13 @@
+
+> elevatenextjs@0.1.0 dev
+> next dev
+
+▲ Next.js 16.2.9 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.56.1:3000
+- Environments: .env
+✓ Ready in 574ms
+
+ POST /api/auth/login 200 in 484ms (next.js: 262ms, application-code: 222ms)
+ GET /api/admin/gastos-fijos 200 in 92ms (next.js: 74ms, application-code: 18ms)
+ GET /api/admin/dashboard 200 in 87ms (next.js: 32ms, application-code: 54ms)

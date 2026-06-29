@@ -173,7 +173,7 @@ export default function MenuPage() {
                     <motion.button
                       className={`product-add-btn ${shop.addedProductId === product.id ? 'added' : ''}`}
                       whileHover={{ scale: 1.2 }} whileTap={{ scale: 0.9 }}
-                      animate={shop.addedProductId === product.id ? { scale: [1, 1.3, 1], rotate: [0, 15, 0] } : {}}
+                      animate={shop.addedProductId === product.id ? { scale: [1, 1.3, 1], rotate: [0, 15, 0], transition: { duration: 0.4, ease: 'easeInOut' } } : {}}
                       transition={{ type: 'spring', stiffness: 400 }}
                       onClick={() => shop.addToCart(product)} title="Agregar al carrito"
                     >
