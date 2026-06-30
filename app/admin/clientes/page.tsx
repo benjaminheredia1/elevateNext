@@ -1,8 +1,10 @@
 'use client';
 
 import { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import AdminPanel from '@/components/admin/AdminPanel';
 import { useAdminClientes } from '@/hooks/admin-clientes';
+import apiClient from '@/hooks/api';
 import KpiCard from '@/components/ui/KpiCard';
 import MoneyText from '@/components/ui/MoneyText';
 import DataTable from '@/components/ui/DataTable';
@@ -34,9 +36,68 @@ function FavoriteProduct({ product }: { product?: { nombre: string; cantidad: nu
   );
 }
 
+function MergeModal({ items, onClose, onMerged }: { items: any[]; onClose: () => void; onMerged: () => void }) {
+  const [keepId, setKeepId] = useState<number | ''>('');
+  const [mergeId, setMergeId] = useState<number | ''>('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const label = (c: any) => `${c.nombre}${c.telefono ? ` · ${c.telefono}` : ''} (${c.pedidos} ped.)`;
+
+  const submit = async () => {
+    setError('');
+    if (!keepId || !mergeId || keepId === mergeId) { setError('Selecciona dos clientes distintos.'); return; }
+    setBusy(true);
+    try {
+      await apiClient.post('/api/admin/clientes/merge', { keepId, mergeId });
+      onMerged();
+      onClose();
+    } catch (e: any) {
+      setError(e?.response?.data?.message ?? e?.response?.data?.error ?? 'No se pudo fusionar.');
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="admin-modal-overlay" onClick={onClose}>
+      <div className="admin-modal" onClick={e => e.stopPropagation()}>
+        <div className="admin-modal-header">
+          <h2>Fusionar clientes duplicados</h2>
+          <button className="admin-modal-close" onClick={onClose}>×</button>
+        </div>
+        <div className="admin-modal-body">
+          <p className="form-hint" style={{ marginBottom: 14 }}>
+            Mueve los pedidos del cliente duplicado al cliente que conservas. El duplicado se elimina. Esta acción no se puede deshacer.
+          </p>
+          <div className="form-group">
+            <label>Cliente a conservar</label>
+            <select value={keepId} onChange={e => setKeepId(e.target.value ? +e.target.value : '')}>
+              <option value="">Selecciona…</option>
+              {items.map(c => <option key={c.id} value={c.id}>{label(c)}</option>)}
+            </select>
+          </div>
+          <div className="form-group">
+            <label>Cliente duplicado (se fusiona y elimina)</label>
+            <select value={mergeId} onChange={e => setMergeId(e.target.value ? +e.target.value : '')}>
+              <option value="">Selecciona…</option>
+              {items.filter(c => c.id !== keepId).map(c => <option key={c.id} value={c.id}>{label(c)}</option>)}
+            </select>
+          </div>
+          {error && <div className="gate-warning" style={{ marginTop: 10 }}>{error}</div>}
+        </div>
+        <div className="admin-modal-footer">
+          <button className="admin-btn ghost" onClick={onClose}>Cancelar</button>
+          <button className="admin-btn primary" onClick={submit} disabled={busy}>{busy ? 'Fusionando…' : 'Fusionar'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ClientesAdminPage() {
   const [q, setQ] = useState('');
   const [mes, setMes] = useState(currentMonth());
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const queryClient = useQueryClient();
   const { data, isLoading, isError } = useAdminClientes(q, mes);
 
   const items = data?.items ?? [];
@@ -53,7 +114,18 @@ export default function ClientesAdminPage() {
           <h1>Clientes</h1>
           <p>Historial y métricas de clientes registrados.</p>
         </div>
+        <button className="admin-btn secondary" onClick={() => setMergeOpen(true)} disabled={items.length < 2}>
+          Fusionar duplicados
+        </button>
       </div>
+
+      {mergeOpen && (
+        <MergeModal
+          items={items}
+          onClose={() => setMergeOpen(false)}
+          onMerged={() => queryClient.invalidateQueries({ queryKey: ['admin', 'clientes'] })}
+        />
+      )}
 
       {isLoading ? (
         <EmptyState title="Cargando clientes..." />

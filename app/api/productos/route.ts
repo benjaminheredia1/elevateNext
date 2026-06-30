@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
+import { calcularRinde } from '@/lib/server/inventario/disponibilidad';
 
 export async function GET(req: NextRequest) {
   try {
@@ -16,6 +17,7 @@ export async function GET(req: NextRequest) {
       include: {
         categoria_id: { include: { categoria: true } },
         recetaProducto_id: { include: { insumo: true } },
+        insumo_reventa: { select: { stock_actual: true } },
         promocionProducto_id: {
           include: {
             promocionDescuentos: {
@@ -55,11 +57,15 @@ export async function GET(req: NextRequest) {
         }
       }
 
+      const { rinde, agotado } = calcularRinde(p);
+
       return {
         ...p,
         precio_original: p.precio,
         precio: precioFinal,
-        descuentoAplicado: descuentoMonto > 0 ? descuentoMonto : undefined
+        descuentoAplicado: descuentoMonto > 0 ? descuentoMonto : undefined,
+        rinde,
+        agotado,
       };
     });
 

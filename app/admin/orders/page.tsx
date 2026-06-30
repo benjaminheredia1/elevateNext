@@ -6,7 +6,7 @@ import AdminOrders from '@/components/admin/AdminOrders';
 export default function AdminOrdersPage() {
   return (
     <AdminPanel>
-      <AdminOrders />
+      <AdminOrders readOnly />
     </AdminPanel>
   );
 }

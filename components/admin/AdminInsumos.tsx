@@ -119,6 +119,13 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
+function errorMsg(err: unknown): string {
+  const e = err as { response?: { status?: number; data?: { error?: string; message?: string } } };
+  if (e?.response?.status === 403) return 'No tienes permiso. Inicia sesión como administrador o dueño.';
+  if (e?.response?.status === 401) return 'Tu sesión expiró. Vuelve a iniciar sesión.';
+  return e?.response?.data?.error ?? e?.response?.data?.message ?? 'Ocurrió un error. Intenta de nuevo.';
+}
+
 export default function AdminInsumos() {
   const [tab, setTab] = useState<Tab>('insumos');
   const [insumos, setInsumos] = useState<Insumo[]>([]);
@@ -131,6 +138,8 @@ export default function AdminInsumos() {
   const [modalAction, setModalAction] = useState<ModalAction>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState('');
+  const [pageMsg, setPageMsg] = useState<{ type: 'ok' | 'error'; text: string } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -185,6 +194,7 @@ export default function AdminInsumos() {
   const totalValue = insumos.reduce((sum, item) => sum + item.stock_actual * item.costo_promedio, 0);
 
   const openModal = (action: ModalAction, insumo?: Insumo) => {
+    setFormError('');
     setModalAction(action);
     setSelected(insumo ?? null);
     setForm({
@@ -197,11 +207,25 @@ export default function AdminInsumos() {
     setModalAction(null);
     setSelected(null);
     setForm(EMPTY_FORM);
+    setFormError('');
+  };
+
+  const handleDelete = async (insumo: Insumo) => {
+    if (!window.confirm(`¿Eliminar el insumo "${insumo.nombre}"? Esta acción no se puede deshacer.`)) return;
+    setPageMsg(null);
+    try {
+      await apiClient.delete(`/api/insumo/${insumo.id}`);
+      setPageMsg({ type: 'ok', text: `Insumo "${insumo.nombre}" eliminado.` });
+      await load();
+    } catch (err) {
+      setPageMsg({ type: 'error', text: errorMsg(err) });
+    }
   };
 
   const submitModal = async (event: FormEvent) => {
     event.preventDefault();
     setSaving(true);
+    setFormError('');
     try {
       if (modalAction === 'crear') {
         await apiClient.post('/api/insumo', {
@@ -240,7 +264,7 @@ export default function AdminInsumos() {
       closeModal();
       await load();
     } catch (err) {
-      console.error(err);
+      setFormError(errorMsg(err));
     } finally {
       setSaving(false);
     }
@@ -266,6 +290,18 @@ export default function AdminInsumos() {
           <button className="admin-btn primary" onClick={() => openModal('crear')} type="button">+ Insumo</button>
         </div>
       </div>
+
+      {pageMsg && (
+        <div
+          className="gate-warning"
+          style={pageMsg.type === 'ok'
+            ? { background: 'rgba(31,169,113,.12)', borderColor: 'rgba(31,169,113,.35)', color: 'var(--fresh)', marginBottom: 14 }
+            : { marginBottom: 14 }}
+          onClick={() => setPageMsg(null)}
+        >
+          {pageMsg.text}
+        </div>
+      )}
 
       <div className="inv-summary">
         <div className="inv-stat"><div className="inv-stat-label">Valor total</div><div className="inv-stat-val">{money(totalValue)}</div></div>
@@ -367,6 +403,7 @@ export default function AdminInsumos() {
                             <button className="action-btn edit" title="Compra" onClick={() => openModal('compra', insumo)} type="button">↥</button>
                             <button className="action-btn delete" title="Merma" onClick={() => openModal('merma', insumo)} type="button">⌫</button>
                             <button className="action-btn" title="Conteo físico" onClick={() => openModal('conteo', insumo)} type="button">✓</button>
+                            <button className="action-btn delete" title="Eliminar insumo" onClick={() => handleDelete(insumo)} type="button">🗑</button>
                           </div>
                         </td>
                       </tr>
@@ -474,6 +511,7 @@ export default function AdminInsumos() {
                   <label className="form-group full"><span>Nota</span><textarea rows={3} value={form.descripcion} onChange={event => setForm(prev => ({ ...prev, descripcion: event.target.value }))} /></label>
                 </div>
               )}
+              {formError && <div className="gate-warning" style={{ marginTop: 12 }}>{formError}</div>}
             </div>
             <div className="admin-modal-footer">
               <button className="admin-btn secondary" onClick={closeModal} type="button">Cancelar</button>

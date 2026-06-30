@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
+import { requireAuth, requireRole, getClientIp } from '@/lib/server/auth/session';
+import { handleApiError, ConflictError, NotFoundError } from '@/lib/server/errors';
+import { logAudit } from '@/lib/server/audit/audit.service';
 
 export async function GET(_: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -14,16 +17,12 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
 
 export async function PUT(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
+    const session = await requireAuth(request);
+    requireRole(session, ['DUENO', 'ADMIN']);
     const { id } = await params;
     const {
-      categoria_insumo,
-      costo_promedio,
-      nombre,
-      proveedor,
-      punto_critico,
-      stock_actual,
-      stock_minimo,
-      unidad_medida,
+      categoria_insumo, costo_promedio, nombre, proveedor,
+      punto_critico, stock_actual, stock_minimo, unidad_medida,
     } = await request.json();
     const insumo = await prisma.insumo.update({
       where: { id: Number(id) },
@@ -39,17 +38,50 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
       },
     });
     return NextResponse.json(insumo);
-  } catch {
-    return NextResponse.json({ message: 'Error al actualizar' }, { status: 500 });
+  } catch (e) {
+    return handleApiError(e);
   }
 }
 
-export async function DELETE(_: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
+    const session = await requireAuth(req);
+    requireRole(session, ['DUENO', 'ADMIN']);
     const { id } = await params;
-    await prisma.insumo.delete({ where: { id: Number(id) } });
-    return NextResponse.json({ message: 'Eliminado' });
-  } catch {
-    return NextResponse.json({ message: 'Error al eliminar' }, { status: 500 });
+    const insumoId = Number(id);
+
+    const insumo = await prisma.insumo.findUnique({ where: { id: insumoId } });
+    if (!insumo) throw new NotFoundError('Insumo no encontrado');
+
+    // No permitir eliminar si está en uso (recetas, productos de reventa o insumos mixtos)
+    const [enRecetas, enReventa, comoHijo, comoPadre] = await Promise.all([
+      prisma.recetasProducto.count({ where: { insumo_id: insumoId } }),
+      prisma.producto.count({ where: { insumo_reventa_id: insumoId } }),
+      prisma.insumoMixtoDetalle.count({ where: { insumo_hijo_id: insumoId } }),
+      prisma.insumoMixtoDetalle.count({ where: { insumo_padre_id: insumoId } }),
+    ]);
+    const usos: string[] = [];
+    if (enRecetas) usos.push(`${enRecetas} receta(s)`);
+    if (enReventa) usos.push(`${enReventa} producto(s) de reventa`);
+    if (comoHijo || comoPadre) usos.push('insumos mixtos');
+    if (usos.length > 0) {
+      throw new ConflictError(`No se puede eliminar: está en uso por ${usos.join(', ')}. Quita esas referencias primero.`);
+    }
+
+    await prisma.$transaction([
+      prisma.movimientoInterno.deleteMany({ where: { insumo_id: insumoId } }),
+      prisma.insumo.delete({ where: { id: insumoId } }),
+    ]);
+
+    await logAudit({
+      usuarioId: session.id, rol: session.rol, accion: 'ELIMINO',
+      entidad: 'Insumo', entidadId: insumoId,
+      detalle: `Eliminó insumo "${insumo.nombre}"`,
+      ip: getClientIp(req), userAgent: req.headers.get('user-agent'),
+    });
+
+    return NextResponse.json({ ok: true });
+  } catch (e) {
+    return handleApiError(e);
   }
 }

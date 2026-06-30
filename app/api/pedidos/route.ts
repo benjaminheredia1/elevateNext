@@ -1,6 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { TipoCuenta, TipoEntrega } from '@prisma/client';
+import { TipoCuenta, TipoEntrega, EstadoPago } from '@prisma/client';
+import { calcularRinde } from '@/lib/server/inventario/disponibilidad';
+import { resolverCliente } from '@/lib/server/clientes/clientes.service';
+import { customAlphabet } from 'nanoid';
+
+// Código de retiro/handoff legible (sin caracteres ambiguos)
+const genCodigo = customAlphabet('ABCDEFGHJKLMNPQRSTUVWXYZ23456789', 5);
+async function generarCodigoUnico(): Promise<string> {
+  for (let i = 0; i < 6; i++) {
+    const c = genCodigo();
+    const existe = await prisma.transaccion.findUnique({ where: { codigo: c }, select: { id: true } });
+    if (!existe) return c;
+  }
+  return genCodigo() + Date.now().toString(36).slice(-2).toUpperCase();
+}
 
 function normalizeMetodoPago(value: unknown): TipoCuenta {
   if (value === 'EFECTIVO' || value === 'cash') return TipoCuenta.EFECTIVO;
@@ -14,6 +28,18 @@ function normalizeTipoEntrega(value: unknown): TipoEntrega | null {
   if (value === 'DELIVERY' || value === 'delivery') return TipoEntrega.DELIVERY;
   if (value === 'RECOJO' || value === 'recojo' || value === 'pickup') return TipoEntrega.RECOJO;
   return null;
+}
+
+/**
+ * Estado de pago inicial del pedido web.
+ * - QR / tarjeta: PAGADO (provisional hasta integrar pasarela real).
+ * - Efectivo + delivery: COD_PENDIENTE (el repartidor cobra al entregar).
+ * - Efectivo + pickup: PENDIENTE (paga al recoger en mostrador).
+ */
+function estadoPagoInicial(metodo: TipoCuenta, tipo: TipoEntrega | null): EstadoPago {
+  if (metodo === TipoCuenta.QR || metodo === TipoCuenta.TARJETA) return EstadoPago.PAGADO;
+  if (tipo === TipoEntrega.DELIVERY) return EstadoPago.COD_PENDIENTE;
+  return EstadoPago.PENDIENTE;
 }
 
 export async function GET(req: NextRequest) {
@@ -61,11 +87,47 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'El pedido debe tener al menos un item' }, { status: 400 });
     }
 
+    // Bloqueo duro por stock: rechazar items agotados o con cantidad mayor al RINDE.
+    const sinStock: string[] = [];
+    for (const item of items) {
+      const prod = await prisma.producto.findFirst({
+        where: { nombre: { equals: item.nombre, mode: 'insensitive' } },
+        include: {
+          recetaProducto_id: { include: { insumo: { select: { stock_actual: true } } } },
+          insumo_reventa: { select: { stock_actual: true } },
+        },
+      });
+      if (!prod) continue; // producto no rastreado en inventario
+      const { stockTracked, rinde } = calcularRinde(prod);
+      if (stockTracked && (rinde ?? 0) < Number(item.cantidad)) {
+        sinStock.push(item.nombre);
+      }
+    }
+    if (sinStock.length > 0) {
+      return NextResponse.json(
+        { error: `Sin stock suficiente para: ${sinStock.join(', ')}. Estos productos se agotaron, intenta más tarde.` },
+        { status: 409 },
+      );
+    }
+
     const tipoEntrega = normalizeTipoEntrega(tipo_entrega);
+    const metodoPago = normalizeMetodoPago(metodo_pago);
+    const codigo = await generarCodigoUnico();
+
+    // Crear o vincular el Cliente (dedup por teléfono / email / NIT) para la sección Clientes
+    const dirEntrega = tipoEntrega === 'DELIVERY' ? (cliente_direccion ?? null) : null;
+    const clienteId = await resolverCliente({
+      nombre: cliente_nombre,
+      telefono: cliente_telefono,
+      email: cliente_email,
+      nit: cliente_nit,
+      direccion: dirEntrega,
+    });
 
     // Create the transaction
     const transaccion = await prisma.transaccion.create({
       data: {
+        cliente_id: clienteId,
         cliente_nombre,
         cliente_telefono,
         cliente_direccion: tipoEntrega === 'DELIVERY' ? cliente_direccion : null,
@@ -76,7 +138,9 @@ export async function POST(req: NextRequest) {
         tipo_entrega: tipoEntrega,
         codigo_descuento: codigo_descuento || null,
         canal: tipoEntrega === 'RECOJO' ? 'PICKUP' : 'WEB',
-        metodo_pago: normalizeMetodoPago(metodo_pago),
+        metodo_pago: metodoPago,
+        payment_status: estadoPagoInicial(metodoPago, tipoEntrega),
+        codigo,
         total: Number(total),
         estado: 'PENDIENTE',
       },

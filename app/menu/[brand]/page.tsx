@@ -51,6 +51,7 @@ export default function MenuPage() {
             calories: p.calorias ?? null,
             protein: p.proteina ?? null,
             imageUrl: p.imagen_url,
+            agotado: p.agotado ?? false,
           };
         });
         setDbProducts(mapped);
@@ -175,8 +176,8 @@ export default function MenuPage() {
           )}
           <motion.div className="products-grid" key={activeCat} initial="hidden" animate="visible" variants={staggerContainer}>
             {filtered.map(product => (
-              <TiltCard key={product.id} className="product-card" variants={staggerItem}>
-                <div className="product-image-container">
+              <TiltCard key={product.id} className={`product-card ${product.agotado ? 'agotado' : ''}`} variants={staggerItem}>
+                <div className="product-image-container" style={product.agotado ? { filter: 'grayscale(1)', opacity: 0.55 } : undefined}>
                   {product.imageUrl ? (
                     <img src={product.imageUrl} alt={product.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                   ) : (
@@ -187,7 +188,11 @@ export default function MenuPage() {
                       <div className="placeholder-text">Imagen producto</div>
                     </div>
                   )}
-                  {product.tag && (
+                  {product.agotado ? (
+                    <span className="product-tag" style={{ background: 'rgba(0,0,0,0.75)', color: '#fff' }}>
+                      Agotado
+                    </span>
+                  ) : product.tag && (
                     <motion.span className="product-tag" initial={{ opacity: 0, scale: 0 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.3, type: 'spring', stiffness: 400, damping: 15 }}>
                       {product.tag}
                     </motion.span>
@@ -205,19 +210,25 @@ export default function MenuPage() {
                   )}
                   <div className="product-footer">
                     <div className="product-price"><span className="currency">Bs. </span>{product.price}</div>
-                    <motion.button
-                      className={`product-add-btn ${shop.addedProductId === product.id ? 'added' : ''}`}
-                      whileHover={{ scale: 1.2 }} whileTap={{ scale: 0.9 }}
-                      animate={shop.addedProductId === product.id ? { scale: [1, 1.3, 1], rotate: [0, 15, 0], transition: { duration: 0.4, ease: 'easeInOut' } } : {}}
-                      transition={{ type: 'spring', stiffness: 400 }}
-                      onClick={() => shop.addToCart(product)} title="Agregar al carrito"
-                    >
-                      {shop.addedProductId === product.id ? (
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                          <polyline points="20 6 9 17 4 12" />
-                        </svg>
-                      ) : Icons.plus}
-                    </motion.button>
+                    {product.agotado ? (
+                      <span style={{ fontSize: 12, fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                        No disponible
+                      </span>
+                    ) : (
+                      <motion.button
+                        className={`product-add-btn ${shop.addedProductId === product.id ? 'added' : ''}`}
+                        whileHover={{ scale: 1.2 }} whileTap={{ scale: 0.9 }}
+                        animate={shop.addedProductId === product.id ? { scale: [1, 1.3, 1], rotate: [0, 15, 0], transition: { duration: 0.4, ease: 'easeInOut' } } : {}}
+                        transition={{ type: 'spring', stiffness: 400 }}
+                        onClick={() => shop.addToCart(product)} title="Agregar al carrito"
+                      >
+                        {shop.addedProductId === product.id ? (
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="20 6 9 17 4 12" />
+                          </svg>
+                        ) : Icons.plus}
+                      </motion.button>
+                    )}
                   </div>
                 </div>
               </TiltCard>

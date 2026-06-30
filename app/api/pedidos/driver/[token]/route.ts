@@ -31,7 +31,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
     const body = await req.json();
     const { driver_nombre, estado } = body;
 
-    const ESTADOS_VALIDOS = new Set(['EN_CAMINO', 'ENTREGADO', 'CANCELADO']);
+    const ESTADOS_VALIDOS = new Set(['EN_LOCAL', 'EN_CAMINO', 'LLEGO', 'ENTREGADO', 'CANCELADO']);
     const data: Record<string, unknown> = {};
     if (driver_nombre) data.driver_nombre = driver_nombre;
     if (estado && ESTADOS_VALIDOS.has(estado)) data.estado = estado;

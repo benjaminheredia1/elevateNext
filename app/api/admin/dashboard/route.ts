@@ -56,8 +56,11 @@ export async function GET(req: NextRequest) {
       }),
     ]);
 
-    const ventas = movimientosHoy.filter(m => m.tipo === 'VENTA' && !m.transaccion?.es_cortesia);
-    const ingresos = ventas.reduce((sum, m) => sum + decimalNumber(m.monto), 0);
+    // Ventas = transacciones completadas del día (incluye pedidos web y ventas de caja,
+    // sin doble conteo porque la venta de caja crea una sola Transaccion).
+    const ESTADOS_VENTA = new Set(['ENTREGADO', 'PAGADO']);
+    const ventasHoy = pedidosHoy.filter(p => ESTADOS_VENTA.has(p.estado) && !p.es_cortesia);
+    const ingresos = ventasHoy.reduce((sum, p) => sum + decimalNumber(p.total), 0);
     const cmv = movimientosHoy
       .filter(m => m.tipo === 'COMPRA_INSUMO' || (m.tipo === 'GASTO_OPERATIVO' && m.categoria === 'Insumos'))
       .reduce((sum, m) => sum + Math.abs(decimalNumber(m.monto)), 0);
@@ -98,7 +101,7 @@ export async function GET(req: NextRequest) {
         ganancia_hoy: decimalNumber(utilidad),
         ventas: decimalNumber(ingresos),
         pedidos: pedidosHoy.length,
-        ticket_promedio: pedidosHoy.length ? decimalNumber(ingresos / pedidosHoy.length) : 0,
+        ticket_promedio: ventasHoy.length ? decimalNumber(ingresos / ventasHoy.length) : 0,
         pedidos_pendientes: pedidosPendientes,
       },
       contabilidad_hoy: {

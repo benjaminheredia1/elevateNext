@@ -21,6 +21,10 @@ export interface VentaFisicaInput {
   metodo_pago: MetodoPago;
   es_cortesia?: boolean;
   cliente_nombre?: string;
+  cliente_telefono?: string;
+  cliente_email?: string;
+  cliente_nit?: string;
+  cliente_anonimo?: boolean;
 }
 
 export interface CierreCajaInput {
@@ -37,6 +41,19 @@ export function useTurnoActivo() {
     queryFn: async () => {
       const res = await apiClient.get('/api/caja/turno-activo');
       return res.data;
+    },
+  });
+}
+
+export function useResumenRepartidores() {
+  return useQuery({
+    queryKey: [...cajaKey, 'repartidores'],
+    queryFn: async () => {
+      const res = await apiClient.get('/api/caja/repartidores');
+      return res.data?.data as {
+        turno: { id: number; fecha_apertura: string } | null;
+        repartidores: { repartidor: string; pedidos: number; en_curso: number; entregados: number; efectivo_adelantado: number; total: number }[];
+      };
     },
   });
 }

@@ -53,12 +53,32 @@ export async function POST(req: NextRequest) {
         imagen_url: parsed.imagen_url ?? null,
         tipo: parsed.tipo,
         insumo_reventa_id: parsed.insumo_reventa_id ?? null,
+        tiene_nuevo_insumo_reventa: !!parsed.nuevo_insumo_reventa,
         marcas: parsed.marcas,
         recetaProducto_id: parsed.receta,
       });
     }
 
     const producto = await prisma.$transaction(async (tx) => {
+      // 0. Reventa: crear el insumo de inventario automáticamente (si se enviaron sus datos)
+      let insumoReventaId = parsed.insumo_reventa_id ?? null;
+      if (parsed.tipo === 'REVENTA' && parsed.nuevo_insumo_reventa && !insumoReventaId) {
+        const n = parsed.nuevo_insumo_reventa;
+        const insumo = await tx.insumo.create({
+          data: {
+            nombre:         parsed.nombre,
+            unidad_medida:  n.unidad_medida,
+            stock_actual:   n.stock,
+            stock_minimo:   n.punto_reorden,
+            punto_critico:  n.nivel_critico,
+            costo_promedio: n.costo_unitario,
+            proveedor:      n.proveedor ?? null,
+            es_mixto:       false,
+          },
+        });
+        insumoReventaId = insumo.id;
+      }
+
       // 1. Crear el producto base
       const prod = await tx.producto.create({
         data: {
@@ -71,7 +91,7 @@ export async function POST(req: NextRequest) {
           estado_publicacion: parsed.estado_publicacion,
           calorias:           parsed.calorias ?? null,
           proteina:           parsed.proteina ?? null,
-          insumo_reventa_id:  parsed.insumo_reventa_id ?? null,
+          insumo_reventa_id:  insumoReventaId,
         },
       });
 

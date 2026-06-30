@@ -12,10 +12,21 @@ datasource db {
 enum EstadoTransaccion {
   PENDIENTE
   EN_PREPARACION
+  LISTO
+  EN_LOCAL
   EN_CAMINO
+  LLEGO
   ENTREGADO
   CANCELADO
   PAGADO
+}
+
+// Estado de pago, independiente del estado de cumplimiento (estado)
+enum EstadoPago {
+  PENDIENTE
+  PAGADO
+  REEMBOLSADO
+  COD_PENDIENTE
 }
 
 enum Rol {
@@ -112,8 +123,11 @@ model Usuario {
 model Cliente {
   id            Int           @id @default(autoincrement())
   nombre        String
-  telefono      String?
+  telefono      String?       @unique
+  email         String?
+  nit           String?
   direccion     String?
+  es_anonimo    Boolean       @default(false)
   transacciones Transaccion[]
   created_at    DateTime      @default(now())
   update_at     DateTime      @updatedAt
@@ -139,6 +153,8 @@ model Transaccion {
   metodo_pago       TipoCuenta?
   total             Float
   estado            EstadoTransaccion @default(PENDIENTE)
+  payment_status    EstadoPago        @default(PENDIENTE)
+  codigo            String?           @unique
 
   // Operación presencial / canal
   canal       CanalVenta?

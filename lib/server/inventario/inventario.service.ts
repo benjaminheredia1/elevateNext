@@ -193,10 +193,10 @@ export async function resolverConsumoInsumos(
     consumo.set(insumoId, (consumo.get(insumoId) ?? 0) + cant);
   }
 
-  for (const item of receta) {
-    const cantTotal = item.cantidad_utilizada * cantidad;
-    const insumo = item.insumo;
-
+  function consumirInsumo(
+    insumo: { id: number; es_mixto: boolean; rendimiento: number | null; insumos_mixtos_hijo: { insumo_hijo_id: number; cantidad: number }[] },
+    cantTotal: number,
+  ) {
     if (insumo.es_mixto && insumo.insumos_mixtos_hijo.length > 0) {
       // Cascada: distribuir proporcionalmente con rendimiento
       const rendimiento = insumo.rendimiento ?? 1;
@@ -206,6 +206,25 @@ export async function resolverConsumoInsumos(
       }
     } else {
       acumular(insumo.id, cantTotal);
+    }
+  }
+
+  for (const item of receta) {
+    consumirInsumo(item.insumo, item.cantidad_utilizada * cantidad);
+  }
+
+  // Productos de REVENTA: no tienen receta, mapean 1:1 a un insumo (1 producto = 1 unidad).
+  if (receta.length === 0) {
+    const producto = await tx.producto.findUnique({
+      where: { id: productoId },
+      select: { insumo_reventa_id: true },
+    });
+    if (producto?.insumo_reventa_id) {
+      const insumo = await tx.insumo.findUnique({
+        where: { id: producto.insumo_reventa_id },
+        include: { insumos_mixtos_hijo: { include: { insumo_hijo: true } } },
+      });
+      if (insumo) consumirInsumo(insumo, cantidad);
     }
   }
 

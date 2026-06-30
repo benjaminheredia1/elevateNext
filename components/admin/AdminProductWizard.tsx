@@ -22,11 +22,21 @@ export interface WizardInitial {
   insumo_reventa_id: number | null;
 }
 
-interface InsumoOpt { id: number; nombre: string; unidad_medida: string; costo_promedio: number; stock_actual: number; }
+interface InsumoOpt { id: number; nombre: string; unidad_medida: string; costo_promedio: number; stock_actual: number; stock_minimo?: number; punto_critico?: number; proveedor?: string | null; }
 interface CategoriaOpt { id: number; nombre: string; }
 interface MarcaOpt { id: number; nombre: string; key?: string; color?: string; }
 
-const STEPS = ['Básicos', 'Precio & Foto', 'Receta', 'Revisar'];
+type UnidadMedida = 'KG' | 'GR' | 'UNIDAD' | 'LT' | 'ML';
+const UNIDADES: UnidadMedida[] = ['UNIDAD', 'KG', 'GR', 'LT', 'ML'];
+interface ReventaInsumo {
+  unidad_medida: UnidadMedida;
+  stock: number;
+  costo_unitario: number;
+  punto_reorden: number;
+  nivel_critico: number;
+  proveedor: string;
+}
+const EMPTY_REVENTA: ReventaInsumo = { unidad_medida: 'UNIDAD', stock: 0, costo_unitario: 0, punto_reorden: 0, nivel_critico: 0, proveedor: '' };
 
 export default function AdminProductWizard({ initial, avgSales, avgMargin, onClose, onSaved }: {
   initial: WizardInitial;
@@ -54,6 +64,27 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, onClo
   const set = (patch: Partial<WizardInitial>) => setP(prev => ({ ...prev, ...patch }));
   const insumoOf = (id: number) => insumos.find(i => i.id === id);
 
+  // Datos del insumo de inventario para productos de reventa (paso 3)
+  const [reventaInsumo, setReventaInsumo] = useState<ReventaInsumo>(EMPTY_REVENTA);
+  const setRev = (patch: Partial<ReventaInsumo>) => setReventaInsumo(prev => ({ ...prev, ...patch }));
+
+  // Al editar un reventa ya vinculado, precargar los datos de su insumo
+  useEffect(() => {
+    if (p.tipo !== 'REVENTA' || !p.insumo_reventa_id) return;
+    const ins = insumos.find(i => i.id === p.insumo_reventa_id);
+    if (!ins) return;
+    setReventaInsumo({
+      unidad_medida: (UNIDADES.includes(ins.unidad_medida as UnidadMedida) ? ins.unidad_medida : 'UNIDAD') as UnidadMedida,
+      stock: ins.stock_actual ?? 0,
+      costo_unitario: ins.costo_promedio ?? 0,
+      punto_reorden: ins.stock_minimo ?? 0,
+      nivel_critico: ins.punto_critico ?? 0,
+      proveedor: ins.proveedor ?? '',
+    });
+  }, [insumos, p.insumo_reventa_id, p.tipo]);
+
+  const STEPS = ['Básicos', 'Precio & Foto', p.tipo === 'REVENTA' ? 'Inventario' : 'Receta', 'Revisar'];
+
   const uploadImagen = async (file: File) => {
     setUploading(true); setUploadError('');
     try {
@@ -69,13 +100,13 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, onClo
 
   /* ---- métricas en vivo ---- */
   const cost = useMemo(() => {
-    if (p.tipo === 'REVENTA') return insumoOf(p.insumo_reventa_id ?? -1)?.costo_promedio ?? 0;
+    if (p.tipo === 'REVENTA') return reventaInsumo.costo_unitario;
     return computeRecipeCost(p.receta.map(r => ({ costo: insumoOf(r.insumo_id)?.costo_promedio ?? 0, cantidad: r.cantidad_utilizada })));
-  }, [p.tipo, p.receta, p.insumo_reventa_id, insumos]);
+  }, [p.tipo, p.receta, reventaInsumo.costo_unitario, insumos]);
   const margin = p.precio - cost;
   const fc = foodCostPct(cost, p.precio);
   const rinde = p.tipo === 'REVENTA'
-    ? (insumoOf(p.insumo_reventa_id ?? -1)?.stock_actual ?? 0)
+    ? Math.floor(reventaInsumo.stock)
     : buildablePortions(p.receta.map(r => ({ stock: insumoOf(r.insumo_id)?.stock_actual ?? 0, cantidad: r.cantidad_utilizada })));
   const clazz = classifyMenu(0, margin, avgSales, avgMargin);
 
@@ -90,7 +121,7 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, onClo
     p.tipo === 'ELABORADO'
     && (p.receta.length === 0 || p.receta.some(item => !item.insumo_id || !(item.cantidad_utilizada > 0)))
   ) gate.push('Falta la ficha técnica con insumos y cantidades válidas.');
-  if (p.tipo === 'REVENTA' && !p.insumo_reventa_id) gate.push('Vincula el insumo de reventa.');
+  if (p.tipo === 'REVENTA' && !(reventaInsumo.costo_unitario > 0)) gate.push('Define el costo unitario del insumo de reventa.');
   const canPublish = gate.length === 0;
 
   const toggleMarca = (id: number) => set({ marcas: p.marcas.includes(id) ? p.marcas.filter(x => x !== id) : [...p.marcas, id] });
@@ -111,10 +142,20 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, onClo
       nombre: p.nombre, descripcion: p.descripcion, precio: p.precio,
       calorias: p.calorias ?? undefined, proteina: p.proteina ?? undefined,
       tipo: p.tipo, estado_publicacion: estado, disponible: estado === 'PUBLICADO',
-      categorias: p.categorias, marcas: p.marcas, receta: p.receta,
+      categorias: p.categorias, marcas: p.marcas, receta: p.tipo === 'REVENTA' ? [] : p.receta,
       insumo_reventa_id: p.insumo_reventa_id ?? undefined,
       imagen_url: p.imagen_url || undefined,
     };
+    if (p.tipo === 'REVENTA') {
+      body.nuevo_insumo_reventa = {
+        unidad_medida: reventaInsumo.unidad_medida,
+        stock: reventaInsumo.stock,
+        costo_unitario: reventaInsumo.costo_unitario,
+        punto_reorden: reventaInsumo.punto_reorden,
+        nivel_critico: reventaInsumo.nivel_critico,
+        proveedor: reventaInsumo.proveedor || undefined,
+      };
+    }
     try {
       if (p.id) await apiClient.put(`/api/admin/productos/${p.id}`, body);
       else await apiClient.post('/api/admin/productos', body);
@@ -236,12 +277,39 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, onClo
             p.tipo === 'REVENTA' ? (
               <div className="form-grid">
                 <div className="form-group full">
-                  <label>Insumo de reventa (mapeo 1:1)</label>
-                  <select value={p.insumo_reventa_id ?? ''} onChange={e => set({ insumo_reventa_id: e.target.value ? +e.target.value : null })}>
-                    <option value="" disabled>Selecciona un insumo…</option>
-                    {insumos.map(i => <option key={i.id} value={i.id}>{i.nombre} (Bs {i.costo_promedio}/{i.unidad_medida})</option>)}
+                  <span className="form-hint">
+                    Este producto de reventa se registrará automáticamente en <strong>Insumos</strong> como
+                    «{p.nombre || 'producto'}». 1 producto vendido = 1 unidad descontada.
+                  </span>
+                </div>
+                <div className="form-group">
+                  <label>Unidad</label>
+                  <select value={reventaInsumo.unidad_medida} onChange={e => setRev({ unidad_medida: e.target.value as UnidadMedida })}>
+                    {UNIDADES.map(u => <option key={u} value={u}>{u}</option>)}
                   </select>
-                  <span className="form-hint">1 producto vendido = 1 unidad descontada. Costo = Bs {cost.toFixed(2)}.</span>
+                </div>
+                <div className="form-group">
+                  <label>Stock</label>
+                  <input type="number" step="0.01" min="0" value={reventaInsumo.stock || ''} onChange={e => setRev({ stock: +e.target.value })} placeholder="0" />
+                </div>
+                <div className="form-group">
+                  <label>Costo unitario (Bs)</label>
+                  <input type="number" step="0.01" min="0" value={reventaInsumo.costo_unitario || ''} onChange={e => setRev({ costo_unitario: +e.target.value })} placeholder="0" />
+                </div>
+                <div className="form-group">
+                  <label>Punto de reorden</label>
+                  <input type="number" step="0.01" min="0" value={reventaInsumo.punto_reorden || ''} onChange={e => setRev({ punto_reorden: +e.target.value })} placeholder="0" />
+                </div>
+                <div className="form-group">
+                  <label>Nivel crítico</label>
+                  <input type="number" step="0.01" min="0" value={reventaInsumo.nivel_critico || ''} onChange={e => setRev({ nivel_critico: +e.target.value })} placeholder="0" />
+                </div>
+                <div className="form-group">
+                  <label>Proveedor</label>
+                  <input value={reventaInsumo.proveedor} onChange={e => setRev({ proveedor: e.target.value })} placeholder="Opcional" />
+                </div>
+                <div className="form-group full" style={{ fontWeight: 600 }}>
+                  Costo: <span style={{ color: 'var(--orange)' }}>Bs {cost.toFixed(2)}</span> · Rinde actual: <span style={{ color: 'var(--orange)' }}>{rinde}</span>
                 </div>
               </div>
             ) : (

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import apiClient from '@/hooks/api';
 
-type EstadoPedido = 'PENDIENTE' | 'EN_PREPARACION' | 'EN_CAMINO' | 'ENTREGADO' | 'CANCELADO' | 'PAGADO';
+type EstadoPedido = 'PENDIENTE' | 'EN_PREPARACION' | 'LISTO' | 'EN_LOCAL' | 'EN_CAMINO' | 'LLEGO' | 'ENTREGADO' | 'CANCELADO' | 'PAGADO';
 type FiltroEstado = 'Todos' | EstadoPedido;
 
 interface DetalleItem {
@@ -20,7 +20,9 @@ interface Pedido {
   cliente_nombre: string | null;
   cliente_telefono: string | null;
   cliente_direccion: string | null;
+  tipo_entrega?: 'RECOJO' | 'DELIVERY' | null;
   metodo_pago: string | null;
+  payment_status?: string | null;
   total: number;
   estado: EstadoPedido | string;
   created_at: string;
@@ -29,21 +31,42 @@ interface Pedido {
   transaccionesDetalles_id: DetalleItem[];
 }
 
+const PAYMENT_META: Record<string, { label: string; color: string; bg: string }> = {
+  PENDIENTE: { label: 'Pago pendiente', color: 'var(--amber)', bg: 'rgba(232,163,23,.14)' },
+  PAGADO: { label: 'Pagado', color: 'var(--fresh)', bg: 'rgba(31,169,113,.14)' },
+  REEMBOLSADO: { label: 'Reembolsado', color: 'var(--slate)', bg: 'var(--canvas)' },
+  COD_PENDIENTE: { label: 'Cobro contra entrega', color: 'var(--info)', bg: 'rgba(59,130,196,.14)' },
+};
+
+function paymentMeta(status?: string | null) {
+  return PAYMENT_META[status ?? 'PENDIENTE'] ?? PAYMENT_META.PENDIENTE;
+}
+
 const STATUS_OPTIONS: EstadoPedido[] = [
   'PENDIENTE',
   'EN_PREPARACION',
+  'LISTO',
+  'EN_LOCAL',
   'EN_CAMINO',
+  'LLEGO',
   'ENTREGADO',
   'CANCELADO',
   'PAGADO',
 ];
+
+// Estados que se pueden asignar según el tipo de entrega
+const STATUS_FLOW_DELIVERY: EstadoPedido[] = ['PENDIENTE', 'EN_PREPARACION', 'EN_LOCAL', 'EN_CAMINO', 'LLEGO', 'ENTREGADO', 'CANCELADO'];
+const STATUS_FLOW_RECOJO: EstadoPedido[] = ['PENDIENTE', 'EN_PREPARACION', 'LISTO', 'ENTREGADO', 'CANCELADO'];
 
 const FILTER_OPTIONS: FiltroEstado[] = ['Todos', ...STATUS_OPTIONS];
 
 const STATUS_META: Record<EstadoPedido, { label: string; color: string; bg: string }> = {
   PENDIENTE: { label: 'Pendiente', color: 'var(--amber)', bg: 'rgba(232,163,23,.14)' },
   EN_PREPARACION: { label: 'En preparación', color: 'var(--info)', bg: 'rgba(59,130,196,.14)' },
+  LISTO: { label: 'Listo para recoger', color: 'var(--kale)', bg: 'rgba(20,52,42,.12)' },
+  EN_LOCAL: { label: 'Repartidor en el local', color: 'var(--info)', bg: 'rgba(59,130,196,.14)' },
   EN_CAMINO: { label: 'En camino', color: 'var(--kale)', bg: 'rgba(20,52,42,.12)' },
+  LLEGO: { label: 'Repartidor llegó', color: 'var(--kale)', bg: 'rgba(20,52,42,.12)' },
   ENTREGADO: { label: 'Entregado', color: 'var(--fresh)', bg: 'rgba(31,169,113,.14)' },
   CANCELADO: { label: 'Cancelado', color: 'var(--danger)', bg: 'rgba(229,72,77,.14)' },
   PAGADO: { label: 'Pagado', color: 'var(--fresh)', bg: 'rgba(31,169,113,.14)' },
@@ -90,19 +113,27 @@ function PedidoCard({
   pedido,
   expanded,
   updating,
+  readOnly,
   onToggle,
   onEstadoChange,
+  onPagoChange,
   onDriverLink,
 }: {
   pedido: Pedido;
   expanded: boolean;
   updating: boolean;
+  readOnly: boolean;
   onToggle: () => void;
   onEstadoChange: (id: number, estado: EstadoPedido) => void;
+  onPagoChange: (id: number, payment: string) => void;
   onDriverLink: (pedido: Pedido) => void;
 }) {
   const totalItems = pedido.transaccionesDetalles_id.reduce((sum, item) => sum + Number(item.cantidad || 0), 0);
   const payment = PAYMENT_LABELS[pedido.metodo_pago ?? ''] ?? pedido.metodo_pago ?? 'Efectivo';
+  const isDelivery = pedido.tipo_entrega === 'DELIVERY';
+  const entregaLabel = isDelivery ? '🛵 Delivery' : '🏪 Recoger en local';
+  const statusFlow = isDelivery ? STATUS_FLOW_DELIVERY : STATUS_FLOW_RECOJO;
+  const pago = paymentMeta(pedido.payment_status);
 
   return (
     <div className={`order-card ${expanded ? 'expanded' : ''}`}>
@@ -113,11 +144,12 @@ function PedidoCard({
         </div>
         <div className="order-card-center">
           <span className="order-customer">{pedido.cliente_nombre ?? 'Cliente sin nombre'}</span>
-          <span className="order-items-count">{totalItems} item{totalItems === 1 ? '' : 's'} · {payment}</span>
+          <span className="order-items-count">{entregaLabel} · {totalItems} item{totalItems === 1 ? '' : 's'} · {payment}</span>
         </div>
         <div className="order-card-right">
           <span className="order-total">{money(pedido.total)}</span>
           <OrderStatusBadge estado={pedido.estado} />
+          <span className="order-status-badge" style={{ color: pago.color, background: pago.bg }}>{pago.label}</span>
         </div>
         <span className={`order-expand-icon ${expanded ? 'open' : ''}`}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9" /></svg>
@@ -163,39 +195,67 @@ function PedidoCard({
                 <span>{pedido.cliente_telefono ?? 'Sin teléfono'}</span>
               </div>
               <div className="ocd-meta-item">
-                <span className="ocd-meta-label">Dirección</span>
-                <span>{pedido.cliente_direccion ?? 'Sin dirección'}</span>
+                <span className="ocd-meta-label">Tipo de entrega</span>
+                <span>{entregaLabel}</span>
               </div>
-              <div className="ocd-meta-item">
-                <span className="ocd-meta-label">Repartidor</span>
-                <span>{pedido.driver_nombre ?? (pedido.driver_link_id ? `Link ${pedido.driver_link_id}` : 'Sin asignar')}</span>
-              </div>
+              {isDelivery && (
+                <>
+                  <div className="ocd-meta-item">
+                    <span className="ocd-meta-label">Dirección</span>
+                    <span>{pedido.cliente_direccion ?? 'Sin dirección'}</span>
+                  </div>
+                  <div className="ocd-meta-item">
+                    <span className="ocd-meta-label">Repartidor</span>
+                    <span>{pedido.driver_nombre ?? (pedido.driver_link_id ? `Link ${pedido.driver_link_id}` : 'Sin asignar')}</span>
+                  </div>
+                </>
+              )}
             </div>
 
-            <div className="ocd-actions">
-              <span className="ocd-actions-label">Cambiar estado:</span>
-              <div className="ocd-status-btns">
-                {STATUS_OPTIONS.map(status => {
-                  const meta = STATUS_META[status];
-                  const current = pedido.estado === status;
-                  return (
-                    <button
-                      key={status}
-                      className={`ocd-status-btn ${current ? 'current' : ''}`}
-                      style={current ? { background: meta.bg, color: meta.color, borderColor: meta.color } : {}}
-                      onClick={() => onEstadoChange(pedido.id, status)}
-                      disabled={updating || current}
-                      type="button"
-                    >
-                      {meta.label}
-                    </button>
-                  );
-                })}
+            {readOnly ? (
+              <div className="ocd-actions">
+                <span className="ocd-actions-label">Estado actual:</span>
+                <div className="ocd-status-btns">
+                  <span className="order-status-badge" style={{ color: statusMeta(pedido.estado).color, background: statusMeta(pedido.estado).bg }}>{statusMeta(pedido.estado).label}</span>
+                  <span className="order-status-badge" style={{ color: pago.color, background: pago.bg }}>{pago.label}</span>
+                </div>
+                <span className="ocd-actions-label" style={{ opacity: 0.7 }}>Gestionado por caja</span>
               </div>
-              <button className="ocd-status-btn" onClick={() => onDriverLink(pedido)} disabled={updating} type="button">
-                {pedido.driver_link_id ? 'Copiar link repartidor' : 'Generar link repartidor'}
-              </button>
-            </div>
+            ) : (
+              <div className="ocd-actions">
+                <span className="ocd-actions-label">Cambiar estado:</span>
+                <div className="ocd-status-btns">
+                  {statusFlow.map(status => {
+                    const meta = STATUS_META[status];
+                    const current = pedido.estado === status;
+                    return (
+                      <button
+                        key={status}
+                        className={`ocd-status-btn ${current ? 'current' : ''}`}
+                        style={current ? { background: meta.bg, color: meta.color, borderColor: meta.color } : {}}
+                        onClick={() => onEstadoChange(pedido.id, status)}
+                        disabled={updating || current}
+                        type="button"
+                      >
+                        {meta.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="ocd-status-btns">
+                  {pedido.payment_status !== 'PAGADO' && (
+                    <button className="ocd-status-btn" onClick={() => onPagoChange(pedido.id, 'PAGADO')} disabled={updating} type="button">
+                      💵 Marcar pagado
+                    </button>
+                  )}
+                  {isDelivery && (
+                    <button className="ocd-status-btn" onClick={() => onDriverLink(pedido)} disabled={updating} type="button">
+                      {pedido.driver_link_id ? 'Copiar link repartidor' : 'Generar link repartidor'}
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
@@ -203,7 +263,7 @@ function PedidoCard({
   );
 }
 
-export default function AdminOrders() {
+export default function AdminOrders({ readOnly = false }: { readOnly?: boolean }) {
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [loading, setLoading] = useState(true);
   const [filtroEstado, setFiltroEstado] = useState<FiltroEstado>('Todos');
@@ -259,6 +319,19 @@ export default function AdminOrders() {
     }
   };
 
+  const handlePagoChange = async (id: number, payment: string) => {
+    setUpdatingId(id);
+    try {
+      const res = await apiClient.put(`/api/pedidos/${id}`, { payment_status: payment });
+      const updated = res.data?.data;
+      setPedidos(prev => prev.map(pedido => pedido.id === id ? { ...pedido, ...(updated ?? {}), payment_status: payment } : pedido));
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
   const handleDriverLink = async (pedido: Pedido) => {
     setUpdatingId(pedido.id);
     try {
@@ -284,7 +357,7 @@ export default function AdminOrders() {
       <div className="admin-page-header">
         <div>
           <h1>Pedidos</h1>
-          <p>{pedidos.length} pedidos totales</p>
+          <p>{pedidos.length} pedidos totales{readOnly ? ' · solo lectura (los gestiona Caja)' : ''}</p>
         </div>
         <button className="admin-btn secondary" onClick={fetchPedidos} type="button">
           {loading ? 'Actualizando...' : 'Actualizar'}
@@ -340,8 +413,10 @@ export default function AdminOrders() {
               pedido={pedido}
               expanded={expandedId === pedido.id}
               updating={updatingId === pedido.id}
+              readOnly={readOnly}
               onToggle={() => setExpandedId(current => current === pedido.id ? null : pedido.id)}
               onEstadoChange={handleEstadoChange}
+              onPagoChange={handlePagoChange}
               onDriverLink={handleDriverLink}
             />
           ))}

@@ -29,6 +29,10 @@ export const VentaFisicaDTO = z.object({
   metodo_pago: metodoPagoSchema,
   es_cortesia: z.boolean().optional().default(false),
   cliente_nombre: z.string().trim().max(120).optional(),
+  cliente_telefono: z.string().trim().max(30).optional(),
+  cliente_email: z.string().trim().max(120).optional(),
+  cliente_nit: z.string().trim().max(30).optional(),
+  cliente_anonimo: z.boolean().optional().default(false),
 });
 
 export type AperturaCajaInput = z.infer<typeof AperturaCajaDTO>;

@@ -32,6 +32,11 @@ export default function VentaCajaPage() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [metodoPago, setMetodoPago] = useState<Metodo>('EFECTIVO');
   const [esCortesia, setEsCortesia] = useState(false);
+  const [anonimo, setAnonimo] = useState(false);
+  const [cNombre, setCNombre] = useState('');
+  const [cTelefono, setCTelefono] = useState('');
+  const [cEmail, setCEmail] = useState('');
+  const [cNit, setCNit] = useState('');
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [alert, setAlert] = useState<{ title: string; description: string; type: 'success' | 'error' | 'warning' } | null>(null);
 
@@ -66,10 +71,17 @@ export default function VentaCajaPage() {
         items: cart.map(item => ({ producto_id: item.id, cantidad: item.cantidad })),
         metodo_pago: metodoPago,
         es_cortesia: esCortesia,
+        cliente_anonimo: anonimo,
+        cliente_nombre: anonimo ? undefined : (cNombre.trim() || undefined),
+        cliente_telefono: anonimo ? undefined : (cTelefono.trim() || undefined),
+        cliente_email: anonimo ? undefined : (cEmail.trim() || undefined),
+        cliente_nit: anonimo ? undefined : (cNit.trim() || undefined),
       });
       setConfirmOpen(false);
       setCart([]);
       setEsCortesia(false);
+      setAnonimo(false);
+      setCNombre(''); setCTelefono(''); setCEmail(''); setCNit('');
       setAlert({ title: 'Venta registrada', description: `Venta #${venta.id} creada correctamente.`, type: 'success' });
     } catch (error: unknown) {
       setConfirmOpen(false);
@@ -164,6 +176,28 @@ export default function VentaCajaPage() {
               <input type="checkbox" checked={esCortesia} onChange={e => setEsCortesia(e.target.checked)} />
               Cortesía <span className="dim">(no suma a ingresos)</span>
             </label>
+
+            {/* Datos del cliente (base única multicanal) */}
+            <div style={{ borderTop: '1px solid var(--line)', paddingTop: 12 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--ink)', marginBottom: 10 }}>
+                <input type="checkbox" checked={anonimo} onChange={e => setAnonimo(e.target.checked)} />
+                Cliente sin registro (anónimo)
+              </label>
+              {anonimo ? (
+                <p className="form-hint" style={{ color: 'var(--amber)' }}>
+                  Sin registrar sus datos, el cliente no podrá acceder a promociones, beneficios, historial de compras ni fidelización. La venta se registra como anónima.
+                </p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <input placeholder="Nombre o razón social" value={cNombre} onChange={e => setCNombre(e.target.value)} />
+                  <input placeholder="Celular" inputMode="numeric" value={cTelefono} onChange={e => setCTelefono(e.target.value.replace(/\D/g, ''))} />
+                  <input placeholder="NIT / C.I." inputMode="numeric" value={cNit} onChange={e => setCNit(e.target.value.replace(/\D/g, ''))} />
+                  <input placeholder="Correo (opcional)" value={cEmail} onChange={e => setCEmail(e.target.value)} />
+                  <span className="form-hint">Si el cliente ya existe (por celular/NIT) se vincula automáticamente.</span>
+                </div>
+              )}
+            </div>
+
             <button className="admin-btn primary" type="button" disabled={cart.length === 0 || registrarVenta.isPending} onClick={() => setConfirmOpen(true)}>
               Cobrar
             </button>

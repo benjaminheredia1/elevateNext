@@ -55,6 +55,7 @@ export async function GET(req: NextRequest) {
     const range = monthRange(searchParams.get('mes'));
 
     const clientes = await prisma.cliente.findMany({
+      where: { es_anonimo: false },
       include: {
         transacciones: {
           include: {
