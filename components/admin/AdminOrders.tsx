@@ -55,7 +55,7 @@ const STATUS_OPTIONS: EstadoPedido[] = [
 ];
 
 // Estados que se pueden asignar según el tipo de entrega
-const STATUS_FLOW_DELIVERY: EstadoPedido[] = ['PENDIENTE', 'EN_PREPARACION', 'EN_LOCAL', 'EN_CAMINO', 'LLEGO', 'ENTREGADO', 'CANCELADO'];
+const STATUS_FLOW_DELIVERY: EstadoPedido[] = ['PENDIENTE', 'EN_PREPARACION', 'LISTO', 'EN_LOCAL', 'EN_CAMINO', 'LLEGO', 'ENTREGADO', 'CANCELADO'];
 const STATUS_FLOW_RECOJO: EstadoPedido[] = ['PENDIENTE', 'EN_PREPARACION', 'LISTO', 'ENTREGADO', 'CANCELADO'];
 
 const FILTER_OPTIONS: FiltroEstado[] = ['Todos', ...STATUS_OPTIONS];

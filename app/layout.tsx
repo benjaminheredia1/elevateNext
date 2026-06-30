@@ -1,14 +1,7 @@
 import type { Metadata } from 'next';
-import { Inter } from 'next/font/google';
 import { Providers } from '@/lib/providers';
 import './globals.css';
 import './App.css';
-
-const inter = Inter({
-  subsets: ['latin'],
-  variable: '--font-inter',
-  display: 'swap',
-});
 
 export const metadata: Metadata = {
   title: 'Elevate — Beyond Performance | Comida Saludable Santa Cruz',
@@ -26,7 +19,7 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="es" className={inter.variable}>
+    <html lang="es">
       <head>
         <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
       </head>
