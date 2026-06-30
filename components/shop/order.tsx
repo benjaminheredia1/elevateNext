@@ -9,6 +9,8 @@ export type CartItem = {
   id: number
   name: string
   price: number
+  precio_original?: number
+  descuentoAplicado?: number
   quantity: number
   icon: React.ReactNode
   category: string
@@ -18,6 +20,8 @@ export type AddableProduct = {
   id: number
   name: string
   price: number
+  precio_original?: number
+  descuentoAplicado?: number
   icon: React.ReactNode
   category: string
 }
@@ -137,7 +141,14 @@ function CartDrawer({
                     <div className="cart-item-info">
                       <div className="cart-item-name">{item.name}</div>
                       <div className="cart-item-category">{item.category}</div>
-                      <div className="cart-item-price">Bs. {item.price * item.quantity}</div>
+                      <div className="cart-item-price">
+                        {item.precio_original && item.precio_original > item.price && (
+                          <span style={{ textDecoration: 'line-through', color: '#666', fontSize: '0.8em', marginRight: 4 }}>
+                            Bs. {(item.precio_original * item.quantity).toFixed(2)}
+                          </span>
+                        )}
+                        Bs. {(item.price * item.quantity).toFixed(2)}
+                      </div>
                     </div>
                     <div className="cart-item-controls">
                       <button className="qty-btn" onClick={() => onUpdateQty(item.id, -1)}>{Icons.minus}</button>
@@ -356,7 +367,7 @@ function CheckoutModal({
           tipo_entrega: tipoEntrega,
           codigo_descuento: codigoDescuento,
           metodo_pago: paymentMethod,
-          items: cart.map(i => ({ nombre: i.name, precio: i.price, cantidad: i.quantity })),
+          items: cart.map(i => ({ id: i.id, nombre: i.name, precio: i.price, cantidad: i.quantity, descuentoAplicado: i.descuentoAplicado ?? 0 })),
           total,
         }),
       })
@@ -1206,7 +1217,7 @@ export function useShop() {
       if (existing) {
         return prev.map(i => i.id === product.id ? { ...i, quantity: i.quantity + 1 } : i)
       }
-      return [...prev, { id: product.id, name: product.name, price: product.price, quantity: 1, icon: product.icon, category: product.category }]
+      return [...prev, { id: product.id, name: product.name, price: product.price, precio_original: product.precio_original, descuentoAplicado: product.descuentoAplicado, quantity: 1, icon: product.icon, category: product.category }]
     })
     setAddedProductId(product.id)
     setTimeout(() => setAddedProductId(null), 700)

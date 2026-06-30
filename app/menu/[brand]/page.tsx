@@ -40,13 +40,21 @@ export default function MenuPage() {
           else if (catLower.includes('ensalada')) iconName = 'salad';
           else if (catLower.includes('batido') || catLower.includes('shake') || catLower.includes('smoothie')) iconName = 'cup';
           else if (catLower.includes('snack')) iconName = 'nut';
+          const tieneDescuento = p.descuentoAplicado != null && p.descuentoAplicado > 0;
+          const pctDescuento = tieneDescuento && p.precio_original > 0
+            ? Math.round((p.descuentoAplicado / p.precio_original) * 100)
+            : 0;
           return {
             id: p.id,
             name: p.nombre,
             description: p.descripcion,
             price: p.precio,
+            precio_original: p.precio_original ?? p.precio,
+            descuentoAplicado: p.descuentoAplicado ?? 0,
+            tieneDescuento,
+            pctDescuento,
             category: catName,
-            tag: null,
+            tag: tieneDescuento ? `${pctDescuento}% OFF` : null,
             icon: Icons[iconName as keyof typeof Icons] || Icons.bowl,
             calories: p.calorias ?? null,
             protein: p.proteina ?? null,
@@ -209,7 +217,14 @@ export default function MenuPage() {
                     </div>
                   )}
                   <div className="product-footer">
-                    <div className="product-price"><span className="currency">Bs. </span>{product.price}</div>
+                    <div className="product-price">
+                      {product.tieneDescuento && (
+                        <span style={{ display: 'block', textDecoration: 'line-through', color: '#666', fontSize: '0.78em', lineHeight: 1 }}>
+                          Bs. {product.precio_original}
+                        </span>
+                      )}
+                      <span className="currency">Bs. </span>{product.price}
+                    </div>
                     {product.agotado ? (
                       <span style={{ fontSize: 12, fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                         No disponible
@@ -220,7 +235,7 @@ export default function MenuPage() {
                         whileHover={{ scale: 1.2 }} whileTap={{ scale: 0.9 }}
                         animate={shop.addedProductId === product.id ? { scale: [1, 1.3, 1], rotate: [0, 15, 0], transition: { duration: 0.4, ease: 'easeInOut' } } : {}}
                         transition={{ type: 'spring', stiffness: 400 }}
-                        onClick={() => shop.addToCart(product)} title="Agregar al carrito"
+                        onClick={() => shop.addToCart({ id: product.id, name: product.name, price: product.price, precio_original: product.precio_original, descuentoAplicado: product.descuentoAplicado, icon: product.icon, category: product.category })} title="Agregar al carrito"
                       >
                         {shop.addedProductId === product.id ? (
                           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">

@@ -48,11 +48,14 @@ export default function CajaEntregarPage() {
     } finally { setProcesando(false); }
   };
 
+  const ESTADOS_ACTIVOS = ['PENDIENTE', 'EN_PREPARACION', 'LISTO'];
+  const ESTADOS_CERRADO = ['ENTREGADO', 'CANCELADO', 'PAGADO', 'EN_CAMINO', 'LLEGO', 'EN_LOCAL'];
   const isDelivery = pedido?.tipo_entrega === 'DELIVERY';
   const estaListo = pedido?.estado === 'LISTO';
-  const cerrado = pedido?.estado === 'ENTREGADO' || pedido?.estado === 'CANCELADO';
+  const estaActivo = ESTADOS_ACTIVOS.includes(pedido?.estado);
+  const cerrado = ESTADOS_CERRADO.includes(pedido?.estado);
   const requiereCobro = isDelivery ? pedido?.payment_status === 'COD_PENDIENTE' : pedido?.payment_status !== 'PAGADO';
-  const puedeEntregar = estaListo && !cerrado && (!isDelivery || driver.trim().length > 0);
+  const puedeEntregar = estaActivo && !cerrado && (!isDelivery || driver.trim().length > 0);
 
   return (
     <div className="admin-orders">
@@ -105,7 +108,11 @@ export default function CajaEntregarPage() {
 
           {/* Checklist de verificación */}
           <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 6, fontSize: 14 }}>
-            <div>{estaListo ? '✅' : '❌'} Estado: <strong>{pedido.estado}</strong> {estaListo ? '' : '(debe estar LISTO)'}</div>
+            <div>
+              {estaListo ? '✅' : estaActivo ? '⚠️' : '❌'} Estado:{' '}
+              <strong>{pedido.estado}</strong>{' '}
+              {estaListo ? '— Listo para entregar' : estaActivo ? '— El pedido aún no fue marcado LISTO, pero puedes entregarlo igual' : '— Este pedido ya salió o fue cerrado'}
+            </div>
             <div>{pedido.payment_status === 'PAGADO' ? '✅' : 'ℹ️'} Pago: <strong>{PAYMENT_LABEL[pedido.payment_status] ?? pedido.payment_status}</strong></div>
             {requiereCobro && (
               <div style={{ color: 'var(--amber)' }}>
@@ -129,8 +136,7 @@ export default function CajaEntregarPage() {
                 ? (requiereCobro ? `Registrar salida · repartidor paga ${money(pedido.total)}` : 'Registrar salida del repartidor')
                 : (requiereCobro ? `Cobrar y entregar ${money(pedido.total)}` : 'Confirmar entrega')}
             </button>
-            {!estaListo && !cerrado && <p className="form-hint" style={{ marginTop: 8 }}>El pedido aún no está LISTO. Márcalo listo en la sección Pedidos.</p>}
-            {cerrado && <p className="form-hint" style={{ marginTop: 8 }}>Este pedido ya está cerrado ({pedido.estado}).</p>}
+            {cerrado && <p className="form-hint" style={{ marginTop: 8 }}>Este pedido ya salió o fue cerrado ({pedido.estado}).</p>}
           </div>
         </div>
       )}
