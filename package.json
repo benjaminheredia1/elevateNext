@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "prisma generate && next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "electron:dev": "electron .",
+    "electron:build": "electron-builder build --win"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.8.0",
@@ -39,6 +41,8 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "electron": "^43.0.0",
+    "electron-builder": "^26.15.3",
     "eslint": "^9",
     "eslint-config-next": "16.2.9",
     "prisma": "^7.8.0",
@@ -47,5 +51,13 @@
   },
   "prisma": {
     "seed": "npx tsx prisma/seed.ts"
+  },
+  "main": "main.js",
+  "build": {
+    "appId": "com.elevatenextjs.app",
+    "productName": "Elevate",
+    "directories": {
+      "output": "dist_electron"
+    }
   }
 }
