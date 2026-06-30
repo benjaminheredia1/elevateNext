@@ -149,10 +149,16 @@ export async function POST(req: NextRequest) {
 
 
     for (const item of items) {
-      // Find or create product
-      let producto = await prisma.producto.findFirst({
-        where: { nombre: { equals: item.nombre, mode: 'insensitive' } },
-      });
+      // Buscar producto: primero por id (si se envía), luego por nombre
+      let producto = item.id
+        ? await prisma.producto.findUnique({ where: { id: Number(item.id) } })
+        : null;
+
+      if (!producto) {
+        producto = await prisma.producto.findFirst({
+          where: { nombre: { equals: item.nombre, mode: 'insensitive' } },
+        });
+      }
 
       if (!producto) {
         producto = await prisma.producto.create({

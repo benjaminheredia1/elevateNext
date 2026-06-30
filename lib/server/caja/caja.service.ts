@@ -331,11 +331,8 @@ export async function entregarPedido(
   return prisma.$transaction(async (tx) => {
     const pedido = await tx.transaccion.findUnique({ where: { codigo } });
     if (!pedido) throw new NotFoundError('No existe un pedido con ese código');
-    if (pedido.estado === 'ENTREGADO' || pedido.estado === 'CANCELADO') {
-      throw new ValidationError('El pedido ya fue cerrado');
-    }
-    if (pedido.estado !== 'LISTO') {
-      throw new ValidationError('El pedido aún no está LISTO para entregar');
+    if (['ENTREGADO', 'CANCELADO', 'PAGADO'].includes(pedido.estado)) {
+      throw new ValidationError('El pedido ya fue cerrado o entregado');
     }
 
     const esDelivery = pedido.tipo_entrega === 'DELIVERY';
@@ -346,16 +343,16 @@ export async function entregarPedido(
     if (esDelivery) {
       if (!dto.driver_nombre?.trim()) throw new ValidationError('Indica el repartidor que retira el pedido');
       if (pedido.payment_status === 'COD_PENDIENTE') {
-        cobroEfectivo = pedido.total; // el repartidor adelanta el producto a caja
+        cobroEfectivo = pedido.total; // el repartidor adelanta el efectivo a caja
         nuevoPago = 'PAGADO';
       }
-      nuevoEstado = 'EN_CAMINO';
+      nuevoEstado = 'EN_LOCAL'; // driver está retirando del local
     } else {
       if (pedido.payment_status !== 'PAGADO') {
         cobroEfectivo = pedido.total; // cobro en mostrador al recoger
         nuevoPago = 'PAGADO';
       }
-      nuevoEstado = 'ENTREGADO';
+      nuevoEstado = 'ENTREGADO'; // pickup: se entrega directamente
     }
 
     let turnoId = pedido.turno_id;

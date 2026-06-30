@@ -5,8 +5,8 @@ import { descontarStockPorTransaccion } from '@/lib/server/inventario/descuento-
 import { requireAuth, requireRole, getClientIp } from '@/lib/server/auth/session';
 import { logAudit } from '@/lib/server/audit/audit.service';
 
-// Estados que disparan el descuento de stock
-const ESTADOS_DESCUENTO = new Set(['EN_PREPARACION', 'ENTREGADO']);
+// Estados que disparan el descuento de stock (idempotente — no descuenta dos veces)
+const ESTADOS_DESCUENTO = new Set(['EN_PREPARACION', 'LISTO', 'ENTREGADO']);
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
