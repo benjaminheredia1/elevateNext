@@ -7,12 +7,15 @@ export async function GET(req: NextRequest) {
     const search = searchParams.get('search') || '';
 
     const clientes = await prisma.cliente.findMany({
-      where: search ? {
-        OR: [
-          { nombre: { contains: search, mode: 'insensitive' } },
-          { telefono: { contains: search, mode: 'insensitive' } },
-        ]
-      } : {},
+      where: {
+        es_anonimo: false,
+        ...(search ? {
+          OR: [
+            { nombre: { contains: search, mode: 'insensitive' } },
+            { telefono: { contains: search, mode: 'insensitive' } },
+          ],
+        } : {}),
+      },
       include: {
         transacciones: {
           select: { total: true, created_at: true },

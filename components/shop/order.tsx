@@ -25,13 +25,22 @@ export type AddableProduct = {
 type PaymentMethod = 'cash' | 'card' | 'qr'
 type TipoEntrega = 'recojo' | 'delivery'
 
-type OrderStatus = 'confirmed' | 'preparing' | 'ontheway' | 'delivered'
+type OrderStatus = 'preparing' | 'atlocal' | 'ontheway' | 'arrived' | 'delivered'
 
+// Flujo para pedidos por delivery (con repartidor)
 const ORDER_STEPS: { status: OrderStatus; label: string; sublabel: string; icon: React.ReactNode }[] = [
-  { status: 'confirmed', label: 'Pedido Confirmado', sublabel: 'Tu pedido fue recibido', icon: Icons.checkCircle },
-  { status: 'preparing', label: 'Preparando', sublabel: 'Nuestros chefs están en acción', icon: Icons.package },
-  { status: 'ontheway', label: 'En Camino', sublabel: 'Tu repartidor va hacia ti', icon: Icons.bike },
-  { status: 'delivered', label: '¡Entregado!', sublabel: '¡Buen provecho!', icon: Icons.home },
+  { status: 'preparing', label: 'Preparando tu pedido', sublabel: 'Nuestros chefs están en acción', icon: Icons.package },
+  { status: 'atlocal', label: 'Repartidor en el local', sublabel: 'El repartidor está recogiendo tu pedido', icon: Icons.home },
+  { status: 'ontheway', label: 'En camino', sublabel: 'Tu repartidor va hacia ti', icon: Icons.bike },
+  { status: 'arrived', label: 'Repartidor llegó', sublabel: 'Está en tu ubicación', icon: Icons.truck },
+  { status: 'delivered', label: '¡Entregado!', sublabel: '¡Buen provecho!', icon: Icons.checkCircle },
+]
+
+// Flujo para pedidos de recoger en el local (sin repartidor)
+const PICKUP_STEPS: { label: string; sublabel: string; icon: React.ReactNode }[] = [
+  { label: 'Preparando tu pedido', sublabel: 'Nuestros chefs están en acción', icon: Icons.package },
+  { label: 'Listo para recoger', sublabel: 'Pásalo a retirar por el local', icon: Icons.shoppingCart },
+  { label: 'Pedido culminado', sublabel: '¡Gracias por tu compra!', icon: Icons.checkCircle },
 ]
 
 /* ===== Confetti Component ===== */
@@ -252,7 +261,7 @@ function CheckoutModal({
 }: {
   cart: CartItem[]
   onClose: () => void
-  onOrderComplete: (pedidoId?: number) => void
+  onOrderComplete: (pedidoId?: number, tipoEntrega?: TipoEntrega) => void
 }) {
   const [step, setStep] = useState<'entrega' | 'payment' | 'datos' | 'qr' | 'confirming'>('entrega')
   const [tipoEntrega, setTipoEntrega] = useState<TipoEntrega | null>(null)
@@ -267,6 +276,7 @@ function CheckoutModal({
   const [gpsError, setGpsError] = useState('')
   const [gpsLoading, setGpsLoading] = useState(false)
   const [codigoDescuento, setCodigoDescuento] = useState('')
+  const [clienteReconocido, setClienteReconocido] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState('')
   const total = cart.reduce((acc, item) => acc + item.price * item.quantity, 0)
@@ -275,10 +285,44 @@ function CheckoutModal({
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${qrData}&bgcolor=1e1e1e&color=ff5c19&margin=10`
 
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
+  const nitValid = /^\d+$/.test(nit.trim())
+  const telefonoValid = /^\d{8}$/.test(telefono.trim())
   const datosCompletos = Boolean(
-    nombre.trim() && nit.trim() && emailValid && telefono.trim() &&
+    nombre.trim() && nitValid && emailValid && telefonoValid &&
     (tipoEntrega === 'recojo' || (direccion.trim() && lat != null && lng != null))
   )
+
+  // Reconocer cliente recurrente por teléfono (8 díg.) o carnet/NIT → autollenar nombre
+  useEffect(() => {
+    const q = telefono.trim().length === 8 ? telefono.trim() : (nit.trim().length >= 5 ? nit.trim() : '')
+    if (!q) { setClienteReconocido(null); return }
+    let cancelado = false
+    const t = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/clientes/lookup?q=${encodeURIComponent(q)}`)
+        const json = await res.json()
+        if (cancelado) return
+        if (json?.data?.nombre) {
+          setClienteReconocido(json.data.nombre)
+          setNombre(prev => prev.trim() ? prev : json.data.nombre)
+        } else {
+          setClienteReconocido(null)
+        }
+      } catch { /* ignorar */ }
+    }, 450)
+    return () => { cancelado = true; clearTimeout(t) }
+  }, [telefono, nit])
+
+  // Convierte coordenadas en una dirección legible y la coloca en el campo dirección
+  const reverseGeocode = async (la: number, ln: number) => {
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${la}&lon=${ln}`, {
+        headers: { 'Accept': 'application/json' },
+      })
+      const j = await res.json()
+      if (j?.display_name) setDireccion(j.display_name)
+    } catch { /* ignorar: el usuario puede escribir la dirección a mano */ }
+  }
 
   const handleUsarUbicacion = () => {
     setGpsError('')
@@ -288,7 +332,7 @@ function CheckoutModal({
     }
     setGpsLoading(true)
     navigator.geolocation.getCurrentPosition(
-      pos => { setLat(pos.coords.latitude); setLng(pos.coords.longitude); setGpsLoading(false) },
+      pos => { setLat(pos.coords.latitude); setLng(pos.coords.longitude); reverseGeocode(pos.coords.latitude, pos.coords.longitude); setGpsLoading(false) },
       () => { setGpsError('No se pudo obtener tu ubicación. Tócala en el mapa.'); setGpsLoading(false) },
       { enableHighAccuracy: true, timeout: 10000 }
     )
@@ -334,14 +378,16 @@ function CheckoutModal({
     } else {
       setStep('confirming')
       const pedidoId = await submitOrder()
-      setTimeout(() => onOrderComplete(pedidoId), 800)
+      if (!pedidoId) { setStep('datos'); return }
+      setTimeout(() => onOrderComplete(pedidoId, tipoEntrega ?? undefined), 800)
     }
   }
 
   const handleQRDone = async () => {
     setStep('confirming')
     const pedidoId = await submitOrder()
-    setTimeout(() => onOrderComplete(pedidoId), 800)
+    if (!pedidoId) { setStep('datos'); return }
+    setTimeout(() => onOrderComplete(pedidoId, tipoEntrega ?? undefined), 800)
   }
 
   return (
@@ -496,33 +542,52 @@ function CheckoutModal({
             >
               <h2 className="modal-title">Datos de Facturación</h2>
               <p className="modal-subtitle">Completa tus datos para emitir tu pedido</p>
+              {clienteReconocido && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(31,169,113,0.12)', border: '1px solid rgba(31,169,113,0.35)', borderRadius: 10, padding: '8px 14px', marginBottom: 14, fontSize: 13, color: '#4caf50' }}>
+                  ✓ ¡Hola de nuevo, <strong>{clienteReconocido}</strong>! Reconocimos tus datos.
+                </div>
+              )}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginBottom: 18 }}>
                 {[
-                  { label: 'Nombre o razón social', value: nombre, setter: setNombre, placeholder: 'Ej: Carlos Pérez', type: 'text', required: true },
-                  { label: 'NIT / C.I.', value: nit, setter: setNit, placeholder: 'Ej: 1234567 o 9876543 SC', type: 'text', required: true },
-                  { label: 'Correo electrónico', value: email, setter: setEmail, placeholder: 'tu@correo.com', type: 'email', required: true },
-                  { label: 'Celular de contacto', value: telefono, setter: setTelefono, placeholder: 'Ej: 70000000', type: 'tel', required: true },
-                  { label: 'Código de descuento', value: codigoDescuento, setter: setCodigoDescuento, placeholder: 'Opcional', type: 'text', required: false },
+                  { id: 'nombre', label: 'Nombre o razón social', value: nombre, setter: setNombre, placeholder: 'Ej: Carlos Pérez', type: 'text', inputMode: 'text' as const, digitsOnly: false, maxLen: 0, required: true },
+                  { id: 'nit', label: 'NIT / C.I. (solo números)', value: nit, setter: setNit, placeholder: 'Ej: 1234567', type: 'text', inputMode: 'numeric' as const, digitsOnly: true, maxLen: 0, required: true },
+                  { id: 'email', label: 'Correo electrónico', value: email, setter: setEmail, placeholder: 'tu@correo.com', type: 'email', inputMode: 'email' as const, digitsOnly: false, maxLen: 0, required: true },
+                  { id: 'tel', label: 'Celular de contacto (8 dígitos)', value: telefono, setter: setTelefono, placeholder: 'Ej: 70000000', type: 'tel', inputMode: 'numeric' as const, digitsOnly: true, maxLen: 8, required: true },
+                  { id: 'desc', label: 'Código de descuento', value: codigoDescuento, setter: setCodigoDescuento, placeholder: 'Opcional', type: 'text', inputMode: 'text' as const, digitsOnly: false, maxLen: 0, required: false },
                 ].map(field => {
-                  const invalidEmail = field.type === 'email' && field.value.length > 0 && !emailValid
+                  const invalid =
+                    (field.id === 'email' && field.value.length > 0 && !emailValid) ||
+                    (field.id === 'nit' && field.value.length > 0 && !nitValid) ||
+                    (field.id === 'tel' && field.value.length > 0 && !telefonoValid)
+                  const errorMsg = field.id === 'email' ? 'Correo no válido'
+                    : field.id === 'nit' ? 'Solo números, sin letras ni espacios.'
+                    : field.id === 'tel' ? 'Debe tener exactamente 8 dígitos.'
+                    : ''
                   return (
-                    <div key={field.label}>
+                    <div key={field.id}>
                       <label style={{ display: 'block', color: '#aaa', fontSize: 12, marginBottom: 6, fontWeight: 500 }}>
                         {field.label} {field.required && <span style={{ color: '#ff5c19' }}>*</span>}
                       </label>
                       <input
                         type={field.type}
+                        inputMode={field.inputMode}
+                        maxLength={field.maxLen || undefined}
                         value={field.value}
-                        onChange={e => field.setter(e.target.value)}
+                        onChange={e => {
+                          let v = e.target.value
+                          if (field.digitsOnly) v = v.replace(/\D/g, '')
+                          if (field.maxLen) v = v.slice(0, field.maxLen)
+                          field.setter(v)
+                        }}
                         placeholder={field.placeholder}
                         style={{
                           width: '100%', padding: '10px 14px', borderRadius: 10, boxSizing: 'border-box',
                           background: 'rgba(255,255,255,0.06)',
-                          border: `1px solid ${invalidEmail ? 'rgba(239,68,68,0.6)' : field.value ? 'rgba(255,92,25,0.4)' : 'rgba(255,255,255,0.12)'}`,
+                          border: `1px solid ${invalid ? 'rgba(239,68,68,0.6)' : field.value ? 'rgba(255,92,25,0.4)' : 'rgba(255,255,255,0.12)'}`,
                           color: '#fff', fontSize: 14, outline: 'none', transition: 'border-color 0.2s',
                         }}
                       />
-                      {invalidEmail && <span style={{ color: '#ef4444', fontSize: 11 }}>Correo no válido</span>}
+                      {invalid && <span style={{ color: '#ef4444', fontSize: 11 }}>{errorMsg}</span>}
                     </div>
                   )
                 })}
@@ -559,7 +624,7 @@ function CheckoutModal({
                           {gpsLoading ? 'Ubicando…' : '📍 Usar mi ubicación'}
                         </button>
                       </div>
-                      <LocationPicker lat={lat} lng={lng} onChange={(la, ln) => { setLat(la); setLng(ln); }} />
+                      <LocationPicker lat={lat} lng={lng} onChange={(la, ln) => { setLat(la); setLng(ln); reverseGeocode(la, ln); }} />
                       <span style={{ display: 'block', marginTop: 6, fontSize: 11, color: lat != null ? '#4caf50' : '#888' }}>
                         {lat != null && lng != null
                           ? `✓ Ubicación marcada (${lat.toFixed(5)}, ${lng.toFixed(5)})`
@@ -906,18 +971,23 @@ function DeliveryMap({ currentStep, totalSteps, driverPos }: { currentStep: numb
 const PEDIDO_STORAGE_KEY = 'elevate_pedido_activo';
 
 /* ===== Order Tracker ===== */
-function OrderTracker({ onClose, pedidoId }: { onClose: () => void; pedidoId?: number }) {
+function OrderTracker({ onClose, pedidoId, tipoEntrega }: { onClose: () => void; pedidoId?: number; tipoEntrega?: TipoEntrega }) {
 
   const [currentStep, setCurrentStep] = useState(0)
   const [showConfetti, setShowConfetti] = useState(false)
   const [driverPos, setDriverPos] = useState<[number, number] | null>(null)
+  const [isPickup, setIsPickup] = useState(tipoEntrega === 'recojo')
+  const [codigo, setCodigo] = useState<string | null>(null)
   const fallbackRef = useRef(`#${Math.floor(Math.random() * 9000) + 1000}`)
   const orderNumber = pedidoId ? `#${pedidoId}` : fallbackRef.current
+
+  const steps = isPickup ? PICKUP_STEPS : ORDER_STEPS
+  const finalStep = steps.length - 1
 
   useEffect(() => {
     if (!pedidoId) {
       // Demo fallback if no pedidoId
-      if (currentStep < ORDER_STEPS.length - 1) {
+      if (currentStep < finalStep) {
         const timer = setTimeout(() => setCurrentStep(prev => prev + 1), 3000)
         return () => clearTimeout(timer)
       }
@@ -930,20 +1000,35 @@ function OrderTracker({ onClose, pedidoId }: { onClose: () => void; pedidoId?: n
         const res = await fetch(`/api/pedidos/${pedidoId}`);
         const data = await res.json();
         if (data.data) {
-          const { estado, driver_lat, driver_lng } = data.data;
-          
+          const { estado, driver_lat, driver_lng, tipo_entrega, codigo: cod } = data.data;
+          const pickup = tipo_entrega === 'RECOJO';
+          setIsPickup(pickup);
+          if (cod) setCodigo(cod);
+
           let stepIndex = 0;
-          if (estado === 'EN_PREPARACION') stepIndex = 1;
-          else if (estado === 'EN_CAMINO') stepIndex = 2;
-          else if (estado === 'ENTREGADO' || estado === 'PAGADO') stepIndex = 3;
+          let lastStep: number;
+          if (pickup) {
+            // Recojo: Preparando → Listo para recoger → Culminado
+            if (estado === 'LISTO') stepIndex = 1;
+            else if (estado === 'ENTREGADO' || estado === 'PAGADO') stepIndex = 2;
+            else stepIndex = 0; // PENDIENTE / EN_PREPARACION
+            lastStep = PICKUP_STEPS.length - 1;
+          } else {
+            // Delivery: Preparando → Repartidor en el local → En camino → Llegó → Entregado
+            if (estado === 'EN_LOCAL') stepIndex = 1;
+            else if (estado === 'EN_CAMINO') stepIndex = 2;
+            else if (estado === 'LLEGO') stepIndex = 3;
+            else if (estado === 'ENTREGADO' || estado === 'PAGADO') stepIndex = 4;
+            else stepIndex = 0; // PENDIENTE / EN_PREPARACION / LISTO
+            lastStep = ORDER_STEPS.length - 1;
+            if (driver_lat && driver_lng) {
+              setDriverPos([driver_lat, driver_lng]);
+            }
+          }
 
           setCurrentStep(stepIndex);
 
-          if (driver_lat && driver_lng) {
-            setDriverPos([driver_lat, driver_lng]);
-          }
-
-          if (stepIndex === ORDER_STEPS.length - 1) {
+          if (stepIndex === lastStep) {
              clearInterval(pollingInterval);
           }
         }
@@ -959,16 +1044,18 @@ function OrderTracker({ onClose, pedidoId }: { onClose: () => void; pedidoId?: n
   }, [pedidoId, currentStep]);
 
   useEffect(() => {
-    if (currentStep === ORDER_STEPS.length - 1) {
+    if (currentStep === finalStep) {
       setShowConfetti(true)
       try { localStorage.removeItem(PEDIDO_STORAGE_KEY) } catch {}
       const t = setTimeout(() => setShowConfetti(false), 3000)
       return () => clearTimeout(t)
     }
-  }, [currentStep])
+  }, [currentStep, finalStep])
 
-  const currentInfo = ORDER_STEPS[currentStep]
-  const estimatedTime = currentStep === 0 ? '40 min' : currentStep === 1 ? '30 min' : currentStep === 2 ? '10 min' : '¡Llegó!'
+  const currentInfo = steps[currentStep] ?? steps[0]
+  const estimatedTime = isPickup
+    ? (currentStep === 0 ? '20 min' : currentStep === 1 ? '¡Listo!' : '✓')
+    : (currentStep === 0 ? '40 min' : currentStep === 1 ? '30 min' : currentStep === 2 ? '15 min' : currentStep === 3 ? '¡Llegó!' : '✓')
 
   return (
     <motion.div
@@ -993,11 +1080,20 @@ function OrderTracker({ onClose, pedidoId }: { onClose: () => void; pedidoId?: n
           </div>
         </div>
 
+        {codigo && currentStep < finalStep && (
+          <div style={{ margin: '0 0 14px', padding: '12px 16px', borderRadius: 12, background: 'rgba(255,92,25,0.1)', border: '1px solid rgba(255,92,25,0.3)', textAlign: 'center' }}>
+            <div style={{ fontSize: 12, color: '#aaa', marginBottom: 4 }}>
+              {isPickup ? 'Muestra este código para recoger tu pedido' : 'Código de tu pedido'}
+            </div>
+            <div style={{ fontSize: 26, fontWeight: 800, letterSpacing: 4, color: '#ff5c19' }}>{codigo}</div>
+          </div>
+        )}
+
         {/* Current status hero */}
         <div className="tracker-status-hero">
           <motion.div
-            className={`tracker-status-icon ${currentStep === ORDER_STEPS.length - 1 ? 'delivered' : ''}`}
-            animate={currentStep < ORDER_STEPS.length - 1
+            className={`tracker-status-icon ${currentStep === finalStep ? 'delivered' : ''}`}
+            animate={currentStep < finalStep
               ? { scale: [1, 1.15, 1], rotate: [0, 5, -5, 0] }
               : { scale: [1, 1.2, 1] }
             }
@@ -1011,8 +1107,8 @@ function OrderTracker({ onClose, pedidoId }: { onClose: () => void; pedidoId?: n
 
         {/* Progress steps */}
         <div className="tracker-steps">
-          {ORDER_STEPS.map((step, i) => (
-            <div key={step.status} className="tracker-step-row">
+          {steps.map((step, i) => (
+            <div key={i} className="tracker-step-row">
               <div className={`tracker-step-dot ${i <= currentStep ? 'done' : ''} ${i === currentStep ? 'current' : ''}`}>
                 {i < currentStep ? (
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
@@ -1030,7 +1126,7 @@ function OrderTracker({ onClose, pedidoId }: { onClose: () => void; pedidoId?: n
                 <span className="tracker-step-label">{step.label}</span>
                 <span className="tracker-step-sub">{step.sublabel}</span>
               </div>
-              {i < ORDER_STEPS.length - 1 && (
+              {i < finalStep && (
                 <div className="tracker-step-line-container">
                   <div className="tracker-step-line-bg" />
                   <motion.div
@@ -1045,10 +1141,12 @@ function OrderTracker({ onClose, pedidoId }: { onClose: () => void; pedidoId?: n
           ))}
         </div>
 
-        {/* Delivery Map */}
-        <DeliveryMap currentStep={currentStep} totalSteps={ORDER_STEPS.length} driverPos={driverPos} />
+        {/* Delivery Map — solo para pedidos con repartidor */}
+        {!isPickup && (
+          <DeliveryMap currentStep={currentStep} totalSteps={ORDER_STEPS.length} driverPos={driverPos} />
+        )}
 
-        {currentStep === ORDER_STEPS.length - 1 && (
+        {currentStep === finalStep && (
           <motion.button
             className="tracker-done-btn"
             initial={{ opacity: 0, y: 20 }}
@@ -1074,6 +1172,7 @@ export function useShop() {
   const [orderTrackerOpen, setOrderTrackerOpen] = useState(false)
   const [addedProductId, setAddedProductId] = useState<number | null>(null)
   const [currentPedidoId, setCurrentPedidoId] = useState<number | undefined>(undefined)
+  const [currentTipoEntrega, setCurrentTipoEntrega] = useState<TipoEntrega | undefined>(undefined)
 
   // Restore active order from localStorage after mount (avoids SSR mismatch)
   useEffect(() => {
@@ -1132,8 +1231,9 @@ export function useShop() {
     setTimeout(() => setCheckoutOpen(true), 300)
   }
 
-  const handleOrderComplete = (pedidoId?: number) => {
+  const handleOrderComplete = (pedidoId?: number, tipoEntrega?: TipoEntrega) => {
     setCurrentPedidoId(pedidoId)
+    setCurrentTipoEntrega(tipoEntrega)
     setCheckoutOpen(false)
     setCart([])
     if (pedidoId) {
@@ -1157,6 +1257,7 @@ export function useShop() {
     removeItem,
     openCart,
     currentPedidoId,
+    currentTipoEntrega,
     clearActivePedido,
     // internal state exposed for ShopOverlays
     cartOpen,
@@ -1235,6 +1336,7 @@ export function ShopOverlays({ shop }: { shop: ShopState }) {
           <OrderTracker
             onClose={shop.clearActivePedido}
             pedidoId={shop.currentPedidoId}
+            tipoEntrega={shop.currentTipoEntrega}
           />
         )}
       </AnimatePresence>

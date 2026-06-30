@@ -239,22 +239,42 @@ export default function DriverPage({ params }: { params: Promise<{ token: string
               {locationStatus}
             </div>
 
-            <div style={{ display: 'flex', gap: 10 }}>
-              {pedido.estado !== 'EN_CAMINO' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {(pedido.estado === 'PENDIENTE' || pedido.estado === 'EN_PREPARACION' || pedido.estado === 'LISTO') && (
                 <motion.button
-                  whileTap={{ scale: 0.98 }} onClick={() => handleUpdate({ estado: 'EN_CAMINO' })}
-                  style={{ flex: 1, padding: '14px', background: '#3b82f6', color: '#fff', border: 'none', borderRadius: 12, fontSize: 14, fontWeight: 700 }}
+                  whileTap={{ scale: 0.98 }} onClick={() => handleUpdate({ estado: 'EN_LOCAL' })}
+                  style={{ width: '100%', padding: '14px', background: '#3b82f6', color: '#fff', border: 'none', borderRadius: 12, fontSize: 14, fontWeight: 700 }}
                 >
-                  🚙 Recogido (En Camino)
+                  🏪 Llegué al local
                 </motion.button>
               )}
-              
-              <motion.button
-                whileTap={{ scale: 0.98 }} onClick={() => { if(confirm('¿Confirmar entrega?')) handleUpdate({ estado: 'ENTREGADO' }) }}
-                style={{ flex: 1, padding: '14px', background: '#10b981', color: '#fff', border: 'none', borderRadius: 12, fontSize: 14, fontWeight: 700 }}
-              >
-                ✅ Entregado
-              </motion.button>
+
+              {pedido.estado === 'EN_LOCAL' && (
+                <motion.button
+                  whileTap={{ scale: 0.98 }} onClick={() => handleUpdate({ estado: 'EN_CAMINO' })}
+                  style={{ width: '100%', padding: '14px', background: '#3b82f6', color: '#fff', border: 'none', borderRadius: 12, fontSize: 14, fontWeight: 700 }}
+                >
+                  🚙 Recogí el pedido (En camino)
+                </motion.button>
+              )}
+
+              {pedido.estado === 'EN_CAMINO' && (
+                <motion.button
+                  whileTap={{ scale: 0.98 }} onClick={() => handleUpdate({ estado: 'LLEGO' })}
+                  style={{ width: '100%', padding: '14px', background: '#3b82f6', color: '#fff', border: 'none', borderRadius: 12, fontSize: 14, fontWeight: 700 }}
+                >
+                  📍 Llegué al destino
+                </motion.button>
+              )}
+
+              {(pedido.estado === 'EN_CAMINO' || pedido.estado === 'LLEGO') && (
+                <motion.button
+                  whileTap={{ scale: 0.98 }} onClick={() => { if(confirm('¿Confirmar entrega?')) handleUpdate({ estado: 'ENTREGADO' }) }}
+                  style={{ width: '100%', padding: '14px', background: '#10b981', color: '#fff', border: 'none', borderRadius: 12, fontSize: 14, fontWeight: 700 }}
+                >
+                  ✅ Entregado
+                </motion.button>
+              )}
             </div>
           </div>
         ) : (

@@ -8,7 +8,7 @@ import KpiCard from '@/components/ui/KpiCard';
 import MoneyText from '@/components/ui/MoneyText';
 import StatusBadge from '@/components/ui/StatusBadge';
 import ReporteCierre from '@/components/caja/ReporteCierre';
-import { useCerrarCaja, useTurnoActivo } from '@/hooks/caja';
+import { useCerrarCaja, useTurnoActivo, useResumenRepartidores } from '@/hooks/caja';
 
 type Movimiento = { metodo_pago: 'EFECTIVO' | 'QR' | 'TARJETA'; monto: string | number };
 
@@ -30,7 +30,9 @@ function diffStatus(diff: number) {
 
 export default function CierreCajaPage() {
   const { data: turno, isLoading, isError } = useTurnoActivo();
+  const { data: repartidoresData } = useResumenRepartidores();
   const cerrarCaja = useCerrarCaja();
+  const repartidores = repartidoresData?.repartidores ?? [];
   const [realEfectivo, setRealEfectivo] = useState('');
   const [realQr, setRealQr] = useState('');
   const [observaciones, setObservaciones] = useState('');
@@ -119,6 +121,42 @@ export default function CierreCajaPage() {
         <KpiCard label="Diferencia efectivo" value={<MoneyText value={diff.efectivo} signed />} accent={diff.efectivo < 0 ? 'var(--danger)' : 'var(--fresh)'} />
         <KpiCard label="Diferencia QR" value={<MoneyText value={diff.qr} signed />} accent={diff.qr < 0 ? 'var(--danger)' : 'var(--fresh)'} />
       </div>
+
+      {repartidores.length > 0 && (
+        <div className="dash-card span-12" style={{ marginBottom: 18 }}>
+          <div className="dash-card-header">
+            <h3>Conciliación de repartidores</h3>
+            <span className="dash-card-sub">pedidos de delivery de este turno</span>
+          </div>
+          <table className="admin-table" style={{ width: '100%' }}>
+            <thead>
+              <tr>
+                <th>Repartidor</th>
+                <th className="num">Pedidos</th>
+                <th className="num">En curso</th>
+                <th className="num">Entregados</th>
+                <th className="num">Efectivo adelantado</th>
+                <th className="num">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {repartidores.map(r => (
+                <tr key={r.repartidor}>
+                  <td>{r.repartidor}</td>
+                  <td className="num">{r.pedidos}</td>
+                  <td className="num">{r.en_curso}</td>
+                  <td className="num">{r.entregados}</td>
+                  <td className="num"><MoneyText value={r.efectivo_adelantado} /></td>
+                  <td className="num"><MoneyText value={r.total} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="form-hint" style={{ marginTop: 8 }}>
+            El efectivo adelantado por cada repartidor ya está incluido en el efectivo esperado del turno.
+          </p>
+        </div>
+      )}
 
       <form className="dash-card span-8" onSubmit={submit}>
         <div className="form-grid">

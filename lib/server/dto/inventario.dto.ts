@@ -36,6 +36,17 @@ const ImagenProductoSchema = z.string().trim().refine(
   'La imagen debe ser una URL válida o una ruta interna /uploads/...',
 );
 
+// Datos para crear/actualizar automáticamente el insumo de un producto de reventa
+export const NuevoInsumoReventaSchema = z.object({
+  unidad_medida:  z.enum(['KG', 'GR', 'UNIDAD', 'LT', 'ML']).default('UNIDAD'),
+  stock:          z.number().min(0).default(0),
+  costo_unitario: z.number().min(0).default(0),
+  punto_reorden:  z.number().min(0).default(0),
+  nivel_critico:  z.number().min(0).default(0),
+  proveedor:      z.string().optional(),
+});
+export type NuevoInsumoReventaInput = z.infer<typeof NuevoInsumoReventaSchema>;
+
 export const ProductoConFichaSchema = z.object({
   nombre:             z.string().min(1),
   descripcion:        z.string().min(1),
@@ -47,6 +58,7 @@ export const ProductoConFichaSchema = z.object({
   calorias:           z.number().int().positive().optional(),
   proteina:           z.string().optional(),
   insumo_reventa_id:  z.number().int().positive().optional(),
+  nuevo_insumo_reventa: NuevoInsumoReventaSchema.optional(),
   categorias:         z.array(z.number().int().positive()).optional().default([]),
   marcas:             z.array(z.number().int().positive()).optional().default([]),
   receta:             z.array(ItemRecetaSchema).optional().default([]),

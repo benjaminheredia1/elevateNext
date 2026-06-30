@@ -2769,7 +2769,9 @@
     glitch-ambient  15s  linear 5s    infinite;
 }
 
-/* Warm (orange-red) channel — offset left */
+/* Brand-orange channel — offset left. The cream logo is first crushed to
+   black with brightness(0), then rebuilt into a solid --orange (#ff5c19)
+   fill — far more vivid/faithful than tinting a near-white image. */
 .hero-logo-r {
   position: absolute;
   top: 0; left: 0;
@@ -2777,14 +2779,15 @@
   pointer-events: none;
   z-index: 2;
   opacity: 0;
-  filter: drop-shadow(0 10px 40px rgba(0,0,0,0.3))
-          sepia(1) hue-rotate(-20deg) saturate(18) brightness(1.2);
+  filter: brightness(0) invert(48%) sepia(94%) saturate(3200%)
+          hue-rotate(353deg) brightness(101%) contrast(104%);
   animation:
     glitch-r-in     2.4s linear 0.85s 1 both,
     glitch-r-ambient 15s linear 5s   infinite;
 }
 
-/* Cool (cyan-teal) channel — offset right */
+/* Neutral gray channel — offset right. Crushed to black then lifted to a
+   solid mid-gray (gris) ghost, visible against the dark background. */
 .hero-logo-b {
   position: absolute;
   top: 0; left: 0;
@@ -2792,8 +2795,7 @@
   pointer-events: none;
   z-index: 2;
   opacity: 0;
-  filter: drop-shadow(0 10px 40px rgba(0,0,0,0.3))
-          sepia(1) hue-rotate(155deg) saturate(18) brightness(1.2);
+  filter: brightness(0) invert(62%);
   animation:
     glitch-b-in     2.4s linear 0.85s 1 both,
     glitch-b-ambient 15s linear 5.2s  infinite;

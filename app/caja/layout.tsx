@@ -3,6 +3,7 @@
 import { ProtectedRoute } from '@/lib/Guard';
 import CajaSidebar from '@/components/caja/CajaSidebar';
 import '../admin.css';
+import './caja.css';
 import 'primeicons/primeicons.css';
 
 export default function CajaLayout({ children }: { children: React.ReactNode }) {

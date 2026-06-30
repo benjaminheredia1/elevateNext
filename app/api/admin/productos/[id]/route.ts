@@ -55,12 +55,33 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
         imagen_url: parsed.imagen_url ?? null,
         tipo: parsed.tipo,
         insumo_reventa_id: parsed.insumo_reventa_id ?? null,
+        tiene_nuevo_insumo_reventa: !!parsed.nuevo_insumo_reventa,
         marcas: parsed.marcas,
         recetaProducto_id: parsed.receta,
       });
     }
 
     await prisma.$transaction(async (tx) => {
+      // Reventa: actualizar el insumo vinculado o crear uno nuevo con los datos enviados
+      let insumoReventaId = parsed.insumo_reventa_id ?? null;
+      if (parsed.tipo === 'REVENTA' && parsed.nuevo_insumo_reventa) {
+        const n = parsed.nuevo_insumo_reventa;
+        const insumoData = {
+          unidad_medida:  n.unidad_medida,
+          stock_actual:   n.stock,
+          stock_minimo:   n.punto_reorden,
+          punto_critico:  n.nivel_critico,
+          costo_promedio: n.costo_unitario,
+          proveedor:      n.proveedor ?? null,
+        };
+        if (insumoReventaId) {
+          await tx.insumo.update({ where: { id: insumoReventaId }, data: insumoData });
+        } else {
+          const insumo = await tx.insumo.create({ data: { nombre: parsed.nombre, es_mixto: false, ...insumoData } });
+          insumoReventaId = insumo.id;
+        }
+      }
+
       await tx.producto.update({
         where: { id: productoId },
         data: {
@@ -73,7 +94,7 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
           estado_publicacion: parsed.estado_publicacion,
           calorias: parsed.calorias ?? null,
           proteina: parsed.proteina ?? null,
-          insumo_reventa_id: parsed.insumo_reventa_id ?? null,
+          insumo_reventa_id: insumoReventaId,
         },
       });
 
