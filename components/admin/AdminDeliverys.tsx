@@ -8,6 +8,7 @@ interface PedidoEnCamino {
   id: number;
   cliente_nombre: string | null;
   cliente_telefono: string | null;
+  estado: string;
   driver_nombre: string | null;
   driver_lat: number | null;
   driver_lng: number | null;
@@ -52,8 +53,9 @@ export default function AdminDeliverys() {
 
   const fetchDrivers = useCallback(async () => {
     try {
-      const res = await apiClient.get('/api/pedidos?estado=EN_CAMINO');
-      const rows = (res.data?.data ?? []) as PedidoEnCamino[];
+      const estados = ['EN_LOCAL', 'EN_CAMINO', 'LLEGO'];
+      const responses = await Promise.all(estados.map(estado => apiClient.get(`/api/pedidos?estado=${estado}`)));
+      const rows = responses.flatMap(res => (res.data?.data ?? []) as PedidoEnCamino[]);
       setDrivers(rows.map(pedido => {
         const name = pedido.driver_nombre || `Repartidor pedido #${pedido.id}`;
         return {
@@ -63,7 +65,7 @@ export default function AdminDeliverys() {
           phone: pedido.cliente_telefono ?? 'Sin teléfono',
           status: 'onroute',
           rating: 5.0,
-          currentOrder: `#${pedido.id}`,
+          currentOrder: `#${pedido.id} - ${pedido.estado}`,
           lat: typeof pedido.driver_lat === 'number' ? pedido.driver_lat : null,
           lng: typeof pedido.driver_lng === 'number' ? pedido.driver_lng : null,
         };
@@ -254,7 +256,7 @@ export default function AdminDeliverys() {
         <div className="delivery-stats-row">
           <div className="d-stat">
             <span className="d-stat-val">{drivers.length}</span>
-            <span className="d-stat-label">En ruta</span>
+            <span className="d-stat-label">Activos</span>
           </div>
           <div className="d-stat">
             <span className="d-stat-val">{locatedCount}</span>

@@ -5,6 +5,8 @@
 @import "leaflet/dist/leaflet.css";
 
 :root {
+  --font-inter: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+
   /* Primary Colors */
   --orange: #ff5c19;
   --orange-dark: #e04d10;
