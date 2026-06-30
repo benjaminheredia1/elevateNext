@@ -61,15 +61,6 @@ const collaborations = [
   },
 ];
 
-const featured = [
-  BRANDS.fitbull.products[0],
-  BRANDS.elevate.products[0],
-  BRANDS.elevate.products[5],
-  BRANDS.fitbull.products[1],
-  BRANDS.elevate.products[3],
-  BRANDS.fitbull.products[4],
-];
-
 const heroParticles = [
   { left: '7%', size: 4, dur: 9, delay: 0 },
   { left: '14%', size: 3, dur: 12, delay: 2.5 },
@@ -156,32 +147,27 @@ export default function Home() {
           if (fitbullItems[i]) combined.push(fitbullItems[i]);
         }
 
-        if (combined.length > 0) {
-          const mapProduct = (p: any) => {
-            const catName = p.categoria_id?.[0]?.categoria?.nombre || 'General';
-            let iconName = 'bowl';
-            const catLower = catName.toLowerCase();
-            if (catLower.includes('wrap')) iconName = 'wrap';
-            else if (catLower.includes('bebida') || catLower.includes('batido') || catLower.includes('smoothie')) iconName = 'cup';
-            else if (catLower.includes('ensalada')) iconName = 'salad';
-            else if (catLower.includes('snack')) iconName = 'nut';
-            return {
-              id: p.id,
-              name: p.nombre,
-              description: p.descripcion,
-              price: p.precio,
-              category: catName,
-              tag: null,
-              icon: Icons[iconName as keyof typeof Icons] || Icons.bowl,
-              calories: p.calorias ?? null,
-              protein: p.proteina ?? null,
-            };
+        const mapProduct = (p: any) => {
+          const catName = p.categoria_id?.[0]?.categoria?.nombre || 'General';
+          let iconName = 'bowl';
+          const catLower = catName.toLowerCase();
+          if (catLower.includes('wrap')) iconName = 'wrap';
+          else if (catLower.includes('bebida') || catLower.includes('batido') || catLower.includes('smoothie')) iconName = 'cup';
+          else if (catLower.includes('ensalada')) iconName = 'salad';
+          else if (catLower.includes('snack')) iconName = 'nut';
+          return {
+            id: p.id,
+            name: p.nombre,
+            description: p.descripcion,
+            price: p.precio,
+            category: catName,
+            tag: null,
+            icon: Icons[iconName as keyof typeof Icons] || Icons.bowl,
+            calories: p.calorias ?? null,
+            protein: p.proteina ?? null,
           };
-          setFeaturedProducts(combined.slice(0, 6).map(mapProduct));
-        } else {
-          // Fallback a datos estáticos si aún no hay productos publicados
-          setFeaturedProducts(featured as any[]);
-        }
+        };
+        setFeaturedProducts(combined.slice(0, 6).map(mapProduct));
       })
       .catch(console.error);
 
@@ -359,8 +345,13 @@ export default function Home() {
             </motion.button>
           </motion.div>
 
+          {featuredProducts.length === 0 && (
+            <motion.p variants={fadeUp} style={{ textAlign: 'center', color: '#aaa', padding: '2rem 0' }}>
+              Próximamente nuestros productos destacados estarán disponibles aquí.
+            </motion.p>
+          )}
           <motion.div className="products-grid" initial="hidden" whileInView="visible" viewport={{ once: true, amount: 0.1 }} variants={staggerContainer}>
-            {(featuredProducts.length > 0 ? featuredProducts : featured).map((product) => (
+            {featuredProducts.map((product) => (
               <TiltCard key={product.id} className="product-card" variants={staggerItem}>
                 <div className="product-image-container">
                   {product.imageUrl ? (
