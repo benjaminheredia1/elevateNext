@@ -20,7 +20,10 @@ export async function getTurnoActivo(session: Session) {
   const sucursal_id = sucursalDe(session);
   return prisma.cajaTurno.findFirst({
     where: { sucursal_id, estado: 'ABIERTO' },
-    include: { movimientos: { orderBy: { created_at: 'desc' } } },
+    include: {
+      movimientos: { orderBy: { created_at: 'desc' } },
+      sucursal: { select: { nombre: true } },
+    },
   });
 }
 
@@ -128,8 +131,14 @@ export async function cerrarTurno(session: Session, dto: CierreCajaInput, meta: 
     const esperadoQr = new Prisma.Decimal(turno.apertura_qr).plus(netQr);
     const realEfectivo = new Prisma.Decimal(dto.real_efectivo);
     const realQr = new Prisma.Decimal(dto.real_qr);
-    const difEfectivo = realEfectivo.minus(esperadoEfectivo);
-    const difQr = realQr.minus(esperadoQr);
+    // Si el esperado quedó negativo (se gastó más efectivo del que había en caja), el cajón
+    // físico nunca puede bajar de 0, así que esa diferencia es deuda, no un falso sobrante.
+    const difEfectivo = esperadoEfectivo.isNegative()
+      ? esperadoEfectivo.plus(realEfectivo)
+      : realEfectivo.minus(esperadoEfectivo);
+    const difQr = esperadoQr.isNegative()
+      ? esperadoQr.plus(realQr)
+      : realQr.minus(esperadoQr);
 
     const actualizado = await tx.cajaTurno.update({
       where: { id: turno.id },
@@ -160,11 +169,40 @@ export async function cerrarTurno(session: Session, dto: CierreCajaInput, meta: 
 
 export async function getHistorial(session: Session) {
   const sucursal_id = sucursalDe(session);
-  return prisma.cajaTurno.findMany({
+  const turnos = await prisma.cajaTurno.findMany({
     where: { sucursal_id, cajero_id: session.id, estado: 'CERRADO' },
     orderBy: { fecha_apertura: 'desc' },
     take: 50,
+    include: {
+      sucursal: { select: { nombre: true } },
+      cajero: { select: { nombre: true, apellido_paterno: true } },
+      _count: { select: { ventas: true } },
+    },
   });
+  return turnos.map(t => ({ ...t, pedidos_count: t._count.ventas }));
+}
+
+export async function getTurnoDetalle(session: Session, turnoId: number) {
+  const sucursal_id = sucursalDe(session);
+  const turno = await prisma.cajaTurno.findFirst({
+    where: { id: turnoId, sucursal_id, cajero_id: session.id },
+    include: {
+      sucursal: { select: { nombre: true } },
+      cajero: { select: { nombre: true, apellido_paterno: true } },
+    },
+  });
+  if (!turno) throw new NotFoundError('Turno no encontrado');
+
+  const pedidos = await prisma.transaccion.findMany({
+    where: { turno_id: turnoId },
+    orderBy: { created_at: 'asc' },
+    include: {
+      transaccionesDetalles_id: { include: { producto: { select: { nombre: true } } } },
+      cajero: { select: { nombre: true, apellido_paterno: true } },
+    },
+  });
+
+  return { turno, pedidos };
 }
 
 export async function registrarVentaFisica(session: Session, dto: VentaFisicaInput, meta: Meta = {}) {
