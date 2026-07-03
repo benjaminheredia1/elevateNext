@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import apiClient from '@/hooks/api';
+import { useCrearFiado } from '@/hooks/cuentas-corrientes';
 
 type EstadoPedido = 'PENDIENTE' | 'EN_PREPARACION' | 'LISTO' | 'EN_LOCAL' | 'EN_CAMINO' | 'LLEGO' | 'ENTREGADO' | 'CANCELADO' | 'PAGADO';
 type FiltroEstado = 'Todos' | EstadoPedido;
@@ -109,6 +110,54 @@ function OrderStatusBadge({ estado }: { estado: string }) {
   );
 }
 
+function FiadoModal({
+  pedido,
+  onClose,
+  onSubmit,
+  saving,
+}: {
+  pedido: Pedido;
+  onClose: () => void;
+  onSubmit: (vencimiento: string | null) => void;
+  saving: boolean;
+}) {
+  const [vencimiento, setVencimiento] = useState('');
+  return (
+    <div className="admin-modal-overlay">
+      <form
+        onSubmit={e => { e.preventDefault(); onSubmit(vencimiento || null); }}
+        className="admin-modal compact"
+      >
+        <div className="admin-modal-header">
+          <h2>Registrar como Fiado</h2>
+          <button type="button" className="admin-modal-close" onClick={onClose}>×</button>
+        </div>
+        <div className="admin-modal-body">
+          <div className="finance-modal-note">
+            Pedido #{pedido.id} · {pedido.cliente_nombre ?? 'Sin nombre'} · <strong>Bs. {pedido.total.toFixed(2)}</strong>
+          </div>
+          <p style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 12 }}>
+            Se creará una cuenta por cobrar vinculada a este pedido. El cliente podrá pagar luego.
+          </p>
+          <div className="form-group">
+            <label>Fecha límite de pago (opcional)</label>
+            <input
+              type="date"
+              value={vencimiento}
+              onChange={e => setVencimiento(e.target.value)}
+              min={new Date().toISOString().split('T')[0]}
+            />
+          </div>
+        </div>
+        <div className="admin-modal-footer">
+          <button type="button" className="admin-btn ghost" onClick={onClose}>Cancelar</button>
+          <button type="submit" className="admin-btn primary" disabled={saving}>Confirmar fiado</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function PedidoCard({
   pedido,
   expanded,
@@ -118,6 +167,7 @@ function PedidoCard({
   onEstadoChange,
   onPagoChange,
   onDriverLink,
+  onFiado,
 }: {
   pedido: Pedido;
   expanded: boolean;
@@ -127,6 +177,7 @@ function PedidoCard({
   onEstadoChange: (id: number, estado: EstadoPedido) => void;
   onPagoChange: (id: number, payment: string) => void;
   onDriverLink: (pedido: Pedido) => void;
+  onFiado: (pedido: Pedido) => void;
 }) {
   const totalItems = pedido.transaccionesDetalles_id.reduce((sum, item) => sum + Number(item.cantidad || 0), 0);
   const payment = PAYMENT_LABELS[pedido.metodo_pago ?? ''] ?? pedido.metodo_pago ?? 'Efectivo';
@@ -248,6 +299,17 @@ function PedidoCard({
                       💵 Marcar pagado
                     </button>
                   )}
+                  {pedido.payment_status !== 'PAGADO' && (
+                    <button
+                      className="ocd-status-btn"
+                      onClick={() => onFiado(pedido)}
+                      disabled={updating}
+                      type="button"
+                      title="Registrar como fiado: el cliente paga después"
+                    >
+                      📋 Marcar como fiado
+                    </button>
+                  )}
                   {isDelivery && (
                     <button className="ocd-status-btn" onClick={() => onDriverLink(pedido)} disabled={updating} type="button">
                       {pedido.driver_link_id ? 'Copiar link repartidor' : 'Generar link repartidor'}
@@ -270,6 +332,9 @@ export default function AdminOrders({ readOnly = false }: { readOnly?: boolean }
   const [busqueda, setBusqueda] = useState('');
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [updatingId, setUpdatingId] = useState<number | null>(null);
+  const [fiadoPedido, setFiadoPedido] = useState<Pedido | null>(null);
+  const [fiadoError, setFiadoError] = useState('');
+  const crearFiado = useCrearFiado();
 
   const fetchPedidos = useCallback(async () => {
     try {
@@ -330,6 +395,20 @@ export default function AdminOrders({ readOnly = false }: { readOnly?: boolean }
     } finally {
       setUpdatingId(null);
     }
+  };
+
+  const handleFiado = async (vencimiento: string | null) => {
+    if (!fiadoPedido) return;
+    setFiadoError('');
+    crearFiado.mutate(
+      { transaccion_id: fiadoPedido.id, vencimiento: vencimiento || null },
+      {
+        onSuccess: () => setFiadoPedido(null),
+        onError: (err: any) => {
+          setFiadoError(err?.response?.data?.message ?? err?.response?.data?.error ?? 'No se pudo registrar el fiado.');
+        },
+      },
+    );
   };
 
   const handleDriverLink = async (pedido: Pedido) => {
@@ -418,8 +497,24 @@ export default function AdminOrders({ readOnly = false }: { readOnly?: boolean }
               onEstadoChange={handleEstadoChange}
               onPagoChange={handlePagoChange}
               onDriverLink={handleDriverLink}
+              onFiado={p => { setFiadoError(''); setFiadoPedido(p); }}
             />
           ))}
+        </div>
+      )}
+
+      {fiadoPedido && (
+        <FiadoModal
+          pedido={fiadoPedido}
+          onClose={() => { setFiadoPedido(null); setFiadoError(''); }}
+          onSubmit={handleFiado}
+          saving={crearFiado.isPending}
+        />
+      )}
+      {fiadoError && (
+        <div style={{ position: 'fixed', bottom: 24, right: 24, background: 'var(--danger)', color: '#fff', padding: '10px 18px', borderRadius: 8, zIndex: 9999 }}>
+          {fiadoError}
+          <button style={{ marginLeft: 10, background: 'none', border: 'none', color: '#fff', cursor: 'pointer' }} onClick={() => setFiadoError('')}>×</button>
         </div>
       )}
     </div>

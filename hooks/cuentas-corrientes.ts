@@ -10,6 +10,14 @@ export interface CuentaPayload {
   concepto: string;
   monto: number;
   vencimiento?: string | null;
+  cliente_id?: number | null;
+  transaccion_id?: number | null;
+}
+
+export interface FiadoPayload {
+  transaccion_id: number;
+  concepto?: string;
+  vencimiento?: string | null;
 }
 
 export function useCuentas(tipo?: TipoCuenta, estado?: EstadoCuenta) {
@@ -33,11 +41,38 @@ export function useCrearCuenta() {
   });
 }
 
+export function useCrearFiado() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: FiadoPayload) =>
+      (await apiClient.post('/api/admin/cuentas-corrientes/fiado', payload)).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'cuentas-corrientes'] }),
+  });
+}
+
 export function useRegistrarPago() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, monto }: { id: number; monto: number }) =>
       (await apiClient.put(`/api/admin/cuentas-corrientes/${id}/pago`, { monto })).data,
     onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'cuentas-corrientes'] }),
+  });
+}
+
+export function useDeudasVencidas() {
+  return useQuery({
+    queryKey: ['admin', 'deudas-vencidas'],
+    queryFn: async () =>
+      (await apiClient.get('/api/admin/alertas/deudas-vencidas')).data,
+    refetchInterval: 5 * 60 * 1000,
+  });
+}
+
+export function useEnviarAlertaDeudas() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () =>
+      (await apiClient.post('/api/admin/alertas/deudas-vencidas', {})).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'deudas-vencidas'] }),
   });
 }
