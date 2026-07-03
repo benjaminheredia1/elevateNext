@@ -9,6 +9,7 @@ import MoneyText from '@/components/ui/MoneyText';
 import StatusBadge from '@/components/ui/StatusBadge';
 import ReporteCierre from '@/components/caja/ReporteCierre';
 import { useCerrarCaja, useTurnoActivo, useResumenRepartidores } from '@/hooks/caja';
+import { calcularDiferencia, estadoDiferencia } from '@/lib/shared/caja-calc';
 
 type Movimiento = { metodo_pago: 'EFECTIVO' | 'QR' | 'TARJETA'; monto: string | number };
 
@@ -20,12 +21,6 @@ function asNumber(value: unknown): number {
 
 function parseMoney(value: string): number {
   return Number(Number(value || '0').toFixed(2));
-}
-
-function diffStatus(diff: number) {
-  if (diff === 0) return { status: 'cuadra', label: 'Cuadra exacto' };
-  if (diff > 0) return { status: 'sobrante', label: 'Sobrante' };
-  return { status: 'faltante', label: 'Faltante' };
 }
 
 export default function CierreCajaPage() {
@@ -51,9 +46,12 @@ export default function CierreCajaPage() {
   }, [turno]);
 
   const real = { efectivo: parseMoney(realEfectivo), qr: parseMoney(realQr) };
-  const diff = { efectivo: real.efectivo - esperado.efectivo, qr: real.qr - esperado.qr };
+  const diff = {
+    efectivo: calcularDiferencia(esperado.efectivo, real.efectivo),
+    qr: calcularDiferencia(esperado.qr, real.qr),
+  };
   const totalDiff = diff.efectivo + diff.qr;
-  const totalStatus = diffStatus(totalDiff);
+  const totalStatus = estadoDiferencia(totalDiff);
 
   const submit = (event: FormEvent) => {
     event.preventDefault();

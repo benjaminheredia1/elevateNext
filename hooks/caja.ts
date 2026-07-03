@@ -78,6 +78,17 @@ export function useHistorial() {
   });
 }
 
+export function useTurnoDetalle(turnoId: number | null) {
+  return useQuery({
+    queryKey: [...cajaKey, 'historial', turnoId],
+    queryFn: async () => {
+      const res = await apiClient.get(`/api/caja/historial/${turnoId}`);
+      return res.data;
+    },
+    enabled: turnoId != null,
+  });
+}
+
 function useCajaMutation<TInput>(path: string) {
   const queryClient = useQueryClient();
   return useMutation({
