@@ -49,7 +49,7 @@ export async function abrirTurno(session: Session, dto: AperturaCajaInput, meta:
       ip: meta.ip, userAgent: meta.userAgent,
     }, tx);
     return turno;
-  });
+  }, { maxWait: 10000, timeout: 20000 });
 }
 
 async function getCuenta(tx: Prisma.TransactionClient, sucursal_id: number, tipo: TipoCuenta) {
@@ -97,7 +97,7 @@ export async function registrarMovimientoManual(
       ip: meta.ip, userAgent: meta.userAgent,
     }, tx);
     return mov;
-  });
+  }, { maxWait: 10000, timeout: 20000 });
 }
 
 export async function getMovimientos(session: Session) {
@@ -164,7 +164,7 @@ export async function cerrarTurno(session: Session, dto: CierreCajaInput, meta: 
       monto: Number(difTotal), ip: meta.ip, userAgent: meta.userAgent,
     }, tx);
     return actualizado;
-  });
+  }, { maxWait: 10000, timeout: 20000 });
 }
 
 export async function getHistorial(session: Session) {
@@ -199,6 +199,7 @@ export async function getTurnoDetalle(session: Session, turnoId: number) {
     include: {
       transaccionesDetalles_id: { include: { producto: { select: { nombre: true } } } },
       cajero: { select: { nombre: true, apellido_paterno: true } },
+      cuenta_corriente: { select: { id: true, estado: true, monto: true, monto_pagado: true } },
     },
   });
 
@@ -227,11 +228,23 @@ export async function registrarVentaFisica(session: Session, dto: VentaFisicaInp
     });
     if (total.lte(0)) throw new ValidationError('El total debe ser mayor a 0');
 
+    // Un fiado no puede ser cortesía ni anónimo: la deuda debe quedar a nombre
+    // de un cliente registrado para poder cobrársela después.
+    if (dto.es_fiado && dto.es_cortesia) {
+      throw new ValidationError('Un fiado no puede ser cortesía');
+    }
+
     // Resolver el cliente: registrado (base única) o anónimo centinela
     const tieneDatos = Boolean(dto.cliente_nombre?.trim() || dto.cliente_telefono?.trim() || dto.cliente_email?.trim() || dto.cliente_nit?.trim());
     let clienteId: number | null;
-    if (dto.cliente_anonimo || !tieneDatos) {
+    let esAnonimo = false;
+    if (dto.cliente_id) {
+      const existe = await tx.cliente.findFirst({ where: { id: dto.cliente_id, es_anonimo: false }, select: { id: true } });
+      if (!existe) throw new NotFoundError('Cliente no encontrado');
+      clienteId = existe.id;
+    } else if (dto.cliente_anonimo || !tieneDatos) {
       clienteId = await getClienteAnonimo(tx);
+      esAnonimo = true;
     } else {
       clienteId = await resolverCliente({
         nombre: dto.cliente_nombre,
@@ -241,19 +254,42 @@ export async function registrarVentaFisica(session: Session, dto: VentaFisicaInp
       }, tx);
     }
 
-    // Crear la transacción (venta presencial pagada)
+    if (dto.es_fiado && !clienteId) {
+      throw new ValidationError('El fiado requiere un cliente registrado');
+    }
+
+    // Descuento por privilegio del cliente: se aplica el de mayor porcentaje activo.
+    // Impacta el total cobrado, por lo que también reduce el monto del fiado.
+    let codigoDescuento: string | null = null;
+    if (clienteId && !esAnonimo) {
+      const mejor = await tx.clientePrivilegio.findFirst({
+        where: { cliente_id: clienteId, privilegio: { activo: true } },
+        orderBy: { privilegio: { porcentaje: 'desc' } },
+        include: { privilegio: true },
+      });
+      const pct = mejor ? Number(mejor.privilegio.porcentaje) : 0;
+      if (pct > 0) {
+        total = total.times(100 - pct).dividedBy(100);
+        total = new Prisma.Decimal(total.toFixed(2));
+        codigoDescuento = `Privilegio: ${mejor!.privilegio.nombre} (-${pct}%)`;
+      }
+    }
+
+    // Fiado: producto entregado pero pago pendiente (queda como deuda por cobrar).
+    const nombreCliente = dto.cliente_nombre?.trim() || 'Cliente mostrador';
     const venta = await tx.transaccion.create({
       data: {
         canal: 'SALON',
         metodo_pago: dto.metodo_pago as TipoCuenta,
         es_cortesia: dto.es_cortesia,
         total: Number(total),
-        estado: 'PAGADO',
-        payment_status: 'PAGADO',
+        codigo_descuento: codigoDescuento,
+        estado: dto.es_fiado ? 'ENTREGADO' : 'PAGADO',
+        payment_status: dto.es_fiado ? 'PENDIENTE' : 'PAGADO',
         turno_id: turno.id,
         cajero_id: session.id,
         cliente_id: clienteId,
-        cliente_nombre: dto.cliente_nombre?.trim() || 'Cliente mostrador',
+        cliente_nombre: nombreCliente,
         cliente_telefono: dto.cliente_telefono?.trim() || null,
         cliente_email: dto.cliente_email?.trim() || null,
         cliente_nit: dto.cliente_nit?.trim() || null,
@@ -264,8 +300,22 @@ export async function registrarVentaFisica(session: Session, dto: VentaFisicaInp
     // Descontar stock automáticamente vía recetas (FASE 5B)
     await descontarStockPorTransaccion(tx, venta.id);
 
-    // Si NO es cortesía: impacta caja
-    if (!dto.es_cortesia) {
+    if (dto.es_fiado) {
+      // No entra dinero a caja: se registra como cuenta por cobrar (deuda).
+      await tx.cuentaCorriente.create({
+        data: {
+          tipo: 'POR_COBRAR',
+          contraparte: nombreCliente,
+          concepto: `Fiado venta #${venta.id}`,
+          monto: Number(total),
+          vencimiento: dto.fiado_vencimiento ?? null,
+          creado_por_id: session.id,
+          transaccion_id: venta.id,
+          cliente_id: clienteId,
+        },
+      });
+    } else if (!dto.es_cortesia) {
+      // Venta pagada normal: impacta caja
       const cuenta = await getCuenta(tx, sucursal_id, dto.metodo_pago as TipoCuenta);
       await tx.movimientoCaja.create({
         data: {
@@ -279,15 +329,16 @@ export async function registrarVentaFisica(session: Session, dto: VentaFisicaInp
       await tx.cajaTurno.update({ where: { id: turno.id }, data: { [campo]: { increment: Number(total) } } });
     }
 
+    const marca = dto.es_fiado ? ' (fiado)' : dto.es_cortesia ? ' (cortesía)' : '';
     await logAudit({
       usuarioId: session.id, rol: session.rol, accion: 'CREO',
       entidad: 'Transaccion', entidadId: venta.id,
-      detalle: `Venta física #${venta.id}${dto.es_cortesia ? ' (cortesía)' : ''}`,
+      detalle: `Venta física #${venta.id}${marca}`,
       monto: Number(total), ip: meta.ip, userAgent: meta.userAgent,
     }, tx);
 
     return venta;
-  });
+  }, { maxWait: 10000, timeout: 20000 });
 }
 
 /**
@@ -438,5 +489,94 @@ export async function entregarPedido(
     }, tx);
 
     return actualizado;
+  }, { maxWait: 10000, timeout: 20000 });
+}
+
+/** Deudas por cobrar pendientes (fiados) — visible para el cajero. */
+export async function listarDeudoresCaja() {
+  const rows = await prisma.cuentaCorriente.findMany({
+    where: { tipo: 'POR_COBRAR', estado: { not: 'PAGADA' } },
+    include: { cliente: { select: { id: true, nombre: true, telefono: true } } },
+    orderBy: [{ vencimiento: 'asc' }, { created_at: 'desc' }],
   });
+  const ahora = new Date();
+  const items = rows.map(r => {
+    const monto = Number(r.monto.toFixed(2));
+    const pagado = Number(r.monto_pagado.toFixed(2));
+    return {
+      id: r.id,
+      contraparte: r.contraparte,
+      concepto: r.concepto,
+      cliente: r.cliente,
+      monto,
+      monto_pagado: pagado,
+      saldo: Number((monto - pagado).toFixed(2)),
+      estado: r.estado,
+      vencimiento: r.vencimiento,
+      vencido: r.vencimiento != null && r.vencimiento < ahora,
+    };
+  });
+  return {
+    items,
+    resumen: {
+      total_saldo: Number(items.reduce((s, i) => s + i.saldo, 0).toFixed(2)),
+      cuentas: items.length,
+      vencidas: items.filter(i => i.vencido).length,
+    },
+  };
+}
+
+/**
+ * Cobro de una deuda (fiado) desde caja: registra el pago sobre la cuenta por
+ * cobrar y, como sí entra dinero real, lo asienta como ingreso en el turno abierto
+ * para que impacte el cuadre.
+ */
+export async function cobrarDeudaCaja(
+  session: Session,
+  cuentaId: number,
+  dto: { monto: number; metodo_pago: 'EFECTIVO' | 'QR' },
+  meta: Meta = {},
+) {
+  const sucursal_id = sucursalDe(session);
+  return prisma.$transaction(async (tx) => {
+    const turno = await tx.cajaTurno.findFirst({ where: { sucursal_id, estado: 'ABIERTO' } });
+    if (!turno) throw new ConflictError('Abre caja antes de cobrar una deuda');
+
+    const cuenta = await tx.cuentaCorriente.findUnique({ where: { id: cuentaId } });
+    if (!cuenta || cuenta.tipo !== 'POR_COBRAR') throw new NotFoundError('Deuda no encontrada');
+
+    const montoTotal = Number(cuenta.monto.toFixed(2));
+    const pagadoActual = Number(cuenta.monto_pagado.toFixed(2));
+    const nuevoPagado = Number((pagadoActual + dto.monto).toFixed(2));
+    if (nuevoPagado > montoTotal) {
+      throw new ValidationError(`El pago (${nuevoPagado}) supera el saldo pendiente`);
+    }
+    const estado = nuevoPagado >= montoTotal ? 'PAGADA' : 'PARCIAL';
+
+    const cuentaActualizada = await tx.cuentaCorriente.update({
+      where: { id: cuentaId },
+      data: { monto_pagado: nuevoPagado, estado },
+    });
+
+    // Entra dinero real → ingreso al turno (impacta cuadre)
+    const cuentaFin = await getCuenta(tx, sucursal_id, dto.metodo_pago as TipoCuenta);
+    await tx.movimientoCaja.create({
+      data: {
+        turno_id: turno.id, cuenta_id: cuentaFin.id, tipo: 'INGRESO_EXTRA',
+        metodo_pago: dto.metodo_pago as TipoCuenta, monto: dto.monto,
+        concepto: `Cobro fiado — ${cuenta.contraparte}`, categoria: 'Cobro fiado',
+        transaccion_id: cuenta.transaccion_id, creado_por_id: session.id,
+      },
+    });
+    await tx.cuentaFinanciera.update({ where: { id: cuentaFin.id }, data: { saldo: { increment: dto.monto } } });
+
+    await logAudit({
+      usuarioId: session.id, rol: session.rol, accion: 'MODIFICO',
+      entidad: 'CuentaCorriente', entidadId: cuentaId,
+      detalle: `Cobro fiado ${cuenta.contraparte}: Bs ${dto.monto} (${dto.metodo_pago}) — ${estado}`,
+      monto: dto.monto, ip: meta.ip, userAgent: meta.userAgent,
+    }, tx);
+
+    return { id: cuentaActualizada.id, estado, monto_pagado: nuevoPagado, saldo: Number((montoTotal - nuevoPagado).toFixed(2)) };
+  }, { maxWait: 10000, timeout: 20000 });
 }

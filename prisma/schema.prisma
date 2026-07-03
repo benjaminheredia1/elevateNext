@@ -122,17 +122,43 @@ model Usuario {
 }
 
 model Cliente {
-  id                 Int               @id @default(autoincrement())
+  id                 Int                 @id @default(autoincrement())
   nombre             String
-  telefono           String?           @unique
+  telefono           String?             @unique
   email              String?
   nit                String?
   direccion          String?
-  es_anonimo         Boolean           @default(false)
+  es_anonimo         Boolean             @default(false)
   transacciones      Transaccion[]
   cuentas_corrientes CuentaCorriente[]
-  created_at         DateTime          @default(now())
-  update_at          DateTime          @updatedAt
+  privilegios        ClientePrivilegio[]
+  created_at         DateTime            @default(now())
+  update_at          DateTime            @updatedAt
+}
+
+model Privilegio {
+  id            Int                 @id @default(autoincrement())
+  nombre        String
+  descripcion   String?
+  porcentaje    Decimal             @db.Decimal(5, 2)
+  activo        Boolean             @default(true)
+  creado_por_id Int
+  clientes      ClientePrivilegio[]
+  created_at    DateTime            @default(now())
+  update_at     DateTime            @updatedAt
+
+  @@index([activo])
+}
+
+model ClientePrivilegio {
+  cliente_id    Int
+  privilegio_id Int
+  created_at    DateTime   @default(now())
+  cliente       Cliente    @relation(fields: [cliente_id], references: [id], onDelete: Cascade)
+  privilegio    Privilegio @relation(fields: [privilegio_id], references: [id], onDelete: Cascade)
+
+  @@id([cliente_id, privilegio_id])
+  @@index([privilegio_id])
 }
 
 model Transaccion {
@@ -437,6 +463,23 @@ model GastoFijo {
 
   @@index([activo])
   @@index([categoria])
+}
+
+model GastoOperativo {
+  id            Int        @id @default(autoincrement())
+  concepto      String
+  categoria     String
+  monto         Decimal    @db.Decimal(12, 2)
+  metodo_pago   TipoCuenta
+  fecha         DateTime
+  notas         String?
+  creado_por_id Int
+  created_at    DateTime   @default(now())
+  update_at     DateTime   @updatedAt
+
+  @@index([fecha])
+  @@index([categoria])
+  @@index([metodo_pago])
 }
 
 /**

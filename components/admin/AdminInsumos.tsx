@@ -5,7 +5,7 @@ import apiClient from '@/hooks/api';
 
 type Tab = 'insumos' | 'movimientos' | 'recetas';
 type EstadoStock = 'ok' | 'bajo' | 'critico' | 'agotado';
-type ModalAction = 'crear' | 'compra' | 'merma' | 'conteo' | null;
+type ModalAction = 'crear' | 'editar' | 'compra' | 'merma' | 'conteo' | null;
 
 interface Insumo {
   id: number;
@@ -197,10 +197,23 @@ export default function AdminInsumos() {
     setFormError('');
     setModalAction(action);
     setSelected(insumo ?? null);
-    setForm({
-      ...EMPTY_FORM,
-      nuevo_stock: insumo ? String(insumo.stock_actual) : '',
-    });
+    if (action === 'editar' && insumo) {
+      setForm({
+        ...EMPTY_FORM,
+        nombre: insumo.nombre,
+        categoria_insumo: insumo.categoria_insumo ?? '',
+        unidad_medida: insumo.unidad_medida,
+        costo_promedio: String(insumo.costo_promedio),
+        stock_minimo: String(insumo.stock_minimo),
+        punto_critico: String(insumo.punto_critico),
+        proveedor: insumo.proveedor ?? '',
+      });
+    } else {
+      setForm({
+        ...EMPTY_FORM,
+        nuevo_stock: insumo ? String(insumo.stock_actual) : '',
+      });
+    }
   };
 
   const closeModal = () => {
@@ -239,6 +252,18 @@ export default function AdminInsumos() {
           unidad_medida: form.unidad_medida,
         });
       }
+      if (modalAction === 'editar' && selected) {
+        await apiClient.put(`/api/insumo/${selected.id}`, {
+          categoria_insumo: form.categoria_insumo.trim() || null,
+          costo_promedio: Number(form.costo_promedio || 0),
+          nombre: form.nombre.trim(),
+          proveedor: form.proveedor.trim() || null,
+          punto_critico: Number(form.punto_critico || 0),
+          stock_actual: selected.stock_actual,
+          stock_minimo: Number(form.stock_minimo || 0),
+          unidad_medida: form.unidad_medida,
+        });
+      }
       if (modalAction === 'compra' && selected) {
         await apiClient.post('/api/admin/insumos/compra', {
           insumo_id: selected.id,
@@ -272,11 +297,13 @@ export default function AdminInsumos() {
 
   const modalTitle = modalAction === 'crear'
     ? 'Nuevo insumo'
-    : modalAction === 'compra'
-      ? `Registrar compra · ${selected?.nombre ?? ''}`
-      : modalAction === 'merma'
-        ? `Registrar merma · ${selected?.nombre ?? ''}`
-        : `Conteo físico · ${selected?.nombre ?? ''}`;
+    : modalAction === 'editar'
+      ? `Editar insumo · ${selected?.nombre ?? ''}`
+      : modalAction === 'compra'
+        ? `Registrar compra · ${selected?.nombre ?? ''}`
+        : modalAction === 'merma'
+          ? `Registrar merma · ${selected?.nombre ?? ''}`
+          : `Conteo físico (corregir stock) · ${selected?.nombre ?? ''}`;
 
   return (
     <div className="admin-inventory">
@@ -400,9 +427,10 @@ export default function AdminInsumos() {
                         <td>{insumo.proveedor || '—'}</td>
                         <td>
                           <div className="action-btns">
+                            <button className="action-btn edit" title="Editar insumo (nombre, costo, mínimos, proveedor)" onClick={() => openModal('editar', insumo)} type="button">✏</button>
                             <button className="action-btn edit" title="Compra" onClick={() => openModal('compra', insumo)} type="button">↥</button>
                             <button className="action-btn delete" title="Merma" onClick={() => openModal('merma', insumo)} type="button">⌫</button>
-                            <button className="action-btn" title="Conteo físico" onClick={() => openModal('conteo', insumo)} type="button">✓</button>
+                            <button className="action-btn" title="Corregir stock (conteo físico) — usa esto si te equivocaste en una cantidad" onClick={() => openModal('conteo', insumo)} type="button">✓</button>
                             <button className="action-btn delete" title="Eliminar insumo" onClick={() => handleDelete(insumo)} type="button">🗑</button>
                           </div>
                         </td>
@@ -498,10 +526,32 @@ export default function AdminInsumos() {
                   <label className="form-group"><span>Stock crítico</span><input type="number" min="0" step="0.01" value={form.punto_critico} onChange={event => setForm(prev => ({ ...prev, punto_critico: event.target.value }))} /></label>
                   <label className="form-group full"><span>Proveedor</span><input value={form.proveedor} onChange={event => setForm(prev => ({ ...prev, proveedor: event.target.value }))} /></label>
                 </div>
+              ) : modalAction === 'editar' ? (
+                <div className="form-grid">
+                  <label className="form-group full"><span>Nombre</span><input value={form.nombre} onChange={event => setForm(prev => ({ ...prev, nombre: event.target.value }))} required /></label>
+                  <label className="form-group"><span>Categoría</span><input placeholder="Granos" value={form.categoria_insumo} onChange={event => setForm(prev => ({ ...prev, categoria_insumo: event.target.value }))} /></label>
+                  <label className="form-group"><span>Unidad</span><select value={form.unidad_medida} onChange={event => setForm(prev => ({ ...prev, unidad_medida: event.target.value }))}>{UNITS.map(unit => <option key={unit} value={unit}>{unit.toLowerCase()}</option>)}</select></label>
+                  <label className="form-group"><span>Costo unitario (Bs)</span><input type="number" min="0" step="0.01" value={form.costo_promedio} onChange={event => setForm(prev => ({ ...prev, costo_promedio: event.target.value }))} /></label>
+                  <label className="form-group"><span>Stock mínimo</span><input type="number" min="0" step="0.01" value={form.stock_minimo} onChange={event => setForm(prev => ({ ...prev, stock_minimo: event.target.value }))} required /></label>
+                  <label className="form-group"><span>Stock crítico</span><input type="number" min="0" step="0.01" value={form.punto_critico} onChange={event => setForm(prev => ({ ...prev, punto_critico: event.target.value }))} /></label>
+                  <label className="form-group full"><span>Proveedor</span><input value={form.proveedor} onChange={event => setForm(prev => ({ ...prev, proveedor: event.target.value }))} /></label>
+                  <div className="form-group full">
+                    <span className="form-hint">
+                      Este formulario no cambia la cantidad en stock. Para corregir una cantidad mal registrada, usa el botón ✓ "Corregir stock" en la fila del insumo.
+                    </span>
+                  </div>
+                </div>
               ) : (
                 <div className="form-grid">
                   {modalAction === 'conteo' ? (
-                    <label className="form-group"><span>Stock real</span><input type="number" min="0" step="0.01" value={form.nuevo_stock} onChange={event => setForm(prev => ({ ...prev, nuevo_stock: event.target.value }))} required /></label>
+                    <>
+                      <label className="form-group"><span>Stock real</span><input type="number" min="0" step="0.01" value={form.nuevo_stock} onChange={event => setForm(prev => ({ ...prev, nuevo_stock: event.target.value }))} required /></label>
+                      <div className="form-group full">
+                        <span className="form-hint">
+                          Escribe la cantidad correcta (no lo que hay que sumar/restar). El sistema calcula la diferencia contra el stock actual ({selected ? number(selected.stock_actual) : 0} {selected?.unidad_medida}) y la deja registrada como ajuste en el historial de movimientos.
+                        </span>
+                      </div>
+                    </>
                   ) : (
                     <label className="form-group"><span>Cantidad</span><input type="number" min="0" step="0.01" value={form.cantidad} onChange={event => setForm(prev => ({ ...prev, cantidad: event.target.value }))} required /></label>
                   )}

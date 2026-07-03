@@ -103,7 +103,9 @@ export default function CierreCajaPage() {
         title="Confirmar cierre"
         description={`Diferencia total: Bs ${totalDiff.toFixed(2)}. El cierre no se puede editar desde esta pantalla.`}
         confirmLabel="Cerrar caja"
+        loadingLabel="Cerrando..."
         isLoading={cerrarCaja.isPending}
+        variant="confirm"
       />
       <div className="admin-page-header">
         <div>
