@@ -15,6 +15,7 @@ import KpiCard from '@/components/ui/KpiCard';
 import MethodPill from '@/components/ui/MethodPill';
 import MoneyText from '@/components/ui/MoneyText';
 import StatusBadge from '@/components/ui/StatusBadge';
+import { calcularDiferencia, estadoDiferencia } from '@/lib/shared/caja-calc';
 
 type Metodo = 'EFECTIVO' | 'QR' | 'TARJETA';
 
@@ -46,11 +47,6 @@ function fmtDate(value?: string | null) {
     hour: '2-digit',
     minute: '2-digit',
   });
-}
-
-function diffMeta(value: number) {
-  if (Math.abs(value) < 0.01) return { status: 'cuadra', label: 'Cuadra' };
-  return value > 0 ? { status: 'sobrante', label: 'Sobrante' } : { status: 'faltante', label: 'Faltante' };
 }
 
 function movimientoLabel(tipo: string) {
@@ -97,14 +93,16 @@ export default function CajaHomePage() {
       esperadoEfectivo,
       esperadoQr,
       esperadoTotal: esperadoEfectivo + esperadoQr,
-      diferenciaEfectivo: realEfectivo ? realEf - esperadoEfectivo : 0,
-      diferenciaQr: realQr ? realQ - esperadoQr : 0,
-      diferenciaTotal: (realEfectivo || realQr) ? (realEf + realQ) - (esperadoEfectivo + esperadoQr) : 0,
+      diferenciaEfectivo: realEfectivo ? calcularDiferencia(esperadoEfectivo, realEf) : 0,
+      diferenciaQr: realQr ? calcularDiferencia(esperadoQr, realQ) : 0,
+      diferenciaTotal: (realEfectivo || realQr)
+        ? calcularDiferencia(esperadoEfectivo, realEf) + calcularDiferencia(esperadoQr, realQ)
+        : 0,
     };
   }, [movimientos, realEfectivo, realQr, turno]);
 
   const latest = movimientos.slice(0, 8);
-  const cierreStatus = diffMeta(totals.diferenciaTotal);
+  const cierreStatus = estadoDiferencia(totals.diferenciaTotal);
 
   const clearMessageSoon = () => window.setTimeout(() => setMessage(null), 4500);
 
@@ -267,8 +265,8 @@ export default function CajaHomePage() {
       {message && <div className={`caja-alert ${message.type}`}>{message.text}</div>}
 
       <div className="kpi-grid">
-        <KpiCard label="Esperado efectivo" value={<MoneyText value={totals.esperadoEfectivo} />} highlight />
-        <KpiCard label="Esperado QR" value={<MoneyText value={totals.esperadoQr} />} accent="var(--info)" />
+        <KpiCard label="Esperado efectivo" value={<MoneyText value={totals.esperadoEfectivo} signed />} highlight />
+        <KpiCard label="Esperado QR" value={<MoneyText value={totals.esperadoQr} signed />} accent="var(--info)" />
         <KpiCard label="Ingresos turno" value={<MoneyText value={totals.ingresos} />} accent="var(--fresh)" />
         <KpiCard label="Egresos turno" value={<MoneyText value={totals.egresos} />} accent="var(--danger)" />
       </div>
@@ -343,7 +341,7 @@ export default function CajaHomePage() {
               <input type="number" min="0" step="0.01" value={realQr} onChange={e => setRealQr(e.target.value)} required />
             </label>
             <div className="caja-diff">
-              <div><span>Esperado</span><strong><MoneyText value={totals.esperadoTotal} /></strong></div>
+              <div><span>Esperado</span><strong><MoneyText value={totals.esperadoTotal} signed /></strong></div>
               <div><span>Diferencia</span><strong><MoneyText value={totals.diferenciaTotal} signed /></strong></div>
             </div>
             <label>

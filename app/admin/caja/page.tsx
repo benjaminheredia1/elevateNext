@@ -2,28 +2,155 @@
 
 import { useMemo, useState } from 'react';
 import AdminPanel from '@/components/admin/AdminPanel';
-import { useTurnos, type RangoState } from '@/hooks/finanzas';
+import { useTurnos, useTurnoDetalleAdmin, type RangoState } from '@/hooks/finanzas';
 import KpiCard from '@/components/ui/KpiCard';
 import MoneyText from '@/components/ui/MoneyText';
 import RangeFilter from '@/components/ui/RangeFilter';
 import DataTable from '@/components/ui/DataTable';
 import StatusBadge from '@/components/ui/StatusBadge';
 import EmptyState from '@/components/ui/EmptyState';
-
-function estadoDiferencia(value: number) {
-  if (Math.abs(value) < 0.01) return { status: 'cuadra', label: 'Cuadra' };
-  if (value < 0) return { status: 'faltante', label: 'Faltante' };
-  return { status: 'sobrante', label: 'Sobrante' };
-}
+import { estadoDiferencia } from '@/lib/shared/caja-calc';
+import '@/app/caja/caja.css';
 
 function fmtDate(value: string) {
   return new Date(value).toLocaleString('es-BO', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
+function fmtRange(start: string, end?: string | null) {
+  const opts: Intl.DateTimeFormatOptions = { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' };
+  const startStr = new Date(start).toLocaleString('es-BO', opts);
+  const endStr = end ? new Date(end).toLocaleString('es-BO', opts) : '—';
+  return `${startStr} → ${endStr}`;
+}
+
+function fmtTime(value: string) {
+  return new Date(value).toLocaleTimeString('es-BO', { hour: '2-digit', minute: '2-digit' });
+}
+
+function asNumber(value: unknown): number {
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string') return Number(value);
+  return 0;
+}
+
+function nombreCajero(cajero?: { nombre: string; apellido_paterno?: string } | null) {
+  if (!cajero) return '—';
+  return cajero.nombre;
+}
+
+interface Detalle {
+  cantidad: number;
+  producto: { nombre: string };
+}
+
+interface Pedido {
+  id: number;
+  created_at: string;
+  total: number;
+  metodo_pago?: string | null;
+  tipo_entrega?: string | null;
+  es_cortesia: boolean;
+  cajero?: { nombre: string; apellido_paterno?: string } | null;
+  transaccionesDetalles_id: Detalle[];
+  cuenta_corriente?: { id: number; estado: string } | null;
+}
+
+function pedidoResumen(pedido: Pedido) {
+  const items = pedido.transaccionesDetalles_id.map(d => `${d.cantidad}× ${d.producto.nombre}`).join(', ');
+  const entrega = pedido.tipo_entrega === 'RECOJO' ? ' Llevar' : pedido.tipo_entrega === 'DELIVERY' ? ' Delivery' : '';
+  const metodo = pedido.metodo_pago ?? '';
+  return `${items}${entrega}${metodo ? ` · ${metodo}` : ''}`;
+}
+
+function TurnoDetalleModal({ turnoId, onClose }: { turnoId: number; onClose: () => void }) {
+  const { data, isLoading } = useTurnoDetalleAdmin(turnoId);
+  const [verPedidos, setVerPedidos] = useState(false);
+  const turno = data?.turno;
+  const pedidos = useMemo(() => (data?.pedidos ?? []) as Pedido[], [data]);
+  const totalVentas = useMemo(() => pedidos.reduce((sum, p) => sum + asNumber(p.total), 0), [pedidos]);
+
+  const difEfectivo = asNumber(turno?.diferencia_efectivo);
+  const difQr = asNumber(turno?.diferencia_qr);
+
+  return (
+    <div className="admin-modal-overlay" onClick={onClose}>
+      <div className="admin-modal" onClick={e => e.stopPropagation()}>
+        <div className="admin-modal-header">
+          <div>
+            <h2>Detalle de turno</h2>
+            {turno && <p className="historial-modal-range">{fmtRange(turno.fecha_apertura, turno.fecha_cierre)}</p>}
+          </div>
+          <button className="admin-modal-close" onClick={onClose} aria-label="Cerrar">&times;</button>
+        </div>
+        <div className="admin-modal-body">
+          {isLoading || !turno ? (
+            <div className="caja-skeleton" style={{ minHeight: 220 }} />
+          ) : (
+            <>
+              {turno.sucursal && <span className="historial-pill">{turno.sucursal.nombre}</span>}
+
+              <div className="historial-detail-rows">
+                <div><span>Cajero</span><strong>{nombreCajero(turno.cajero)}</strong></div>
+                <div><span>Apertura efectivo</span><strong><MoneyText value={asNumber(turno.apertura_efectivo)} /></strong></div>
+                <div><span>Apertura QR</span><strong><MoneyText value={asNumber(turno.apertura_qr)} /></strong></div>
+                <div className="historial-detail-divider" />
+                <div><span>Esperado efectivo</span><strong><MoneyText value={asNumber(turno.esperado_efectivo)} /></strong></div>
+                <div><span>Esperado QR</span><strong><MoneyText value={asNumber(turno.esperado_qr)} /></strong></div>
+                <div><span>Contado efectivo</span><strong><MoneyText value={asNumber(turno.real_efectivo)} /></strong></div>
+                <div><span>Contado QR</span><strong><MoneyText value={asNumber(turno.real_qr)} /></strong></div>
+                <div className="historial-detail-divider" />
+                <div className="strong-row"><span>Diferencia efectivo</span><strong><MoneyText value={difEfectivo} signed /></strong></div>
+                <div className="strong-row"><span>Diferencia QR</span><strong><MoneyText value={difQr} signed /></strong></div>
+              </div>
+
+              {turno.observaciones && <p className="historial-obs">{turno.observaciones}</p>}
+
+              <button type="button" className="historial-toggle" onClick={() => setVerPedidos(v => !v)}>
+                {verPedidos ? '▲ Ocultar pedidos' : `▼ Ver pedidos (${turno.pedidos_count ?? pedidos.length})`}
+              </button>
+
+              {verPedidos && (
+                <div className="historial-pedidos">
+                  <div className="historial-pedidos-head">
+                    <span>{pedidos.length} pedidos</span>
+                    <span>Ventas: <MoneyText value={totalVentas} /></span>
+                  </div>
+                  <div className="historial-pedidos-list">
+                    {pedidos.length === 0 ? (
+                      <EmptyState title="Sin pedidos" hint="Este turno no registró pedidos." />
+                    ) : pedidos.map(pedido => (
+                      <div className="historial-pedido-row" key={pedido.id}>
+                        <div className="historial-pedido-main">
+                          <span>#{pedido.id} · {fmtTime(pedido.created_at)} · {nombreCajero(pedido.cajero)}</span>
+                          {pedido.es_cortesia ? (
+                            <span className="historial-pill cortesia">Cortesía</span>
+                          ) : pedido.cuenta_corriente ? (
+                            <span className="historial-pill fiado">
+                              Fiado{pedido.cuenta_corriente.estado === 'PAGADA' ? ' · pagado' : ''} · <MoneyText value={asNumber(pedido.total)} />
+                            </span>
+                          ) : (
+                            <MoneyText value={asNumber(pedido.total)} />
+                          )}
+                        </div>
+                        <span className="historial-pedido-sub">{pedidoResumen(pedido)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default function AdminCajaPage() {
   const [rango, setRango] = useState<RangoState>({ rango: 'mes' });
   const turnos = useTurnos(rango);
   const rows = turnos.data?.turnos ?? [];
+  const [selected, setSelected] = useState<number | null>(null);
 
   const resumen = useMemo(() => rows.reduce((acc: any, row: any) => {
     const ventas = Number(row.ventas_efectivo ?? 0) + Number(row.ventas_qr ?? 0);
@@ -66,6 +193,7 @@ export default function AdminCajaPage() {
                 data={rows}
                 emptyTitle="Sin turnos en el periodo"
                 rowKey={(row: any) => row.id}
+                onRowClick={(row: any) => setSelected(row.id)}
                 columns={[
                   { key: 'id', header: 'Turno', render: (row: any) => <strong>#{row.id}</strong> },
                   { key: 'estado', header: 'Estado', render: (row: any) => <StatusBadge status={String(row.estado).toLowerCase()} label={row.estado} /> },
@@ -114,7 +242,7 @@ export default function AdminCajaPage() {
                   const diff = Number(turno.diferencia_total ?? 0);
                   const ventas = Number(turno.ventas_efectivo ?? 0) + Number(turno.ventas_qr ?? 0);
                   return (
-                    <div className="finance-timeline-item" key={turno.id}>
+                    <div className="finance-timeline-item" key={turno.id} onClick={() => setSelected(turno.id)} style={{ cursor: 'pointer' }}>
                       <span className={`finance-dot ${Math.abs(diff) < 0.01 ? 'in' : 'out'}`} />
                       <div>
                         <div className="finance-timeline-title">Turno #{turno.id}</div>
@@ -129,6 +257,8 @@ export default function AdminCajaPage() {
           </div>
         </>
       )}
+
+      {selected != null && <TurnoDetalleModal turnoId={selected} onClose={() => setSelected(null)} />}
     </AdminPanel>
   );
 }

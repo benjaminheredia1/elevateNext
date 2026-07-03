@@ -582,6 +582,54 @@
   font-size: .78rem;
 }
 
+.historial-pill.cortesia {
+  background: rgba(217, 119, 6, .12);
+  color: var(--amber, #d97706);
+}
+
+.historial-pill.fiado {
+  background: rgba(139, 92, 246, .14);
+  color: #7c3aed;
+  gap: 4px;
+}
+
+.cliente-search-results {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.cliente-result-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border: none;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  cursor: pointer;
+  font-family: var(--font-ui);
+  color: var(--ink);
+}
+
+.cliente-result-row:last-child { border-bottom: none; }
+.cliente-result-row:hover { background: var(--canvas); }
+
+.cliente-selected-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--canvas);
+}
+
 @media (max-width: 720px) {
   .historial-status-card {
     flex-direction: column;

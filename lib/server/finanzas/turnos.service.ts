@@ -1,6 +1,7 @@
 import prisma from '@/lib/prisma';
 import { Prisma } from '@prisma/client';
 import type { RangoFechas } from './rango';
+import { NotFoundError } from '@/lib/server/errors';
 
 function toNumber(value: Prisma.Decimal | null): number | null {
   return value == null ? null : Number(value.toFixed(2));
@@ -40,4 +41,31 @@ export async function listarTurnos(rango: RangoFechas, sucursal?: number) {
       observaciones: t.observaciones,
     })),
   };
+}
+
+/**
+ * Detalle de un turno para el panel admin: sin restringir por cajero_id,
+ * ya que ADMIN/DUENO supervisan turnos de cualquier cajero/sucursal.
+ */
+export async function getTurnoDetalleAdmin(turnoId: number) {
+  const turno = await prisma.cajaTurno.findUnique({
+    where: { id: turnoId },
+    include: {
+      sucursal: { select: { nombre: true } },
+      cajero: { select: { nombre: true, apellido_paterno: true } },
+    },
+  });
+  if (!turno) throw new NotFoundError('Turno no encontrado');
+
+  const pedidos = await prisma.transaccion.findMany({
+    where: { turno_id: turnoId },
+    orderBy: { created_at: 'asc' },
+    include: {
+      transaccionesDetalles_id: { include: { producto: { select: { nombre: true } } } },
+      cajero: { select: { nombre: true, apellido_paterno: true } },
+      cuenta_corriente: { select: { id: true, estado: true, monto: true, monto_pagado: true } },
+    },
+  });
+
+  return { turno: { ...turno, pedidos_count: pedidos.length }, pedidos };
 }

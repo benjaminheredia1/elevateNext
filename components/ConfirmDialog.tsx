@@ -11,11 +11,19 @@ interface ConfirmDialogProps {
   description?: string;
   confirmLabel?: string;
   isLoading?: boolean;
+  loadingLabel?: string;
+  variant?: 'danger' | 'confirm';
 }
 
 const TrashIcon = () => (
   <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
     <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+  </svg>
+);
+
+const CheckIcon = () => (
+  <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
   </svg>
 );
 
@@ -48,7 +56,16 @@ export default function ConfirmDialog({
   description = 'Esta acción no se puede deshacer. ¿Estás seguro de que deseas continuar?',
   confirmLabel = 'Eliminar',
   isLoading = false,
+  loadingLabel,
+  variant = 'danger',
 }: ConfirmDialogProps) {
+  const isDanger = variant === 'danger';
+  const accentColor = isDanger ? '#f87171' : '#fb923c';
+  const buttonGradient = isDanger
+    ? 'linear-gradient(135deg, #ef4444, #dc2626)'
+    : 'linear-gradient(135deg, #fb923c, #ea580c)';
+  const buttonShadow = isDanger ? '0 0 20px rgba(239,68,68,0.3)' : '0 0 20px rgba(251,146,60,0.3)';
+  const defaultLoadingLabel = isDanger ? 'Eliminando...' : 'Procesando...';
   return (
     <AnimatePresence>
       {isOpen && (
@@ -79,14 +96,14 @@ export default function ConfirmDialog({
                 style={{
                   background: 'rgba(20,20,20,0.97)',
                   backdropFilter: 'blur(24px)',
-                  border: '1px solid rgba(248,113,113,0.15)',
+                  border: `1px solid ${isDanger ? 'rgba(248,113,113,0.15)' : 'rgba(251,146,60,0.15)'}`,
                   boxShadow: '0 20px 60px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.03)',
                 }}
               >
                 {/* Top accent line */}
                 <div
                   className={clsx('absolute!', 'top-0!', 'left-0!', 'right-0!', 'h-px!')}
-                  style={{ background: 'linear-gradient(90deg, transparent, rgba(248,113,113,0.5), transparent)' }}
+                  style={{ background: `linear-gradient(90deg, transparent, ${accentColor}80, transparent)` }}
                 />
 
                 <div className={clsx('p-6!')}>
@@ -97,9 +114,9 @@ export default function ConfirmDialog({
                       animate={{ scale: 1 }}
                       transition={{ delay: 0.1, type: 'spring', stiffness: 250 }}
                       className={clsx('w-14!', 'h-14!', 'rounded-2xl!', 'flex!', 'items-center!', 'justify-center!')}
-                      style={{ background: 'rgba(248,113,113,0.12)', color: '#f87171' }}
+                      style={{ background: isDanger ? 'rgba(248,113,113,0.12)' : 'rgba(251,146,60,0.12)', color: accentColor }}
                     >
-                      <TrashIcon />
+                      {isDanger ? <TrashIcon /> : <CheckIcon />}
                     </motion.div>
                   </div>
 
@@ -143,19 +160,19 @@ export default function ConfirmDialog({
                       disabled={isLoading}
                       className={clsx('flex-1!', 'py-2.5!', 'rounded-xl!', 'text-sm!', 'font-bold!', 'text-white!', 'transition-all!', 'duration-150!', 'cursor-pointer!', 'disabled:opacity-60!', 'flex!', 'items-center!', 'justify-center!', 'gap-2!', 'active:scale-95!')}
                       style={{
-                        background: 'linear-gradient(135deg, #ef4444, #dc2626)',
+                        background: buttonGradient,
                         border: 'none',
-                        boxShadow: '0 0 20px rgba(239,68,68,0.3)',
+                        boxShadow: buttonShadow,
                       }}
                     >
                       {isLoading ? (
                         <>
                           <div className={clsx('w-4!', 'h-4!', 'rounded-full!', 'border-2!', 'border-white/30!', 'border-t-white!', 'animate-spin!')} />
-                          Eliminando...
+                          {loadingLabel ?? defaultLoadingLabel}
                         </>
                       ) : (
                         <>
-                          <TrashIcon />
+                          {isDanger ? <TrashIcon /> : <CheckIcon />}
                           {confirmLabel}
                         </>
                       )}

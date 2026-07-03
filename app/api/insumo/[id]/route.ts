@@ -20,23 +20,35 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     const session = await requireAuth(request);
     requireRole(session, ['DUENO', 'ADMIN']);
     const { id } = await params;
+    const insumoId = Number(id);
+    const anterior = await prisma.insumo.findUnique({ where: { id: insumoId } });
+    if (!anterior) throw new NotFoundError('Insumo no encontrado');
+
     const {
       categoria_insumo, costo_promedio, nombre, proveedor,
       punto_critico, stock_actual, stock_minimo, unidad_medida,
     } = await request.json();
     const insumo = await prisma.insumo.update({
-      where: { id: Number(id) },
+      where: { id: insumoId },
       data: {
         categoria_insumo: categoria_insumo || null,
         costo_promedio: Number(costo_promedio || 0),
         nombre,
         proveedor: proveedor || null,
         punto_critico: Number(punto_critico || 0),
-        stock_actual: Number(stock_actual || 0),
+        stock_actual: Number(stock_actual ?? anterior.stock_actual),
         stock_minimo: Number(stock_minimo || 0),
         unidad_medida,
       },
     });
+
+    await logAudit({
+      usuarioId: session.id, rol: session.rol, accion: 'MODIFICO',
+      entidad: 'Insumo', entidadId: insumoId,
+      detalle: `Editó insumo "${insumo.nombre}"`,
+      ip: getClientIp(request), userAgent: request.headers.get('user-agent'),
+    });
+
     return NextResponse.json(insumo);
   } catch (e) {
     return handleApiError(e);

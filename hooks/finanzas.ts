@@ -59,3 +59,14 @@ export function useTurnos(rango: RangoState) {
     },
   });
 }
+
+export function useTurnoDetalleAdmin(turnoId: number | null) {
+  return useQuery({
+    queryKey: ['admin-finanzas', 'turno-detalle', turnoId],
+    queryFn: async () => {
+      const res = await apiClient.get(`/api/admin/caja/turnos/${turnoId}`);
+      return res.data;
+    },
+    enabled: turnoId != null,
+  });
+}

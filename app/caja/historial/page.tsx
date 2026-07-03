@@ -33,8 +33,10 @@ interface Pedido {
   total: number;
   metodo_pago?: string | null;
   tipo_entrega?: string | null;
+  es_cortesia?: boolean;
   cajero?: { nombre: string; apellido_paterno: string } | null;
   transaccionesDetalles_id: Detalle[];
+  cuenta_corriente?: { id: number; estado: string } | null;
 }
 
 function asNumber(value: unknown): number {
@@ -159,7 +161,15 @@ function DetalleTurno({ turnoId, onClose }: { turnoId: number; onClose: () => vo
                       <div className="historial-pedido-row" key={pedido.id}>
                         <div className="historial-pedido-main">
                           <span>#{pedido.id} · {fmtTime(pedido.created_at)} · {nombreCajero(pedido.cajero)}</span>
-                          <MoneyText value={asNumber(pedido.total)} />
+                          {pedido.es_cortesia ? (
+                            <span className="historial-pill cortesia">Cortesía</span>
+                          ) : pedido.cuenta_corriente ? (
+                            <span className="historial-pill fiado">
+                              Fiado{pedido.cuenta_corriente.estado === 'PAGADA' ? ' · pagado' : ''} · <MoneyText value={asNumber(pedido.total)} />
+                            </span>
+                          ) : (
+                            <MoneyText value={asNumber(pedido.total)} />
+                          )}
                         </div>
                         <span className="historial-pedido-sub">{pedidoResumen(pedido)}</span>
                       </div>
