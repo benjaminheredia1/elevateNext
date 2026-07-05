@@ -1,7 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAuth, requireRole } from '@/lib/server/auth/session';
-import { handleApiError } from '@/lib/server/errors';
+import { z } from 'zod';
+import { requireAuth, requireRole, getClientIp } from '@/lib/server/auth/session';
+import { logAudit } from '@/lib/server/audit/audit.service';
+import { handleApiError, ValidationError } from '@/lib/server/errors';
 import prisma from '@/lib/prisma';
+
+const nuevoClienteSchema = z.object({
+  nombre: z.string().trim().min(2).max(120),
+  telefono: z.string().trim().max(30).optional(),
+  nit: z.string().trim().max(30).optional(),
+  email: z.string().trim().max(120).optional(),
+  direccion: z.string().trim().max(200).optional(),
+});
 
 type ProductStat = {
   producto_id: number;
@@ -143,5 +153,36 @@ export async function GET(req: NextRequest) {
           .slice(0, 5),
       },
     });
+  } catch (e) { return handleApiError(e); }
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const session = await requireAuth(req);
+    requireRole(session, ['DUENO', 'ADMIN']);
+    const input = nuevoClienteSchema.parse(await req.json());
+    const tel = input.telefono ? input.telefono.replace(/\D/g, '') || null : null;
+
+    if (tel) {
+      const existe = await prisma.cliente.findFirst({ where: { telefono: tel }, select: { id: true, nombre: true } });
+      if (existe) throw new ValidationError(`Ya existe un cliente con ese teléfono: ${existe.nombre}`);
+    }
+
+    const cliente = await prisma.cliente.create({
+      data: {
+        nombre: input.nombre,
+        telefono: tel,
+        nit: input.nit?.replace(/\D/g, '') || null,
+        email: input.email?.trim().toLowerCase() || null,
+        direccion: input.direccion?.trim() || null,
+      },
+    });
+    await logAudit({
+      usuarioId: session.id, rol: session.rol, accion: 'CREO',
+      entidad: 'Cliente', entidadId: cliente.id,
+      detalle: `Registró cliente ${cliente.nombre}`,
+      ip: getClientIp(req), userAgent: req.headers.get('user-agent'),
+    });
+    return NextResponse.json(cliente, { status: 201 });
   } catch (e) { return handleApiError(e); }
 }

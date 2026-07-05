@@ -1,9 +1,15 @@
 'use client';
 
-import { useState } from 'react';
+import { FormEvent, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import AdminPanel from '@/components/admin/AdminPanel';
 import { useAdminClientes } from '@/hooks/admin-clientes';
+import {
+  useClientePrivilegios,
+  useCrearCliente,
+  useGuardarClientePrivilegios,
+  usePrivilegios,
+} from '@/hooks/privilegios';
 import apiClient from '@/hooks/api';
 import KpiCard from '@/components/ui/KpiCard';
 import MoneyText from '@/components/ui/MoneyText';
@@ -93,10 +99,138 @@ function MergeModal({ items, onClose, onMerged }: { items: any[]; onClose: () =>
   );
 }
 
+function NuevoClienteModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const crear = useCrearCliente();
+  const [form, setForm] = useState({ nombre: '', telefono: '', nit: '', email: '', direccion: '' });
+  const [error, setError] = useState('');
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    setError('');
+    if (form.nombre.trim().length < 2) { setError('El nombre es obligatorio.'); return; }
+    crear.mutate(
+      {
+        nombre: form.nombre.trim(),
+        telefono: form.telefono.trim() || undefined,
+        nit: form.nit.trim() || undefined,
+        email: form.email.trim() || undefined,
+        direccion: form.direccion.trim() || undefined,
+      },
+      {
+        onSuccess: () => { onCreated(); onClose(); },
+        onError: (e: any) => setError(e?.response?.data?.error ?? 'No se pudo crear el cliente.'),
+      },
+    );
+  };
+
+  return (
+    <div className="admin-modal-overlay" onClick={onClose}>
+      <form className="admin-modal" onClick={e => e.stopPropagation()} onSubmit={submit}>
+        <div className="admin-modal-header">
+          <h2>Agregar cliente</h2>
+          <button type="button" className="admin-modal-close" onClick={onClose}>&times;</button>
+        </div>
+        <div className="admin-modal-body">
+          <div className="form-grid">
+            <div className="form-group full">
+              <label>Nombre o razón social</label>
+              <input value={form.nombre} onChange={e => setForm(f => ({ ...f, nombre: e.target.value }))} required />
+            </div>
+            <div className="form-group">
+              <label>Celular</label>
+              <input inputMode="numeric" value={form.telefono} onChange={e => setForm(f => ({ ...f, telefono: e.target.value.replace(/\D/g, '') }))} />
+            </div>
+            <div className="form-group">
+              <label>NIT / C.I.</label>
+              <input inputMode="numeric" value={form.nit} onChange={e => setForm(f => ({ ...f, nit: e.target.value.replace(/\D/g, '') }))} />
+            </div>
+            <div className="form-group">
+              <label>Correo (opcional)</label>
+              <input value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} />
+            </div>
+            <div className="form-group">
+              <label>Dirección (opcional)</label>
+              <input value={form.direccion} onChange={e => setForm(f => ({ ...f, direccion: e.target.value }))} />
+            </div>
+          </div>
+          {error && <div className="gate-warning" style={{ marginTop: 10 }}>{error}</div>}
+        </div>
+        <div className="admin-modal-footer">
+          <button type="button" className="admin-btn ghost" onClick={onClose}>Cancelar</button>
+          <button type="submit" className="admin-btn primary" disabled={crear.isPending}>{crear.isPending ? 'Creando...' : 'Crear cliente'}</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function ClienteDetalleModal({ cliente, onClose }: { cliente: any; onClose: () => void }) {
+  const catalogo = usePrivilegios(false);
+  const asignados = useClientePrivilegios(cliente.id);
+  const guardar = useGuardarClientePrivilegios();
+  const [seleccion, setSeleccion] = useState<Set<number> | null>(null);
+
+  const asignadosIds = new Set((asignados.data ?? []).map(p => p.id));
+  const current = seleccion ?? asignadosIds;
+
+  const toggle = (id: number) => {
+    const next = new Set(current);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    setSeleccion(next);
+  };
+
+  const save = () => {
+    guardar.mutate(
+      { clienteId: cliente.id, privilegio_ids: Array.from(current) },
+      { onSuccess: onClose },
+    );
+  };
+
+  return (
+    <div className="admin-modal-overlay" onClick={onClose}>
+      <div className="admin-modal" onClick={e => e.stopPropagation()}>
+        <div className="admin-modal-header">
+          <div>
+            <h2>{cliente.nombre}</h2>
+            <p className="form-hint">{cliente.telefono ?? 'Sin celular'} · {cliente.pedidos} pedidos · <MoneyText value={cliente.total_gastado} /></p>
+          </div>
+          <button type="button" className="admin-modal-close" onClick={onClose}>&times;</button>
+        </div>
+        <div className="admin-modal-body">
+          <h3 style={{ margin: '0 0 10px' }}>Privilegios asignados</h3>
+          {catalogo.isLoading || asignados.isLoading ? (
+            <EmptyState title="Cargando..." />
+          ) : (catalogo.data ?? []).length === 0 ? (
+            <p className="form-hint">No hay privilegios creados. Créalos en la sección Privilegios.</p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {(catalogo.data ?? []).map(p => (
+                <label key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', border: '1px solid var(--line)', borderRadius: 8 }}>
+                  <input type="checkbox" checked={current.has(p.id)} onChange={() => toggle(p.id)} />
+                  <div style={{ flex: 1 }}>
+                    <strong>{p.nombre}</strong> <span className="dim">· {p.porcentaje}%</span>
+                    {p.descripcion && <div className="admin-cell-sub">{p.descripcion}</div>}
+                  </div>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="admin-modal-footer">
+          <button type="button" className="admin-btn ghost" onClick={onClose}>Cerrar</button>
+          <button type="button" className="admin-btn primary" disabled={guardar.isPending} onClick={save}>{guardar.isPending ? 'Guardando...' : 'Guardar privilegios'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ClientesAdminPage() {
   const [q, setQ] = useState('');
   const [mes, setMes] = useState(currentMonth());
   const [mergeOpen, setMergeOpen] = useState(false);
+  const [nuevoOpen, setNuevoOpen] = useState(false);
+  const [detalle, setDetalle] = useState<any | null>(null);
   const queryClient = useQueryClient();
   const { data, isLoading, isError } = useAdminClientes(q, mes);
 
@@ -114,9 +248,12 @@ export default function ClientesAdminPage() {
           <h1>Clientes</h1>
           <p>Historial y métricas de clientes registrados.</p>
         </div>
-        <button className="admin-btn secondary" onClick={() => setMergeOpen(true)} disabled={items.length < 2}>
-          Fusionar duplicados
-        </button>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button className="admin-btn secondary" onClick={() => setMergeOpen(true)} disabled={items.length < 2}>
+            Fusionar duplicados
+          </button>
+          <button className="admin-btn primary" onClick={() => setNuevoOpen(true)}>+ Agregar cliente</button>
+        </div>
       </div>
 
       {mergeOpen && (
@@ -126,6 +263,15 @@ export default function ClientesAdminPage() {
           onMerged={() => queryClient.invalidateQueries({ queryKey: ['admin', 'clientes'] })}
         />
       )}
+
+      {nuevoOpen && (
+        <NuevoClienteModal
+          onClose={() => setNuevoOpen(false)}
+          onCreated={() => queryClient.invalidateQueries({ queryKey: ['admin', 'clientes'] })}
+        />
+      )}
+
+      {detalle && <ClienteDetalleModal cliente={detalle} onClose={() => setDetalle(null)} />}
 
       {isLoading ? (
         <EmptyState title="Cargando clientes..." />
@@ -234,6 +380,7 @@ export default function ClientesAdminPage() {
             data={items}
             emptyTitle="Sin clientes registrados"
             rowKey={(row: any) => row.id}
+            onRowClick={(row: any) => setDetalle(row)}
             columns={[
               { key: 'nombre', header: 'Cliente', render: (row: any) => (
                 <div>
