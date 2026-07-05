@@ -230,6 +230,9 @@ model Producto {
   ventas_acumuladas        Int                     @default(0)
   calorias                 Int?
   proteina                 String?
+  // Baja definitiva del producto (retiro del catálogo)
+  motivo_baja              String?
+  fecha_baja               DateTime?
   categoria_id             CategoriasProducto[]
   created_at               DateTime                @default(now())
   update_at                DateTime                @updatedAt
@@ -283,6 +286,10 @@ model Insumo {
   proveedor            String?
   proveedor_telefono   String?
   uso_diario_promedio  Float?
+  // Baja definitiva del insumo (retiro del inventario)
+  activo               Boolean              @default(true)
+  fecha_baja           DateTime?
+  motivo_baja          String?
   movimientoInterno_id MovimientoInterno[]
   recetaProducto_id    RecetasProducto[]
   insumos_mixtos_padre InsumoMixtoDetalle[] @relation("InsumoPadre")
@@ -319,6 +326,7 @@ enum Tipo_movimiento {
   VENTA
   MERMA
   AJUSTE
+  BAJA
 }
 
 enum ProductoTipo {
@@ -330,6 +338,7 @@ enum EstadoPublicacion {
   BORRADOR
   PUBLICADO
   ARCHIVADO
+  BAJA
 }
 
 model MovimientoInterno {

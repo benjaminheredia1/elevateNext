@@ -36,6 +36,7 @@ const Icons = {
   analitica: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>,
   gastosOperativos: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="8" y1="12" x2="16" y2="12"/></svg>,
   privilegios: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 15 8.5 22 9.3 17 14 18.5 21 12 17.5 5.5 21 7 14 2 9.3 9 8.5 12 2"/></svg>,
+  bajas: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>,
 };
 
 // Nav del zip (8 secciones). Las secciones extra se irán sumando aquí a medida
@@ -55,6 +56,7 @@ const NAV_GROUPS = [
       { to: '/admin/products', label: 'Productos', icon: Icons.products },
       { to: '/admin/category', label: 'Categorías', icon: Icons.category },
       { to: '/admin/insumos', label: 'Inventario', icon: Icons.insumos, alertKey: 'insumos' },
+      { to: '/admin/bajas', label: 'Bajas', icon: Icons.bajas },
     ],
   },
   {

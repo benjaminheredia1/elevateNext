@@ -17,6 +17,18 @@ export const RegistrarMermaSchema = z.object({
 });
 export type RegistrarMermaInput = z.infer<typeof RegistrarMermaSchema>;
 
+// ── Baja de insumo ─────────────────────────────────────────────────
+export const RegistrarBajaSchema = z.object({
+  insumo_id: z.number().int().positive(),
+  motivo:    z.string().min(1),
+});
+export type RegistrarBajaInput = z.infer<typeof RegistrarBajaSchema>;
+
+export const ReactivarInsumoSchema = z.object({
+  insumo_id: z.number().int().positive(),
+});
+export type ReactivarInsumoInput = z.infer<typeof ReactivarInsumoSchema>;
+
 // ── Conteo físico ──────────────────────────────────────────────────
 export const ConteoFisicoSchema = z.object({
   insumo_id:   z.number().int().positive(),
