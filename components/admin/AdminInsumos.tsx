@@ -5,7 +5,7 @@ import apiClient from '@/hooks/api';
 
 type Tab = 'insumos' | 'movimientos' | 'recetas';
 type EstadoStock = 'ok' | 'bajo' | 'critico' | 'agotado';
-type ModalAction = 'crear' | 'editar' | 'compra' | 'merma' | 'conteo' | null;
+type ModalAction = 'crear' | 'editar' | 'compra' | 'merma' | 'conteo' | 'baja' | null;
 
 interface Insumo {
   id: number;
@@ -85,6 +85,7 @@ const MOVEMENT_META: Record<string, { label: string; color: string }> = {
   VENTA: { label: 'Venta', color: 'var(--info)' },
   MERMA: { label: 'Merma', color: 'var(--danger)' },
   AJUSTE: { label: 'Ajuste', color: 'var(--kale)' },
+  BAJA: { label: 'Baja', color: 'var(--danger)' },
 };
 
 const UNITS = ['KG', 'GR', 'UNIDAD', 'LT', 'ML'];
@@ -286,6 +287,12 @@ export default function AdminInsumos() {
           descripcion: form.descripcion || undefined,
         });
       }
+      if (modalAction === 'baja' && selected) {
+        await apiClient.post('/api/admin/insumos/baja', {
+          insumo_id: selected.id,
+          motivo: form.descripcion || `Baja de ${selected.nombre}`,
+        });
+      }
       closeModal();
       await load();
     } catch (err) {
@@ -303,7 +310,9 @@ export default function AdminInsumos() {
         ? `Registrar compra · ${selected?.nombre ?? ''}`
         : modalAction === 'merma'
           ? `Registrar merma · ${selected?.nombre ?? ''}`
-          : `Conteo físico (corregir stock) · ${selected?.nombre ?? ''}`;
+          : modalAction === 'baja'
+            ? `Dar de baja · ${selected?.nombre ?? ''}`
+            : `Conteo físico (corregir stock) · ${selected?.nombre ?? ''}`;
 
   return (
     <div className="admin-inventory">
@@ -431,6 +440,7 @@ export default function AdminInsumos() {
                             <button className="action-btn edit" title="Compra" onClick={() => openModal('compra', insumo)} type="button">↥</button>
                             <button className="action-btn delete" title="Merma" onClick={() => openModal('merma', insumo)} type="button">⌫</button>
                             <button className="action-btn" title="Corregir stock (conteo físico) — usa esto si te equivocaste en una cantidad" onClick={() => openModal('conteo', insumo)} type="button">✓</button>
+                            <button className="action-btn delete" title="Dar de baja" onClick={() => openModal('baja', insumo)} type="button">⛔</button>
                             <button className="action-btn delete" title="Eliminar insumo" onClick={() => handleDelete(insumo)} type="button">🗑</button>
                           </div>
                         </td>
@@ -540,6 +550,10 @@ export default function AdminInsumos() {
                       Este formulario no cambia la cantidad en stock. Para corregir una cantidad mal registrada, usa el botón ✓ "Corregir stock" en la fila del insumo.
                     </span>
                   </div>
+                </div>
+              ) : modalAction === 'baja' ? (
+                <div className="form-grid">
+                  <label className="form-group full"><span>Motivo de la baja</span><textarea rows={3} value={form.descripcion} onChange={event => setForm(prev => ({ ...prev, descripcion: event.target.value }))} required /></label>
                 </div>
               ) : (
                 <div className="form-grid">

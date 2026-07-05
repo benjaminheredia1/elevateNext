@@ -3,7 +3,7 @@ import prisma from '@/lib/prisma';
 
 export async function GET() {
   try {
-    const insumos = await prisma.insumo.findMany();
+    const insumos = await prisma.insumo.findMany({ where: { activo: true } });
     return NextResponse.json(insumos);
   } catch {
     return NextResponse.json({ message: 'Error al obtener insumos' }, { status: 500 });

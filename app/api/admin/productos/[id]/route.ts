@@ -140,8 +140,11 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
   }
 }
 
-// ─── PATCH: cambiar estado de publicación (publicar/despublicar/archivar) ───
-const PatchSchema = z.object({ estado_publicacion: z.enum(['BORRADOR', 'PUBLICADO', 'ARCHIVADO']) });
+// ─── PATCH: cambiar estado de publicación (publicar/despublicar/archivar/dar de baja) ───
+const PatchSchema = z.object({
+  estado_publicacion: z.enum(['BORRADOR', 'PUBLICADO', 'ARCHIVADO', 'BAJA']),
+  motivo: z.string().optional(),
+});
 
 export async function PATCH(req: NextRequest, { params }: Ctx) {
   try {
@@ -149,7 +152,7 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
     requireRole(session, ['DUENO', 'ADMIN']);
     const { id } = await params;
     const productoId = Number(id);
-    const { estado_publicacion } = PatchSchema.parse(await req.json());
+    const { estado_publicacion, motivo } = PatchSchema.parse(await req.json());
 
     const actual = await prisma.producto.findUnique({
       where: { id: productoId },
@@ -163,16 +166,26 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
     if (estado_publicacion === 'PUBLICADO') {
       assertPublicable(actual);
     }
+    if (estado_publicacion === 'BAJA' && !motivo) {
+      return NextResponse.json({ error: 'El motivo de la baja es obligatorio' }, { status: 400 });
+    }
 
     const prod = await prisma.producto.update({
       where: { id: productoId },
-      data: { estado_publicacion, disponible: estado_publicacion === 'PUBLICADO' },
+      data: {
+        estado_publicacion,
+        disponible: estado_publicacion === 'PUBLICADO',
+        motivo_baja: estado_publicacion === 'BAJA' ? motivo : null,
+        fecha_baja: estado_publicacion === 'BAJA' ? new Date() : null,
+      },
     });
 
     await logAudit({
       usuarioId: session.id, rol: session.rol, accion: 'MODIFICO',
       entidad: 'Producto', entidadId: productoId,
-      detalle: `Producto "${prod.nombre}" → ${estado_publicacion}`,
+      detalle: estado_publicacion === 'BAJA'
+        ? `Producto "${prod.nombre}" dado de baja. Motivo: ${motivo}`
+        : `Producto "${prod.nombre}" → ${estado_publicacion}`,
     });
 
     return NextResponse.json({ data: prod });
