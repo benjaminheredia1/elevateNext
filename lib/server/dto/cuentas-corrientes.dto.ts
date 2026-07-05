@@ -6,6 +6,15 @@ export const cuentaCorrienteSchema = z.object({
   concepto: z.string().trim().min(2),
   monto: z.coerce.number().positive(),
   vencimiento: z.coerce.date().optional().nullable(),
+  cliente_id: z.coerce.number().int().positive().optional().nullable(),
+  transaccion_id: z.coerce.number().int().positive().optional().nullable(),
+});
+
+// Schema para crear un "fiado" a partir de un pedido existente
+export const fiadoSchema = z.object({
+  transaccion_id: z.coerce.number().int().positive(),
+  concepto: z.string().trim().min(2).optional(),
+  vencimiento: z.coerce.date().optional().nullable(),
 });
 
 export const pagoSchema = z.object({
@@ -17,4 +26,5 @@ export const idSchema = z.object({
 });
 
 export type CuentaCorrienteInput = z.infer<typeof cuentaCorrienteSchema>;
+export type FiadoInput = z.infer<typeof fiadoSchema>;
 export type PagoInput = z.infer<typeof pagoSchema>;

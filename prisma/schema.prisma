@@ -122,16 +122,43 @@ model Usuario {
 }
 
 model Cliente {
-  id            Int           @id @default(autoincrement())
+  id                 Int                 @id @default(autoincrement())
+  nombre             String
+  telefono           String?             @unique
+  email              String?
+  nit                String?
+  direccion          String?
+  es_anonimo         Boolean             @default(false)
+  transacciones      Transaccion[]
+  cuentas_corrientes CuentaCorriente[]
+  privilegios        ClientePrivilegio[]
+  created_at         DateTime            @default(now())
+  update_at          DateTime            @updatedAt
+}
+
+model Privilegio {
+  id            Int                 @id @default(autoincrement())
   nombre        String
-  telefono      String?       @unique
-  email         String?
-  nit           String?
-  direccion     String?
-  es_anonimo    Boolean       @default(false)
-  transacciones Transaccion[]
-  created_at    DateTime      @default(now())
-  update_at     DateTime      @updatedAt
+  descripcion   String?
+  porcentaje    Decimal             @db.Decimal(5, 2)
+  activo        Boolean             @default(true)
+  creado_por_id Int
+  clientes      ClientePrivilegio[]
+  created_at    DateTime            @default(now())
+  update_at     DateTime            @updatedAt
+
+  @@index([activo])
+}
+
+model ClientePrivilegio {
+  cliente_id    Int
+  privilegio_id Int
+  created_at    DateTime   @default(now())
+  cliente       Cliente    @relation(fields: [cliente_id], references: [id], onDelete: Cascade)
+  privilegio    Privilegio @relation(fields: [privilegio_id], references: [id], onDelete: Cascade)
+
+  @@id([cliente_id, privilegio_id])
+  @@index([privilegio_id])
 }
 
 model Transaccion {
@@ -174,6 +201,7 @@ model Transaccion {
   transaccionesDetalles_id TransaccionesDetalles[]
   movimientos              MovimientoCaja[]
   movimientos_internos     MovimientoInterno[]
+  cuenta_corriente         CuentaCorriente?
   created_at               DateTime                @default(now())
   update_at                DateTime                @updatedAt
 }
@@ -446,6 +474,23 @@ model GastoFijo {
   @@index([categoria])
 }
 
+model GastoOperativo {
+  id            Int        @id @default(autoincrement())
+  concepto      String
+  categoria     String
+  monto         Decimal    @db.Decimal(12, 2)
+  metodo_pago   TipoCuenta
+  fecha         DateTime
+  notas         String?
+  creado_por_id Int
+  created_at    DateTime   @default(now())
+  update_at     DateTime   @updatedAt
+
+  @@index([fecha])
+  @@index([categoria])
+  @@index([metodo_pago])
+}
+
 /**
  * ===== CUENTAS FINANCIERAS (Caja Efectivo / QR / Banco) =====
  */
@@ -499,19 +544,26 @@ model CajaTurno {
  * ===== MOVIMIENTO DE CAJA (libro del turno) =====
  */
 model CuentaCorriente {
-  id            Int             @id @default(autoincrement())
-  tipo          TipoCuentaCxCxP
-  contraparte   String
-  concepto      String
-  monto         Decimal         @db.Decimal(12, 2)
-  monto_pagado  Decimal         @default(0) @db.Decimal(12, 2)
-  vencimiento   DateTime?
-  estado        EstadoCuenta    @default(PENDIENTE)
-  creado_por_id Int
-  created_at    DateTime        @default(now())
-  update_at     DateTime        @updatedAt
+  id             Int             @id @default(autoincrement())
+  tipo           TipoCuentaCxCxP
+  contraparte    String
+  concepto       String
+  monto          Decimal         @db.Decimal(12, 2)
+  monto_pagado   Decimal         @default(0) @db.Decimal(12, 2)
+  vencimiento    DateTime?
+  estado         EstadoCuenta    @default(PENDIENTE)
+  creado_por_id  Int
+  // Relaciones opcionales para "fiado"
+  cliente_id     Int?
+  transaccion_id Int?            @unique
+  cliente        Cliente?        @relation(fields: [cliente_id], references: [id])
+  transaccion    Transaccion?    @relation(fields: [transaccion_id], references: [id])
+  created_at     DateTime        @default(now())
+  update_at      DateTime        @updatedAt
 
   @@index([tipo, estado])
+  @@index([cliente_id])
+  @@index([vencimiento])
 }
 
 model ActivoFijo {

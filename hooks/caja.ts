@@ -20,6 +20,9 @@ export interface VentaFisicaInput {
   items: { producto_id: number; cantidad: number }[];
   metodo_pago: MetodoPago;
   es_cortesia?: boolean;
+  es_fiado?: boolean;
+  fiado_vencimiento?: string | null;
+  cliente_id?: number;
   cliente_nombre?: string;
   cliente_telefono?: string;
   cliente_email?: string;
@@ -31,6 +34,46 @@ export interface CierreCajaInput {
   real_efectivo: number;
   real_qr: number;
   observaciones?: string;
+}
+
+export interface ClienteResultado {
+  id: number;
+  nombre: string;
+  telefono: string | null;
+  nit: string | null;
+  email: string | null;
+  descuento_pct?: number;
+  descuento_nombre?: string | null;
+}
+
+export function useBuscarClientes(q: string) {
+  return useQuery({
+    queryKey: ['caja', 'clientes', q],
+    queryFn: async () => {
+      const res = await apiClient.get(`/api/caja/clientes?q=${encodeURIComponent(q)}`);
+      return res.data.data as ClienteResultado[];
+    },
+    enabled: q.trim().length >= 2,
+  });
+}
+
+export function useDeudores() {
+  return useQuery({
+    queryKey: ['caja', 'deudores'],
+    queryFn: async () => (await apiClient.get('/api/caja/deudores')).data,
+  });
+}
+
+export function useCobrarDeuda() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, monto, metodo_pago }: { id: number; monto: number; metodo_pago: 'EFECTIVO' | 'QR' }) =>
+      (await apiClient.post(`/api/caja/deudores/${id}/pago`, { monto, metodo_pago })).data,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['caja', 'deudores'] });
+      qc.invalidateQueries({ queryKey: ['caja', 'turno-activo'] });
+    },
+  });
 }
 
 const cajaKey = ['caja'] as const;
@@ -75,6 +118,17 @@ export function useHistorial() {
       const res = await apiClient.get('/api/caja/historial');
       return res.data;
     },
+  });
+}
+
+export function useTurnoDetalle(turnoId: number | null) {
+  return useQuery({
+    queryKey: [...cajaKey, 'historial', turnoId],
+    queryFn: async () => {
+      const res = await apiClient.get(`/api/caja/historial/${turnoId}`);
+      return res.data;
+    },
+    enabled: turnoId != null,
   });
 }
 
