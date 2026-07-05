@@ -40,6 +40,7 @@ const pubBadgeClass: Record<Estado, string> = { PUBLICADO: 'publicado', BORRADOR
 
 const EditIcon = <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>;
 const TrashIcon = <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" /></svg>;
+const BajaIcon = <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="4.93" y1="4.93" x2="19.07" y2="19.07" /></svg>;
 
 export default function AdminProducts() {
   const [productos, setProductos] = useState<ApiProducto[]>([]);
@@ -49,13 +50,15 @@ export default function AdminProducts() {
   const [filterPub, setFilterPub] = useState<string>('todos');
   const [wizard, setWizard] = useState<WizardInitial | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
+  const [bajaConfirm, setBajaConfirm] = useState<number | null>(null);
+  const [bajaMotivo, setBajaMotivo] = useState('');
   const [dbCategorias, setDbCategorias] = useState<string[]>(['Todos']);
   const [actionError, setActionError] = useState('');
 
   const load = () => {
     setLoading(true);
     apiClient.get('/api/admin/productos')
-      .then(res => setProductos(res.data?.data ?? []))
+      .then(res => setProductos((res.data?.data ?? []).filter((p: { estado_publicacion: string }) => p.estado_publicacion !== 'BAJA')))
       .catch(() => setProductos([]))
       .finally(() => setLoading(false));
   };
@@ -96,6 +99,22 @@ export default function AdminProducts() {
       const err = e as { response?: { data?: { error?: string } } };
       setActionError(err?.response?.data?.error ?? 'No se pudo cambiar el estado. Verifica nombre, descripcion, precio, imagen, menu y receta.');
       setTimeout(() => setActionError(''), 6000);
+    }
+  };
+
+  const darDeBaja = async (id: number) => {
+    if (!bajaMotivo.trim()) return;
+    setActionError('');
+    try {
+      await apiClient.patch(`/api/admin/productos/${id}`, { estado_publicacion: 'BAJA', motivo: bajaMotivo.trim() });
+      setBajaConfirm(null);
+      setBajaMotivo('');
+      load();
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { error?: string } } };
+      setBajaConfirm(null);
+      setActionError(err?.response?.data?.error ?? 'No se pudo dar de baja el producto.');
+      setTimeout(() => setActionError(''), 5000);
     }
   };
 
@@ -210,6 +229,22 @@ export default function AdminProducts() {
                       {pub === 'PUBLICADO'
                         ? <button className="action-btn" onClick={() => setEstado(p.id, 'BORRADOR')} title="Despublicar">⏸</button>
                         : <button className="action-btn" onClick={() => setEstado(p.id, 'PUBLICADO')} title="Publicar">▶</button>}
+                      {bajaConfirm === p.id ? (
+                        <div className="delete-confirm" style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                          <input
+                            type="text"
+                            placeholder="Motivo de la baja"
+                            value={bajaMotivo}
+                            onChange={e => setBajaMotivo(e.target.value)}
+                            style={{ width: 120, fontSize: 12 }}
+                            autoFocus
+                          />
+                          <button className="action-btn confirm-yes" onClick={() => darDeBaja(p.id)} disabled={!bajaMotivo.trim()}>Sí</button>
+                          <button className="action-btn confirm-no" onClick={() => { setBajaConfirm(null); setBajaMotivo(''); }}>No</button>
+                        </div>
+                      ) : (
+                        <button className="action-btn delete" onClick={() => { setBajaConfirm(p.id); setBajaMotivo(''); }} title="Dar de baja">{BajaIcon}</button>
+                      )}
                       {deleteConfirm === p.id ? (
                         <div className="delete-confirm">
                           <button className="action-btn confirm-yes" onClick={() => remove(p.id)}>Sí</button>
