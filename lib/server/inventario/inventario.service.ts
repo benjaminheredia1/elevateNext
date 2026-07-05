@@ -125,6 +125,78 @@ export async function registrarMerma(
 }
 
 // ─────────────────────────────────────────────
+// Dar de baja un insumo (retiro definitivo)
+// ─────────────────────────────────────────────
+export async function registrarBaja(
+  tx: Prisma.TransactionClient,
+  insumoId: number,
+  motivo: string,
+  userId: number,
+  rol: Rol,
+) {
+  const insumo = await tx.insumo.findUnique({ where: { id: insumoId } });
+  if (!insumo) throw new NotFoundError('Insumo no encontrado');
+
+  const stockPerdido = insumo.stock_actual;
+
+  if (stockPerdido > 0) {
+    await tx.movimientoInterno.create({
+      data: {
+        insumo_id:       insumoId,
+        tipo_movimiento: 'BAJA',
+        cantidad:        -stockPerdido,
+        descripcion:     motivo,
+        responsable:     String(userId),
+      },
+    });
+  }
+
+  const insumoActualizado = await tx.insumo.update({
+    where: { id: insumoId },
+    data: {
+      stock_actual: 0,
+      activo:       false,
+      fecha_baja:   new Date(),
+      motivo_baja:  motivo,
+    },
+  });
+
+  await logAudit({
+    usuarioId: userId, rol, accion: 'MODIFICO',
+    entidad: 'Insumo', entidadId: insumoId,
+    detalle: `Insumo "${insumo.nombre}" dado de baja. Motivo: ${motivo}. Stock perdido: ${stockPerdido} ${insumo.unidad_medida}`,
+  }, tx);
+
+  return insumoActualizado;
+}
+
+// ─────────────────────────────────────────────
+// Reactivar un insumo dado de baja
+// ─────────────────────────────────────────────
+export async function reactivarInsumo(
+  tx: Prisma.TransactionClient,
+  insumoId: number,
+  userId: number,
+  rol: Rol,
+) {
+  const insumo = await tx.insumo.findUnique({ where: { id: insumoId } });
+  if (!insumo) throw new NotFoundError('Insumo no encontrado');
+
+  const insumoActualizado = await tx.insumo.update({
+    where: { id: insumoId },
+    data: { activo: true, fecha_baja: null, motivo_baja: null },
+  });
+
+  await logAudit({
+    usuarioId: userId, rol, accion: 'MODIFICO',
+    entidad: 'Insumo', entidadId: insumoId,
+    detalle: `Insumo "${insumo.nombre}" reactivado`,
+  }, tx);
+
+  return insumoActualizado;
+}
+
+// ─────────────────────────────────────────────
 // Registrar conteo físico (ajuste)
 // ─────────────────────────────────────────────
 export async function registrarConteoFisico(
