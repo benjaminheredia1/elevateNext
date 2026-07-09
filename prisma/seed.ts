@@ -82,6 +82,17 @@ async function main() {
     })
     console.log(`✅ Marca: ${m.nombre} (${m.key})`)
   }
+
+  // 5. Unidades de medida (catálogo administrable) — upsert idempotente por nombre
+  const unidadesBase = ['KG', 'GR', 'UNIDAD', 'LT', 'ML']
+  for (const nombre of unidadesBase) {
+    await prisma.unidadMedida.upsert({
+      where: { nombre },
+      update: {},
+      create: { nombre },
+    })
+  }
+  console.log('✅ Unidades de medida base (KG, GR, UNIDAD, LT, ML)')
 }
 
 main()
