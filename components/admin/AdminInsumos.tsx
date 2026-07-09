@@ -3,7 +3,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import apiClient from '@/hooks/api';
 
-type Tab = 'insumos' | 'movimientos' | 'recetas';
+type Tab = 'insumos' | 'movimientos' | 'recetas' | 'unidades';
 type EstadoStock = 'ok' | 'bajo' | 'critico' | 'agotado';
 type ModalAction = 'crear' | 'editar' | 'compra' | 'merma' | 'conteo' | 'baja' | null;
 
@@ -88,7 +88,11 @@ const MOVEMENT_META: Record<string, { label: string; color: string }> = {
   BAJA: { label: 'Baja', color: 'var(--danger)' },
 };
 
-const UNITS = ['KG', 'GR', 'UNIDAD', 'LT', 'ML'];
+interface UnidadMedidaRow {
+  id: number;
+  nombre: string;
+  activo: boolean;
+}
 
 function stockState(insumo: Insumo): EstadoStock {
   if (insumo.stock_actual <= 0) return 'agotado';
@@ -141,23 +145,32 @@ export default function AdminInsumos() {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
   const [pageMsg, setPageMsg] = useState<{ type: 'ok' | 'error'; text: string } | null>(null);
+  const [unidades, setUnidades] = useState<UnidadMedidaRow[]>([]);
+  const [unidadModal, setUnidadModal] = useState<'crear' | 'editar' | null>(null);
+  const [selectedUnidad, setSelectedUnidad] = useState<UnidadMedidaRow | null>(null);
+  const [unidadForm, setUnidadForm] = useState<{ nombre: string; activo: boolean }>({ nombre: '', activo: true });
+  const [unidadSaving, setUnidadSaving] = useState(false);
+  const [unidadError, setUnidadError] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [insumosRes, movimientosRes, recetasRes] = await Promise.all([
+      const [insumosRes, movimientosRes, recetasRes, unidadesRes] = await Promise.all([
         apiClient.get('/api/insumo'),
         apiClient.get('/api/insumo/movimiento'),
         apiClient.get('/api/recetas'),
+        apiClient.get('/api/unidades-medida'),
       ]);
       setInsumos(Array.isArray(insumosRes.data) ? insumosRes.data : []);
       setMovimientos(movimientosRes.data?.data ?? []);
       setRecetas(recetasRes.data?.data ?? []);
+      setUnidades(Array.isArray(unidadesRes.data) ? unidadesRes.data : []);
     } catch (err) {
       console.error(err);
       setInsumos([]);
       setMovimientos([]);
       setRecetas([]);
+      setUnidades([]);
     } finally {
       setLoading(false);
     }
@@ -191,6 +204,76 @@ export default function AdminInsumos() {
     }
     return Array.from(groups.values()).sort((a, b) => a.producto.nombre.localeCompare(b.producto.nombre));
   }, [recetas]);
+
+  const unidadesActivas = useMemo(() => unidades.filter(u => u.activo), [unidades]);
+
+  const openUnidadModal = (action: 'crear' | 'editar', unidad?: UnidadMedidaRow) => {
+    setUnidadError('');
+    setUnidadModal(action);
+    setSelectedUnidad(unidad ?? null);
+    setUnidadForm(action === 'editar' && unidad
+      ? { nombre: unidad.nombre, activo: unidad.activo }
+      : { nombre: '', activo: true });
+  };
+
+  const closeUnidadModal = () => {
+    setUnidadModal(null);
+    setSelectedUnidad(null);
+    setUnidadForm({ nombre: '', activo: true });
+    setUnidadError('');
+  };
+
+  const submitUnidad = async (event: FormEvent) => {
+    event.preventDefault();
+    setUnidadSaving(true);
+    setUnidadError('');
+    try {
+      const nombreTrim = unidadForm.nombre.trim();
+      let saved: UnidadMedidaRow;
+      if (unidadModal === 'crear') {
+        const res = await apiClient.post('/api/unidades-medida', { nombre: nombreTrim });
+        saved = res.data;
+      } else {
+        const res = await apiClient.put(`/api/unidades-medida/${selectedUnidad!.id}`, {
+          nombre: nombreTrim,
+          activo: unidadForm.activo,
+        });
+        saved = res.data;
+      }
+      const quickAddDesdeInsumo = unidadModal === 'crear' && modalAction !== null;
+      closeUnidadModal();
+      await load();
+      if (quickAddDesdeInsumo) {
+        setForm(prev => ({ ...prev, unidad_medida: saved.nombre }));
+      }
+    } catch (err) {
+      setUnidadError(errorMsg(err));
+    } finally {
+      setUnidadSaving(false);
+    }
+  };
+
+  const handleToggleUnidad = async (unidad: UnidadMedidaRow) => {
+    setPageMsg(null);
+    try {
+      await apiClient.put(`/api/unidades-medida/${unidad.id}`, { activo: !unidad.activo });
+      await load();
+    } catch (err) {
+      setPageMsg({ type: 'error', text: errorMsg(err) });
+    }
+  };
+
+  const handleDeleteUnidad = async (unidad: UnidadMedidaRow) => {
+    if (!window.confirm(`¿Eliminar la unidad "${unidad.nombre}"?`)) return;
+    setPageMsg(null);
+    try {
+      await apiClient.delete(`/api/unidades-medida/${unidad.id}`);
+      setPageMsg({ type: 'ok', text: `Unidad "${unidad.nombre}" eliminada.` });
+      await load();
+    } catch (err) {
+      setPageMsg({ type: 'error', text: errorMsg(err) });
+    }
+  };
 
   const totalValue = insumos.reduce((sum, item) => sum + item.stock_actual * item.costo_promedio, 0);
 
@@ -351,6 +434,7 @@ export default function AdminInsumos() {
           ['insumos', 'Insumos'],
           ['movimientos', 'Movimientos'],
           ['recetas', 'Recetas'],
+          ['unidades', 'Unidades'],
         ].map(([key, label]) => (
           <button key={key} className={`inv-tab ${tab === key ? 'active' : ''}`} onClick={() => setTab(key as Tab)} type="button">
             {label}
@@ -517,6 +601,48 @@ export default function AdminInsumos() {
         )
       )}
 
+      {tab === 'unidades' && (
+        <>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 14 }}>
+            <button className="admin-btn primary" onClick={() => openUnidadModal('crear')} type="button">+ Nueva unidad</button>
+          </div>
+          {unidades.length === 0 ? (
+            <div className="empty-state"><h4>Sin unidades registradas</h4><p>Crea la primera unidad de medida para usarla en los insumos.</p></div>
+          ) : (
+            <div className="admin-table-wrap">
+              <table className="admin-table">
+                <thead>
+                  <tr>
+                    <th>Nombre</th>
+                    <th>Estado</th>
+                    <th>Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {unidades.map(unidad => (
+                    <tr key={unidad.id}>
+                      <td>{unidad.nombre}</td>
+                      <td>
+                        <span className={`pub-badge ${unidad.activo ? 'publicado' : 'archivado'}`} style={{ color: unidad.activo ? 'var(--fresh)' : 'var(--danger)' }}>
+                          {unidad.activo ? 'Activo' : 'Inactivo'}
+                        </span>
+                      </td>
+                      <td>
+                        <div className="action-btns">
+                          <button className="action-btn edit" title="Editar" onClick={() => openUnidadModal('editar', unidad)} type="button">✏</button>
+                          <button className="action-btn" title={unidad.activo ? 'Desactivar' : 'Activar'} onClick={() => handleToggleUnidad(unidad)} type="button">{unidad.activo ? '⏸' : '▶'}</button>
+                          <button className="action-btn delete" title="Eliminar" onClick={() => handleDeleteUnidad(unidad)} type="button">🗑</button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+
       {modalAction && (
         <div className="admin-modal-overlay" onMouseDown={closeModal}>
           <form className="admin-modal" onSubmit={submitModal} onMouseDown={event => event.stopPropagation()}>
@@ -529,7 +655,15 @@ export default function AdminInsumos() {
                 <div className="form-grid">
                   <label className="form-group full"><span>Nombre</span><input value={form.nombre} onChange={event => setForm(prev => ({ ...prev, nombre: event.target.value }))} required /></label>
                   <label className="form-group"><span>Categoría</span><input placeholder="Granos" value={form.categoria_insumo} onChange={event => setForm(prev => ({ ...prev, categoria_insumo: event.target.value }))} /></label>
-                  <label className="form-group"><span>Unidad</span><select value={form.unidad_medida} onChange={event => setForm(prev => ({ ...prev, unidad_medida: event.target.value }))}>{UNITS.map(unit => <option key={unit} value={unit}>{unit.toLowerCase()}</option>)}</select></label>
+                  <label className="form-group">
+                    <span>Unidad</span>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <select value={form.unidad_medida} onChange={event => setForm(prev => ({ ...prev, unidad_medida: event.target.value }))} style={{ flex: 1 }}>
+                        {unidadesActivas.map(unidad => <option key={unidad.id} value={unidad.nombre}>{unidad.nombre}</option>)}
+                      </select>
+                      <button className="admin-btn secondary" onClick={() => openUnidadModal('crear')} type="button">+ Nueva</button>
+                    </div>
+                  </label>
                   <label className="form-group"><span>Stock</span><input type="number" min="0" step="0.01" value={form.stock_actual} onChange={event => setForm(prev => ({ ...prev, stock_actual: event.target.value }))} required /></label>
                   <label className="form-group"><span>Costo unitario (Bs)</span><input type="number" min="0" step="0.01" value={form.costo_promedio} onChange={event => setForm(prev => ({ ...prev, costo_promedio: event.target.value }))} /></label>
                   <label className="form-group"><span>Stock mínimo</span><input type="number" min="0" step="0.01" value={form.stock_minimo} onChange={event => setForm(prev => ({ ...prev, stock_minimo: event.target.value }))} required /></label>
@@ -540,7 +674,15 @@ export default function AdminInsumos() {
                 <div className="form-grid">
                   <label className="form-group full"><span>Nombre</span><input value={form.nombre} onChange={event => setForm(prev => ({ ...prev, nombre: event.target.value }))} required /></label>
                   <label className="form-group"><span>Categoría</span><input placeholder="Granos" value={form.categoria_insumo} onChange={event => setForm(prev => ({ ...prev, categoria_insumo: event.target.value }))} /></label>
-                  <label className="form-group"><span>Unidad</span><select value={form.unidad_medida} onChange={event => setForm(prev => ({ ...prev, unidad_medida: event.target.value }))}>{UNITS.map(unit => <option key={unit} value={unit}>{unit.toLowerCase()}</option>)}</select></label>
+                  <label className="form-group">
+                    <span>Unidad</span>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <select value={form.unidad_medida} onChange={event => setForm(prev => ({ ...prev, unidad_medida: event.target.value }))} style={{ flex: 1 }}>
+                        {unidadesActivas.map(unidad => <option key={unidad.id} value={unidad.nombre}>{unidad.nombre}</option>)}
+                      </select>
+                      <button className="admin-btn secondary" onClick={() => openUnidadModal('crear')} type="button">+ Nueva</button>
+                    </div>
+                  </label>
                   <label className="form-group"><span>Costo unitario (Bs)</span><input type="number" min="0" step="0.01" value={form.costo_promedio} onChange={event => setForm(prev => ({ ...prev, costo_promedio: event.target.value }))} /></label>
                   <label className="form-group"><span>Stock mínimo</span><input type="number" min="0" step="0.01" value={form.stock_minimo} onChange={event => setForm(prev => ({ ...prev, stock_minimo: event.target.value }))} required /></label>
                   <label className="form-group"><span>Stock crítico</span><input type="number" min="0" step="0.01" value={form.punto_critico} onChange={event => setForm(prev => ({ ...prev, punto_critico: event.target.value }))} /></label>
@@ -580,6 +722,45 @@ export default function AdminInsumos() {
             <div className="admin-modal-footer">
               <button className="admin-btn secondary" onClick={closeModal} type="button">Cancelar</button>
               <button className="admin-btn primary" disabled={saving} type="submit">{saving ? 'Guardando...' : 'Guardar'}</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {unidadModal && (
+        <div className="admin-modal-overlay" style={{ zIndex: 110 }} onMouseDown={closeUnidadModal}>
+          <form className="admin-modal compact" onSubmit={submitUnidad} onMouseDown={event => event.stopPropagation()}>
+            <div className="admin-modal-header">
+              <h3>{unidadModal === 'crear' ? 'Nueva unidad' : `Editar unidad · ${selectedUnidad?.nombre ?? ''}`}</h3>
+              <button className="admin-modal-close" onClick={closeUnidadModal} type="button">×</button>
+            </div>
+            <div className="admin-modal-body">
+              <div className="form-grid">
+                <label className="form-group full">
+                  <span>Nombre</span>
+                  <input
+                    value={unidadForm.nombre}
+                    onChange={event => setUnidadForm(prev => ({ ...prev, nombre: event.target.value }))}
+                    placeholder="Ej. paquete, caja, sobre"
+                    required
+                  />
+                </label>
+                {unidadModal === 'editar' && (
+                  <label className="form-group full" style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <input
+                      type="checkbox"
+                      checked={unidadForm.activo}
+                      onChange={event => setUnidadForm(prev => ({ ...prev, activo: event.target.checked }))}
+                    />
+                    <span>Activa (disponible para nuevos insumos)</span>
+                  </label>
+                )}
+              </div>
+              {unidadError && <div className="gate-warning" style={{ marginTop: 12 }}>{unidadError}</div>}
+            </div>
+            <div className="admin-modal-footer">
+              <button className="admin-btn secondary" onClick={closeUnidadModal} type="button">Cancelar</button>
+              <button className="admin-btn primary" disabled={unidadSaving} type="submit">{unidadSaving ? 'Guardando...' : 'Guardar'}</button>
             </div>
           </form>
         </div>
