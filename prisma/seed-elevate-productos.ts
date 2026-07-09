@@ -11,7 +11,7 @@
  */
 
 import prisma from '../lib/prisma'
-import { ProductoTipo, EstadoPublicacion, Unidad_medida } from '@prisma/client'
+import { ProductoTipo, EstadoPublicacion } from '@prisma/client'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -28,7 +28,7 @@ async function upsertCategoria(nombre: string) {
 
 async function upsertInsumo(
   nombre: string,
-  unidad_medida: Unidad_medida,
+  unidad_medida: string,
   costo_promedio = 0,
 ) {
   let ins = await prisma.insumo.findFirst({ where: { nombre } })
@@ -123,37 +123,37 @@ async function main() {
   // ── Insumos compartidos (elaborados) ──────────────────────────────────────
   console.log('\n📦 Insumos...')
   const I = {
-    tortilla:        await upsertInsumo('Tortilla de maíz',       Unidad_medida.UNIDAD),
-    lomito:          await upsertInsumo('Lomito',                  Unidad_medida.GR),
-    cebolla_blanca:  await upsertInsumo('Cebolla blanca',          Unidad_medida.GR),
-    mozzarella:      await upsertInsumo('Mozzarella (lonja)',       Unidad_medida.UNIDAD),
-    pechuga:         await upsertInsumo('Pechuga de pollo',         Unidad_medida.GR),
-    pico_gallo:      await upsertInsumo('Pico de gallo',           Unidad_medida.GR),
-    pan_ciabata:     await upsertInsumo('Pan ciabata',             Unidad_medida.UNIDAD),
-    champinones:     await upsertInsumo('Champiñones',             Unidad_medida.UNIDAD),
-    ceb_caramel:     await upsertInsumo('Cebolla caramelizada',    Unidad_medida.GR),
-    salsa_pesto:     await upsertInsumo('Salsa pesto',             Unidad_medida.GR),
-    tomate:          await upsertInsumo('Tomate',                  Unidad_medida.GR),
-    avena:           await upsertInsumo('Avena',                   Unidad_medida.GR),
-    proteina_polvo:  await upsertInsumo('Proteína en polvo',       Unidad_medida.GR),
-    banana:          await upsertInsumo('Banana',                  Unidad_medida.UNIDAD),
-    huevo:           await upsertInsumo('Huevo entero',            Unidad_medida.UNIDAD),
-    polvo_hornear:   await upsertInsumo('Polvo de hornear',        Unidad_medida.GR),
-    vainilla:        await upsertInsumo('Vainilla',                Unidad_medida.GR),
-    frutilla:        await upsertInsumo('Frutilla',                Unidad_medida.GR),
-    miel:            await upsertInsumo('Miel',                    Unidad_medida.GR),
-    mant_mani:       await upsertInsumo('Mantequilla de maní',     Unidad_medida.GR),
-    clara:           await upsertInsumo('Clara de huevo',          Unidad_medida.GR),
-    agua:            await upsertInsumo('Agua',                    Unidad_medida.ML),
-    manzana:         await upsertInsumo('Manzana roja',            Unidad_medida.GR),
-    canela:          await upsertInsumo('Canela',                  Unidad_medida.GR),
-    coco:            await upsertInsumo('Coco rallado',            Unidad_medida.GR),
-    sesamo:          await upsertInsumo('Sésamo',                  Unidad_medida.GR),
-    chocolate:       await upsertInsumo('Chocolate cobertura',     Unidad_medida.GR),
-    yogurt:          await upsertInsumo('Yogurt griego',           Unidad_medida.GR),
-    aceite_coco:     await upsertInsumo('Aceite de coco',          Unidad_medida.GR),
-    cocoa:           await upsertInsumo('Cocoa amarga',            Unidad_medida.GR),
-    mani:            await upsertInsumo('Maní triturado',          Unidad_medida.GR),
+    tortilla:        await upsertInsumo('Tortilla de maíz',       'UNIDAD'),
+    lomito:          await upsertInsumo('Lomito',                  'GR'),
+    cebolla_blanca:  await upsertInsumo('Cebolla blanca',          'GR'),
+    mozzarella:      await upsertInsumo('Mozzarella (lonja)',       'UNIDAD'),
+    pechuga:         await upsertInsumo('Pechuga de pollo',         'GR'),
+    pico_gallo:      await upsertInsumo('Pico de gallo',           'GR'),
+    pan_ciabata:     await upsertInsumo('Pan ciabata',             'UNIDAD'),
+    champinones:     await upsertInsumo('Champiñones',             'UNIDAD'),
+    ceb_caramel:     await upsertInsumo('Cebolla caramelizada',    'GR'),
+    salsa_pesto:     await upsertInsumo('Salsa pesto',             'GR'),
+    tomate:          await upsertInsumo('Tomate',                  'GR'),
+    avena:           await upsertInsumo('Avena',                   'GR'),
+    proteina_polvo:  await upsertInsumo('Proteína en polvo',       'GR'),
+    banana:          await upsertInsumo('Banana',                  'UNIDAD'),
+    huevo:           await upsertInsumo('Huevo entero',            'UNIDAD'),
+    polvo_hornear:   await upsertInsumo('Polvo de hornear',        'GR'),
+    vainilla:        await upsertInsumo('Vainilla',                'GR'),
+    frutilla:        await upsertInsumo('Frutilla',                'GR'),
+    miel:            await upsertInsumo('Miel',                    'GR'),
+    mant_mani:       await upsertInsumo('Mantequilla de maní',     'GR'),
+    clara:           await upsertInsumo('Clara de huevo',          'GR'),
+    agua:            await upsertInsumo('Agua',                    'ML'),
+    manzana:         await upsertInsumo('Manzana roja',            'GR'),
+    canela:          await upsertInsumo('Canela',                  'GR'),
+    coco:            await upsertInsumo('Coco rallado',            'GR'),
+    sesamo:          await upsertInsumo('Sésamo',                  'GR'),
+    chocolate:       await upsertInsumo('Chocolate cobertura',     'GR'),
+    yogurt:          await upsertInsumo('Yogurt griego',           'GR'),
+    aceite_coco:     await upsertInsumo('Aceite de coco',          'GR'),
+    cocoa:           await upsertInsumo('Cocoa amarga',            'GR'),
+    mani:            await upsertInsumo('Maní triturado',          'GR'),
   }
   console.log('  ✅ Insumos listos')
 
@@ -358,7 +358,7 @@ async function main() {
   ]
 
   for (const t of terciados) {
-    const insumoStock = await upsertInsumo(t.nombre, Unidad_medida.UNIDAD, t.costo)
+    const insumoStock = await upsertInsumo(t.nombre, 'UNIDAD', t.costo)
 
     const existente = await prisma.producto.findFirst({ where: { nombre: t.nombre } })
     if (existente) {
