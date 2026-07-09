@@ -3,7 +3,9 @@ import prisma from '@/lib/prisma';
 import { TipoCuenta, TipoEntrega, EstadoPago } from '@prisma/client';
 import { calcularRinde } from '@/lib/server/inventario/disponibilidad';
 import { resolverCliente } from '@/lib/server/clientes/clientes.service';
+import { calcularPrecioFinal, includePromos } from '@/lib/server/productos/precio';
 import { customAlphabet } from 'nanoid';
+import { guard, STAFF } from '@/lib/server/auth/guard';
 
 // Código de retiro/handoff legible (sin caracteres ambiguos)
 const genCodigo = customAlphabet('ABCDEFGHJKLMNPQRSTUVWXYZ23456789', 5);
@@ -43,6 +45,9 @@ function estadoPagoInicial(metodo: TipoCuenta, tipo: TipoEntrega | null): Estado
 }
 
 export async function GET(req: NextRequest) {
+  const auth = await guard(req, STAFF);
+  if (auth instanceof NextResponse) return auth;
+
   try {
     const { searchParams } = new URL(req.url);
     const estado = searchParams.get('estado');
@@ -81,11 +86,40 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { cliente_nombre, cliente_telefono, cliente_direccion, cliente_lat, cliente_lng, cliente_nit, cliente_email, tipo_entrega, codigo_descuento, metodo_pago, items, total } = body;
+    // NOTA: total y precios enviados por el cliente se IGNORAN; se recalculan desde la BD.
+    const { cliente_nombre, cliente_telefono, cliente_direccion, cliente_lat, cliente_lng, cliente_nit, cliente_email, tipo_entrega, codigo_descuento, metodo_pago, items } = body;
 
-    if (!items || items.length === 0) {
+    if (!Array.isArray(items) || items.length === 0) {
       return NextResponse.json({ error: 'El pedido debe tener al menos un item' }, { status: 400 });
     }
+
+    // Resolver cada item contra el catálogo y calcular precio server-side
+    const now = new Date();
+    const lineas: { producto_id: number; precio_unitario: number; descuento: number; cantidad: number }[] = [];
+    for (const item of items) {
+      const cantidad = Number(item.cantidad);
+      if (!Number.isFinite(cantidad) || cantidad <= 0 || cantidad > 999) {
+        return NextResponse.json({ error: `Cantidad inválida para "${item.nombre ?? '?'}"` }, { status: 400 });
+      }
+      let producto = item.id
+        ? await prisma.producto.findFirst({
+            where: { id: Number(item.id), estado_publicacion: 'PUBLICADO', disponible: true },
+            include: includePromos,
+          })
+        : null;
+      if (!producto && item.nombre) {
+        producto = await prisma.producto.findFirst({
+          where: { nombre: { equals: String(item.nombre), mode: 'insensitive' }, estado_publicacion: 'PUBLICADO', disponible: true },
+          include: includePromos,
+        });
+      }
+      if (!producto) {
+        return NextResponse.json({ error: `Producto no disponible: ${item.nombre ?? item.id}` }, { status: 400 });
+      }
+      const { precioFinal, descuento } = calcularPrecioFinal(producto, now);
+      lineas.push({ producto_id: producto.id, precio_unitario: precioFinal, descuento, cantidad });
+    }
+    const totalCalculado = Math.round(lineas.reduce((s, l) => s + l.precio_unitario * l.cantidad, 0) * 100) / 100;
 
     // Bloqueo duro por stock: rechazar items agotados o con cantidad mayor al RINDE.
     const sinStock: string[] = [];
@@ -141,48 +175,22 @@ export async function POST(req: NextRequest) {
         metodo_pago: metodoPago,
         payment_status: estadoPagoInicial(metodoPago, tipoEntrega),
         codigo,
-        total: Number(total),
+        total: totalCalculado,
         estado: 'PENDIENTE',
       },
     });
 
-
-
-    for (const item of items) {
-      // Buscar producto: primero por id (si se envía), luego por nombre
-      let producto = item.id
-        ? await prisma.producto.findUnique({ where: { id: Number(item.id) } })
-        : null;
-
-      if (!producto) {
-        producto = await prisma.producto.findFirst({
-          where: { nombre: { equals: item.nombre, mode: 'insensitive' } },
-        });
-      }
-
-      if (!producto) {
-        producto = await prisma.producto.create({
-          data: {
-            nombre: item.nombre,
-            descripcion: item.nombre,
-            precio: Number(item.precio),
-          },
-        });
-      }
-
-      // Create transaction detail
-      await prisma.transaccionesDetalles.create({
-        data: {
-          transaccion_id: transaccion.id,
-          producto_id: producto.id,
-          precio_unitario: Number(item.precio),
-          descuentoAplicado: item.descuentoAplicado ? Number(item.descuentoAplicado) : 0,
-          cantidad: Number(item.cantidad),
-        },
-      });
-
-      // Transaccion detalle created (inventory deduction is handled in PUT /api/pedidos/[id] when state changes)
-    }
+    // Detalles con precios calculados en servidor
+    // (el descuento de inventario se maneja en PUT /api/pedidos/[id] al cambiar de estado)
+    await prisma.transaccionesDetalles.createMany({
+      data: lineas.map((l) => ({
+        transaccion_id: transaccion.id,
+        producto_id: l.producto_id,
+        precio_unitario: l.precio_unitario,
+        descuentoAplicado: l.descuento,
+        cantidad: l.cantidad,
+      })),
+    });
 
     return NextResponse.json(
       {

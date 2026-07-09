@@ -16,11 +16,10 @@ export default function LoginPage() {
   const [isOpen, setIsOpen] = useState(false);
 
   useEffect(() => {
-    const token = localStorage.getItem('token');
-    if (!token) return;
+    // Si ya hay sesión (cookie httpOnly válida), redirigir a su área.
     useAuth.me()
       .then((data) => { if (data?.rol) router.replace(homeForRole(data.rol)); })
-      .catch(() => {});
+      .catch(() => { /* sin sesión: quedarse en el login */ });
   }, [router]);
 
   const handleSubmit = async (e: React.FormEvent) => {

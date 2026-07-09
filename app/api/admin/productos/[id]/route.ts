@@ -21,7 +21,8 @@ async function enrich(id: number) {
   });
   if (!prod) return null;
   const costo = await costoFichaTecnica(prod.id);
-  const foodCost = prod.precio > 0 ? Math.round((costo / prod.precio) * 10000) / 100 : 0;
+  const precioNum = Number(prod.precio);
+  const foodCost = precioNum > 0 ? Math.round((costo / precioNum) * 10000) / 100 : 0;
   return { ...prod, costo_calculado: Math.round(costo * 100) / 100, food_cost_pct: foodCost };
 }
 

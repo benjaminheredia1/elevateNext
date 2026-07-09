@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
+import { guard, ADMIN } from '@/lib/server/auth/guard';
 
 export async function GET() {
   try {
@@ -27,6 +28,9 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await guard(req, ADMIN);
+  if (auth instanceof NextResponse) return auth;
+
   try {
     const body = await req.json();
     const { sucursal_lat, sucursal_lng, sucursal_nombre } = body;

@@ -90,8 +90,8 @@ export async function GET(req: NextRequest) {
         );
         globalMonthTxs.push(...validMonthTxs);
 
-        const total_gastado = txs.reduce((s, t) => s + t.total, 0);
-        const gastado_mes = validMonthTxs.reduce((s, t) => s + t.total, 0);
+        const total_gastado = txs.reduce((s, t) => s + Number(t.total), 0);
+        const gastado_mes = validMonthTxs.reduce((s, t) => s + Number(t.total), 0);
         const ultima_compra = txs.length > 0
           ? txs.reduce((max, t) => t.created_at > max ? t.created_at : max, txs[0].created_at)
           : null;

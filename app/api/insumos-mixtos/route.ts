@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
+import { guard, ADMIN } from '@/lib/server/auth/guard';
 
 // GET /api/insumos-mixtos
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const auth = await guard(req, ADMIN);
+  if (auth instanceof NextResponse) return auth;
+
   try {
     const insumos = await prisma.insumo.findMany({
       where: { es_mixto: true },
@@ -32,6 +36,9 @@ export async function GET() {
 
 // POST /api/insumos-mixtos — crear o actualizar
 export async function POST(req: NextRequest) {
+  const auth = await guard(req, ADMIN);
+  if (auth instanceof NextResponse) return auth;
+
   try {
     const body = await req.json();
     const { nombre, unidad_medida, stock_minimo, detalles } = body;

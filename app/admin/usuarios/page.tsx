@@ -15,6 +15,7 @@ import EmptyState from '@/components/ui/EmptyState';
 import StatusBadge from '@/components/ui/StatusBadge';
 import { useQuery } from '@tanstack/react-query';
 import apiClient from '@/hooks/api';
+import { useAuth } from '@/hooks/auth';
 
 const ROLES: RolUsuario[] = ['DUENO', 'ADMIN', 'CAJERO', 'CLIENTE'];
 
@@ -158,8 +159,10 @@ export default function UsuariosPage() {
 
   const [myRol, setMyRol] = useState<RolUsuario>('CAJERO');
   useEffect(() => {
-    const stored = localStorage.getItem('rol') as RolUsuario | null;
-    if (stored) setMyRol(stored);
+    // El rol ya no vive en localStorage (sesión por cookie httpOnly)
+    useAuth.me()
+      .then((data) => { if (data?.rol) setMyRol(data.rol as RolUsuario); })
+      .catch(() => {});
   }, []);
 
   return (

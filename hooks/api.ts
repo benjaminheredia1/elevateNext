@@ -7,19 +7,11 @@ const apiClient = axios.create({
   },
 });
 
-apiClient.interceptors.request.use((config) => {
-  if (typeof window !== 'undefined') {
-    const token = localStorage.getItem('token');
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
-  }
-  return config;
-});
+// La sesión viaja en una cookie httpOnly (seteada por /api/auth/login);
+// el navegador la adjunta solo en peticiones same-origin, sin interceptor.
 
 apiClient.interceptors.response.use((response) => response, (error) => {
   if (typeof window !== 'undefined' && error?.response?.status === 401) {
-    localStorage.removeItem('token');
     window.location.href = '/login';
   }
   return Promise.reject(error);

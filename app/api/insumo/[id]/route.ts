@@ -3,8 +3,12 @@ import prisma from '@/lib/prisma';
 import { requireAuth, requireRole, getClientIp } from '@/lib/server/auth/session';
 import { handleApiError, ConflictError, NotFoundError } from '@/lib/server/errors';
 import { logAudit } from '@/lib/server/audit/audit.service';
+import { guard, ADMIN } from '@/lib/server/auth/guard';
 
 export async function GET(_: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const auth = await guard(_, ADMIN);
+  if (auth instanceof NextResponse) return auth;
+
   try {
     const { id } = await params;
     const insumo = await prisma.insumo.findFirst({ where: { id: Number(id) } });
@@ -16,6 +20,9 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
 }
 
 export async function PUT(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const auth = await guard(request, ADMIN);
+  if (auth instanceof NextResponse) return auth;
+
   try {
     const session = await requireAuth(request);
     requireRole(session, ['DUENO', 'ADMIN']);
@@ -56,6 +63,9 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const auth = await guard(req, ADMIN);
+  if (auth instanceof NextResponse) return auth;
+
   try {
     const session = await requireAuth(req);
     requireRole(session, ['DUENO', 'ADMIN']);

@@ -17,8 +17,8 @@ export function ProtectedRoute({ children, redirectTo = '/login', roles }: Prote
   const router = useRouter();
 
   useEffect(() => {
-    const token = localStorage.getItem('token');
-    if (!token) { setStatus('denied'); setTarget(redirectTo); return; }
+    // La sesión vive en una cookie httpOnly: no es visible desde JS,
+    // así que la única forma de verificarla es preguntarle al servidor.
     useAuth.me()
       .then((data) => {
         if (!data?.rol) { setStatus('denied'); setTarget(redirectTo); return; }
