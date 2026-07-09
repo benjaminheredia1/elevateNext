@@ -207,6 +207,13 @@ export default function AdminInsumos() {
 
   const unidadesActivas = useMemo(() => unidades.filter(u => u.activo), [unidades]);
 
+  const unidadesParaSelect = useMemo(() => {
+    if (!form.unidad_medida || unidadesActivas.some(u => u.nombre === form.unidad_medida)) {
+      return unidadesActivas;
+    }
+    return [...unidadesActivas, { id: -1, nombre: form.unidad_medida, activo: false }];
+  }, [unidadesActivas, form.unidad_medida]);
+
   const openUnidadModal = (action: 'crear' | 'editar', unidad?: UnidadMedidaRow) => {
     setUnidadError('');
     setUnidadModal(action);
@@ -659,7 +666,7 @@ export default function AdminInsumos() {
                     <span>Unidad</span>
                     <div style={{ display: 'flex', gap: 6 }}>
                       <select value={form.unidad_medida} onChange={event => setForm(prev => ({ ...prev, unidad_medida: event.target.value }))} style={{ flex: 1 }}>
-                        {unidadesActivas.map(unidad => <option key={unidad.id} value={unidad.nombre}>{unidad.nombre}</option>)}
+                        {unidadesParaSelect.map(unidad => <option key={unidad.id} value={unidad.nombre}>{unidad.nombre}</option>)}
                       </select>
                       <button className="admin-btn secondary" onClick={() => openUnidadModal('crear')} type="button">+ Nueva</button>
                     </div>
@@ -678,7 +685,7 @@ export default function AdminInsumos() {
                     <span>Unidad</span>
                     <div style={{ display: 'flex', gap: 6 }}>
                       <select value={form.unidad_medida} onChange={event => setForm(prev => ({ ...prev, unidad_medida: event.target.value }))} style={{ flex: 1 }}>
-                        {unidadesActivas.map(unidad => <option key={unidad.id} value={unidad.nombre}>{unidad.nombre}</option>)}
+                        {unidadesParaSelect.map(unidad => <option key={unidad.id} value={unidad.nombre}>{unidad.nombre}</option>)}
                       </select>
                       <button className="admin-btn secondary" onClick={() => openUnidadModal('crear')} type="button">+ Nueva</button>
                     </div>
