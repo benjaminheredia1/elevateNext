@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
+import { guard, ADMIN } from '@/lib/server/auth/guard';
 
 export async function GET() {
   try {
@@ -11,6 +12,9 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  const auth = await guard(request, ADMIN);
+  if (auth instanceof NextResponse) return auth;
+
   try {
     const { nombre, detalles } = await request.json();
     const categoria = await prisma.categoria.create({

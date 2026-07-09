@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
+import { guard, ADMIN } from '@/lib/server/auth/guard';
 
 // POST /api/gastos - registrar un gasto
 export async function POST(req: NextRequest) {
+  const auth = await guard(req, ADMIN);
+  if (auth instanceof NextResponse) return auth;
+
   try {
     const body = await req.json();
     const { monto, descripcion, caja_id } = body;
@@ -31,7 +35,10 @@ export async function POST(req: NextRequest) {
 }
 
 // GET /api/gastos
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const auth = await guard(req, ADMIN);
+  if (auth instanceof NextResponse) return auth;
+
   try {
     const gastos = await prisma.gasto.findMany({
       orderBy: { created_at: 'desc' },

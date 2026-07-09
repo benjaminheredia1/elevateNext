@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
+import { guard, ADMIN } from '@/lib/server/auth/guard';
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const auth = await guard(req, ADMIN);
+  if (auth instanceof NextResponse) return auth;
+
   try {
     const insumos = await prisma.insumo.findMany({ where: { activo: true } });
     return NextResponse.json(insumos);
@@ -11,6 +15,9 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  const auth = await guard(request, ADMIN);
+  if (auth instanceof NextResponse) return auth;
+
   try {
     const {
       categoria_insumo,

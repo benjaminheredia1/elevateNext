@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
+import { guard, ADMIN } from '@/lib/server/auth/guard';
 
 // GET /api/caja - obtener caja activa o historial
 export async function GET(req: NextRequest) {
+  const auth = await guard(req, ADMIN);
+  if (auth instanceof NextResponse) return auth;
+
   try {
     const { searchParams } = new URL(req.url);
     const historial = searchParams.get('historial') === 'true';
@@ -34,10 +38,10 @@ export async function GET(req: NextRequest) {
         select: { total: true, metodo_pago: true },
       });
 
-      const ingresosEfectivo = ventas.filter(v => v.metodo_pago === 'EFECTIVO').reduce((a, v) => a + v.total, 0);
-      const ingresosQR = ventas.filter(v => v.metodo_pago === 'QR').reduce((a, v) => a + v.total, 0);
-      const totalIngresos = ventas.reduce((a, v) => a + v.total, 0);
-      const totalEgresos = cajaActiva.gastos.reduce((a, g) => a + g.monto, 0);
+      const ingresosEfectivo = ventas.filter(v => v.metodo_pago === 'EFECTIVO').reduce((a, v) => a + Number(v.total), 0);
+      const ingresosQR = ventas.filter(v => v.metodo_pago === 'QR').reduce((a, v) => a + Number(v.total), 0);
+      const totalIngresos = ventas.reduce((a, v) => a + Number(v.total), 0);
+      const totalEgresos = cajaActiva.gastos.reduce((a, g) => a + Number(g.monto), 0);
 
       return NextResponse.json({
         data: cajaActiva,
@@ -47,7 +51,7 @@ export async function GET(req: NextRequest) {
           total_ingresos: totalIngresos,
           total_egresos: totalEgresos,
           flujo_neto: totalIngresos - totalEgresos,
-          total_en_caja_efectivo: cajaActiva.monto_inicial + ingresosEfectivo - totalEgresos,
+          total_en_caja_efectivo: Number(cajaActiva.monto_inicial) + ingresosEfectivo - totalEgresos,
           total_en_caja_qr: ingresosQR,
           movimientos: ventas,
         }
@@ -63,6 +67,9 @@ export async function GET(req: NextRequest) {
 
 // POST /api/caja - abrir o cerrar caja
 export async function POST(req: NextRequest) {
+  const auth = await guard(req, ADMIN);
+  if (auth instanceof NextResponse) return auth;
+
   try {
     const body = await req.json();
     const { accion, monto_inicial, usuario_id } = body;

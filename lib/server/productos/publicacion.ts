@@ -1,9 +1,10 @@
 import { ValidationError } from '@/lib/server/errors';
+import { monto, type MontoLike } from '@/lib/server/productos/precio';
 
 export type ProductoPublicable = {
   nombre: string;
   descripcion: string;
-  precio: number;
+  precio: MontoLike;
   imagen_url: string | null;
   tipo: 'ELABORADO' | 'REVENTA';
   insumo_reventa_id: number | null;
@@ -18,7 +19,7 @@ export function faltantesPublicacion(producto: ProductoPublicable) {
 
   if (!producto.nombre.trim()) faltantes.push('nombre');
   if (!producto.descripcion.trim()) faltantes.push('descripcion');
-  if (!(producto.precio > 0)) faltantes.push('precio de venta');
+  if (!(monto(producto.precio) > 0)) faltantes.push('precio de venta');
   if (!producto.imagen_url?.trim()) faltantes.push('imagen');
   if (producto.marcas.length === 0) faltantes.push('menu donde aparecera');
 

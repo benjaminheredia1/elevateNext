@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useCallback } from 'react';
+import apiClient from '@/hooks/api';
 
 export interface NuevoPedido {
   id: number;
@@ -18,9 +19,7 @@ export function useOrderPolling(
 
   const poll = useCallback(async () => {
     try {
-      const res = await fetch(`/api/pedidos?desde=${ultimaVerificacionRef.current}&limit=20`);
-      if (!res.ok) return;
-      const data = await res.json();
+      const { data } = await apiClient.get(`/api/pedidos?desde=${ultimaVerificacionRef.current}&limit=20`);
       const pedidos: NuevoPedido[] = data.data ?? [];
       const nuevos = pedidos.filter(p => p.id > ultimoIdRef.current);
       if (nuevos.length > 0) {
@@ -37,9 +36,7 @@ export function useOrderPolling(
   useEffect(() => {
     async function init() {
       try {
-        const res = await fetch('/api/pedidos?limit=1');
-        if (!res.ok) return;
-        const data = await res.json();
+        const { data } = await apiClient.get('/api/pedidos?limit=1');
         if (data.data?.[0]?.id) {
           ultimoIdRef.current = data.data[0].id;
         }
@@ -60,9 +57,7 @@ export function useAlertasPolling(
 ) {
   const fetch_alertas = useCallback(async () => {
     try {
-      const res = await fetch('/api/alertas');
-      if (!res.ok) return;
-      const data = await res.json();
+      const { data } = await apiClient.get('/api/alertas');
       onAlertas(data.data?.criticos?.length ?? 0, data.data?.advertencia?.length ?? 0);
     } catch { /* silent */ }
   }, [onAlertas]);

@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Elevate — Documentación de Arquitectura</title>
+<style>
+  :root { --ink:#1a1a1a; --muted:#555; --line:#ddd; --orange:#ff5c19; --bg-soft:#f7f7f8; --green:#0a7d4b; --red:#c0392b; --amber:#b8860b; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: var(--ink); line-height: 1.6; margin: 0; padding: 0; font-size: 11pt; }
+  .page { max-width: 900px; margin: 0 auto; padding: 32px 40px; }
+  h1 { font-size: 26pt; color: var(--orange); margin: 0 0 4px; line-height: 1.15; }
+  h2 { font-size: 17pt; margin: 34px 0 10px; padding-bottom: 6px; border-bottom: 2px solid var(--orange); page-break-after: avoid; }
+  h3 { font-size: 13pt; margin: 20px 0 6px; color: #222; page-break-after: avoid; }
+  h4 { font-size: 11.5pt; margin: 14px 0 4px; color: #333; }
+  p, li { color: var(--ink); }
+  code { background: var(--bg-soft); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; font-family: "Consolas","SF Mono",monospace; font-size: 9.5pt; color: #b5300b; }
+  pre { background: #1e1e1e; color: #e8e8e8; padding: 12px 14px; border-radius: 6px; overflow-x: auto; font-family: "Consolas",monospace; font-size: 9pt; line-height: 1.45; page-break-inside: avoid; }
+  pre code { background: none; border: none; color: inherit; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 9.5pt; page-break-inside: avoid; }
+  th, td { border: 1px solid var(--line); padding: 6px 9px; text-align: left; vertical-align: top; }
+  th { background: var(--bg-soft); font-weight: 700; }
+  .tag { display: inline-block; font-size: 8pt; font-weight: 700; padding: 1px 7px; border-radius: 20px; vertical-align: middle; }
+  .tag-front { background: #e7f0ff; color: #1a56db; }
+  .tag-back { background: #fdeede; color: #b5300b; }
+  .tag-db { background: #e6f6ee; color: var(--green); }
+  .callout { border-left: 4px solid var(--orange); background: var(--bg-soft); padding: 10px 16px; margin: 14px 0; border-radius: 0 6px 6px 0; page-break-inside: avoid; }
+  .danger { border-left-color: var(--red); background: #fdf0ef; }
+  .warn { border-left-color: var(--amber); background: #fdf9ec; }
+  .ok { border-left-color: var(--green); background: #eefaf3; }
+  .cover { text-align: center; padding: 90px 0 60px; border-bottom: 1px solid var(--line); }
+  .cover .sub { font-size: 13pt; color: var(--muted); margin-top: 10px; }
+  .cover .meta { margin-top: 40px; font-size: 10pt; color: var(--muted); }
+  .toc ol { margin: 0; padding-left: 22px; }
+  .toc li { margin: 3px 0; }
+  ul.tight { margin: 6px 0; } ul.tight li { margin: 2px 0; }
+  .diagram { font-family: "Consolas",monospace; font-size: 8.5pt; white-space: pre; background: var(--bg-soft); border: 1px solid var(--line); border-radius: 6px; padding: 14px; line-height: 1.35; overflow-x: auto; }
+  hr { border: none; border-top: 1px solid var(--line); margin: 24px 0; }
+  @media print {
+    .page { max-width: none; padding: 0 6mm; }
+    h2 { break-after: avoid; }
+    .page-break { page-break-before: always; }
+    a { color: var(--ink); text-decoration: none; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+<!-- ======================= PORTADA ======================= -->
+<div class="cover">
+  <h1>Elevate</h1>
+  <div class="sub">Sistema de gestión gastronómica — Tienda web + Punto de venta + ERP financiero</div>
+  <div class="sub" style="font-size:11pt">Documentación técnica de arquitectura</div>
+  <div class="meta">
+    Next.js 16 · React 19 · TypeScript · PostgreSQL · Prisma<br>
+    Documento generado para revisión técnica · Julio 2026
+  </div>
+</div>
+
+<!-- ======================= ÍNDICE ======================= -->
+<h2>Índice</h2>
+<div class="toc">
+<ol>
+  <li>Por qué se construyó con Inteligencia Artificial</li>
+  <li>Visión general: qué es Elevate</li>
+  <li>Stack tecnológico y justificación</li>
+  <li>Arquitectura general (el "mapa mental")</li>
+  <li>Estructura de carpetas explicada y justificada</li>
+  <li>Dónde está el Frontend, el Backend y la Base de Datos</li>
+  <li>Cómo interactúan Frontend y Backend</li>
+  <li>Webhooks e integraciones externas</li>
+  <li>Ciberseguridad: capas, dónde y cómo</li>
+  <li>Flujos completos de ejemplo</li>
+  <li>Despliegue (deploy)</li>
+  <li>Riesgos detectados y recomendaciones</li>
+</ol>
+</div>
+
+<!-- ======================= 1. IA ======================= -->
+<h2 class="page-break">1. Por qué se construyó con Inteligencia Artificial</h2>
+
+<p>Este proyecto se desarrolló con asistencia de IA (agentes de codificación) siguiendo una
+metodología de <strong>construcción por fases documentadas</strong>. No fue "pedirle a la IA que
+haga la app" de una sola vez, sino un proceso dirigido donde cada módulo se especificó primero
+y se implementó después. La evidencia de esto está en el propio repositorio:</p>
+
+<ul class="tight">
+  <li><code>AGENTS.md</code> / <code>CLAUDE.md</code> — instrucciones maestras para la IA: reglas del
+      proyecto, convenciones y advertencias (por ejemplo, "esta versión de Next.js tiene cambios que
+      rompen compatibilidad, lee la documentación antes de escribir código").</li>
+  <li><code>actions/</code> — contiene <strong>17 archivos de especificación por fase</strong>
+      (<code>FASE_1C_venta_fisica.md</code>, <code>FASE_2A_caja_layout...</code>,
+      <code>FASE_3A_backend_finanzas.md</code>, ... <code>FASE_6B_hardening.md</code>,
+      <code>FASE_6C_deploy.md</code>). Cada uno es el "contrato" de lo que la IA debía construir en esa etapa.</li>
+  <li><code>SECTION_SPECS.md</code>, <code>context.md</code>, <code>onboarding_fase6.md</code>,
+      <code>pendientes.md</code> — documentos de contexto y seguimiento que mantienen la coherencia
+      entre fases.</li>
+</ul>
+
+<h3>Ventajas de este enfoque</h3>
+<table>
+<tr><th>Beneficio</th><th>Cómo se logró</th></tr>
+<tr><td><strong>Velocidad</strong></td><td>Módulos complejos (caja con turnos, contabilidad, inventario con recetas) se construyeron en días, no semanas.</td></tr>
+<tr><td><strong>Consistencia</strong></td><td>Las especificaciones por fase forzaron patrones repetidos: mismo estilo de endpoint, misma validación, misma auditoría en todo el código.</td></tr>
+<tr><td><strong>Trazabilidad</strong></td><td>Cada decisión de diseño quedó escrita en un <code>.md</code>, así que se puede auditar por qué existe cada pieza.</td></tr>
+<tr><td><strong>Mantenibilidad</strong></td><td>Un desarrollador nuevo (humano o IA) puede leer las fases y entender el sistema sin ingeniería inversa.</td></tr>
+</table>
+
+<div class="callout warn">
+<strong>Contracara honesta:</strong> el desarrollo asistido por IA a alta velocidad también deja
+"deudas" que hay que vigilar: configuración de despliegue peligrosa, drift entre ramas y secretos
+en archivos de entorno. Estos puntos se detallan en la sección 12.
+</div>
+
+<!-- ======================= 2. VISIÓN ======================= -->
+<h2>2. Visión general: qué es Elevate</h2>
+<p>Elevate es una plataforma <strong>todo-en-uno</strong> para un negocio de comida. Reúne tres
+sistemas que normalmente son productos separados:</p>
+
+<table>
+<tr><th>Sub-sistema</th><th>Para quién</th><th>Qué hace</th></tr>
+<tr><td><strong>Tienda / Menú web</strong></td><td>Cliente final</td><td>Ver el catálogo por marca, armar pedido, elegir delivery o recojo.</td></tr>
+<tr><td><strong>Caja / POS</strong></td><td>Cajero</td><td>Vender en mostrador (efectivo/QR), abrir y cerrar turno, gastos, fiados, entregar pedidos web.</td></tr>
+<tr><td><strong>Panel Admin / ERP</strong></td><td>Dueño / Admin</td><td>Productos, insumos, recetas, inventario, contabilidad, flujo de caja, cuentas por cobrar/pagar, auditoría, usuarios, rastreo de repartidores.</td></tr>
+</table>
+
+<p>Existe además un <strong>envoltorio de escritorio</strong> (Electron, <code>main.js</code>) que
+permite abrir la aplicación web como si fuera un programa nativo de Windows para la caja.</p>
+
+<!-- ======================= 3. STACK ======================= -->
+<h2>3. Stack tecnológico y justificación</h2>
+
+<table>
+<tr><th>Capa</th><th>Tecnología</th><th>Por qué se eligió</th></tr>
+<tr><td>Framework</td><td><strong>Next.js 16</strong> (App Router)</td><td>Un solo proyecto contiene frontend Y backend. Menos infraestructura, un solo despliegue, código compartido entre cliente y servidor.</td></tr>
+<tr><td>UI</td><td><strong>React 19 + TypeScript</strong></td><td>Componentes reutilizables y tipado estático que atrapa errores antes de ejecutar.</td></tr>
+<tr><td>Estilos</td><td><strong>Tailwind CSS v4</strong> + PrimeReact</td><td>Estilos rápidos y consistentes + componentes ricos ya hechos (tablas, diálogos).</td></tr>
+<tr><td>Animación</td><td><strong>Framer Motion</strong></td><td>Transiciones fluidas en la tienda (experiencia "premium").</td></tr>
+<tr><td>Datos (cliente)</td><td><strong>TanStack React Query</strong> + Axios</td><td>Maneja peticiones al servidor, caché, refresco automático y estados de carga/error sin código repetitivo.</td></tr>
+<tr><td>ORM</td><td><strong>Prisma</strong> (+ adapter-pg)</td><td>Traduce entre el código TypeScript y las tablas SQL con tipado seguro. Evita escribir SQL a mano y previene inyección.</td></tr>
+<tr><td>Base de datos</td><td><strong>PostgreSQL</strong></td><td>Base relacional robusta, ideal para datos financieros con integridad referencial (claves foráneas, transacciones ACID).</td></tr>
+<tr><td>Auth</td><td><strong>JWT + bcryptjs</strong></td><td>Autenticación propia con control total sobre usuarios y roles en la base local.</td></tr>
+<tr><td>Validación</td><td><strong>Zod</strong></td><td>Valida y limpia toda entrada del usuario en el servidor antes de tocar la base.</td></tr>
+<tr><td>Mapas</td><td><strong>Leaflet</strong></td><td>Rastreo de repartidores en tiempo real.</td></tr>
+<tr><td>Gráficos</td><td><strong>Recharts</strong></td><td>Estadísticas visuales del dashboard.</td></tr>
+<tr><td>Archivos</td><td><strong>Vercel Blob</strong></td><td>Almacenar imágenes de productos fuera de la base de datos.</td></tr>
+<tr><td>Escritorio</td><td><strong>Electron</strong></td><td>Empaquetar la web como app de Windows para la caja.</td></tr>
+</table>
+
+<h3>La decisión clave: un monolito full-stack</h3>
+<p>La justificación más importante de toda la arquitectura es que <strong>frontend y backend viven en
+el mismo proyecto Next.js</strong>. En lugar de tener un servidor de API separado (Node/Express) y una
+app de React aparte, Next.js permite que ambos convivan. Para un negocio de este tamaño esto significa:
+menos servidores que pagar y mantener, un solo despliegue, y tipos de datos compartidos entre lo que
+el navegador envía y lo que el servidor recibe.</p>
+
+<!-- ======================= 4. ARQUITECTURA ======================= -->
+<h2 class="page-break">4. Arquitectura general (el "mapa mental")</h2>
+
+<p>Todo el sistema sigue este flujo de tres capas. Léelo de arriba (usuario) hacia abajo (base de datos):</p>
+
+<div class="diagram">┌──────────────────────────────────────────────────────────────────────┐
+│  NAVEGADOR / APP DE ESCRITORIO  (lo que ve el usuario)                 │
+│                                                                        │
+│   Tienda web        Panel Caja         Panel Admin                     │
+│   app/menu          app/caja           app/admin                       │
+│        │                │                   │                          │
+│        └──── Componentes React (components/) ────┐                     │
+│                         │                        │                     │
+│              Hooks (hooks/) + React Query + Axios │  ← FRONTEND        │
+└─────────────────────────┼────────────────────────┼────────────────────┘
+                          │  HTTP + JWT (Bearer)   │
+                          ▼                        ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│  SERVIDOR NEXT.JS  (mismo proyecto)                                    │
+│                                                                        │
+│   Endpoints API            Lógica de negocio                           │
+│   app/api/**/route.ts  →   lib/server/**  (servicios)   ← BACKEND      │
+│        │                        │                                      │
+│   requireAuth + requireRole + Zod + rate-limit + auditoría            │
+│        │                        │                                      │
+│                     Prisma Client (lib/prisma.ts)                      │
+└─────────────────────────────────┼────────────────────────────────────┘
+                                  │  SQL (vía adaptador pg)
+                                  ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│  BASE DE DATOS PostgreSQL   (db.prisma.io — compartida)   ← DATOS      │
+│  Esquema definido en prisma/schema.prisma (32 tablas)                  │
+└──────────────────────────────────────────────────────────────────────┘</div>
+
+<p>La regla de oro es <strong>de una sola dirección</strong>: el navegador nunca habla directo con la
+base de datos. Siempre pasa por un endpoint de API que verifica identidad, permisos y validez de los
+datos antes de dejar que Prisma toque PostgreSQL.</p>
+
+<!-- ======================= 5. CARPETAS ======================= -->
+<h2>5. Estructura de carpetas explicada y justificada</h2>
+
+<h3>Carpetas de aplicación</h3>
+<table>
+<tr><th>Carpeta</th><th>Rol</th><th>Qué contiene y por qué</th></tr>
+<tr><td><code>app/</code></td><td><span class="tag tag-front">FRONT</span> + <span class="tag tag-back">BACK</span></td><td>El corazón de Next.js App Router. Cada subcarpeta es una <em>ruta</em>. Aquí conviven las páginas (frontend) y los endpoints (<code>app/api/</code>, backend). Se organiza así porque Next.js mapea carpetas a URLs automáticamente.</td></tr>
+<tr><td><code>app/menu/</code>, <code>app/login/</code>, <code>app/driver/</code></td><td><span class="tag tag-front">FRONT</span></td><td>Páginas públicas: catálogo por marca, inicio de sesión, y vista del repartidor (accedida por token).</td></tr>
+<tr><td><code>app/caja/</code></td><td><span class="tag tag-front">FRONT</span></td><td>Las 11 pantallas del cajero (venta, movimientos, apertura, cierre, gasto, deudores, historial, entregar, pedidos).</td></tr>
+<tr><td><code>app/admin/</code></td><td><span class="tag tag-front">FRONT</span></td><td>Las ~23 pantallas del panel administrativo/ERP.</td></tr>
+<tr><td><code>app/api/</code></td><td><span class="tag tag-back">BACK</span></td><td><strong>Todo el backend HTTP.</strong> 81 endpoints (<code>route.ts</code>) agrupados por dominio: <code>auth</code>, <code>caja</code>, <code>pedidos</code>, <code>productos</code>, <code>admin/*</code>, etc.</td></tr>
+<tr><td><code>components/</code></td><td><span class="tag tag-front">FRONT</span></td><td>Componentes React reutilizables, divididos por área: <code>admin/</code>, <code>caja/</code>, <code>shop/</code> (tienda) y <code>ui/</code> (piezas genéricas: botones, píldoras de método de pago, diálogos).</td></tr>
+<tr><td><code>hooks/</code></td><td><span class="tag tag-front">FRONT</span></td><td>"Ganchos" de React que encapsulan la comunicación con el backend (ej. <code>caja.ts</code>, <code>finanzas.ts</code>, <code>auth.ts</code>). Un componente llama <code>useRegistrarVenta()</code> y no necesita saber cómo se hace la petición HTTP.</td></tr>
+<tr><td><code>stores/</code></td><td><span class="tag tag-front">FRONT</span></td><td>Estado global compartido (categorías, reglas) para no repetir peticiones.</td></tr>
+<tr><td><code>actions/</code></td><td>📄 Docs</td><td>Las especificaciones por fase de la construcción con IA (ver sección 1). No es código ejecutable.</td></tr>
+</table>
+
+<h3>Carpetas de servidor y datos</h3>
+<table>
+<tr><th>Carpeta</th><th>Rol</th><th>Qué contiene y por qué</th></tr>
+<tr><td><code>lib/</code></td><td><span class="tag tag-back">BACK</span> + <span class="tag tag-front">FRONT</span></td><td>Utilidades compartidas. <code>lib/prisma.ts</code> (conexión a la BD), <code>lib/auth.ts</code> (JWT/bcrypt), <code>lib/Guard.tsx</code> (protección de rutas en el cliente), <code>lib/providers.tsx</code> (React Query).</td></tr>
+<tr><td><code>lib/server/</code></td><td><span class="tag tag-back">BACK</span></td><td><strong>La lógica de negocio real.</strong> Separada de los endpoints para poder reutilizarla y testearla. Subcarpetas por dominio: <code>auth/</code> (sesiones), <code>caja/</code>, <code>finanzas/</code> (contabilidad, flujo, gastos), <code>inventario/</code> (descuento de stock por recetas), <code>clientes/</code>, <code>audit/</code> (bitácora), <code>dto/</code> (esquemas Zod de validación).</td></tr>
+<tr><td><code>prisma/</code></td><td><span class="tag tag-db">DB</span></td><td><code>schema.prisma</code> — la definición de las 32 tablas y sus relaciones. <code>migrations/</code> — el historial de cambios de la base. <code>seed.ts</code> — datos iniciales.</td></tr>
+<tr><td><code>public/</code></td><td><span class="tag tag-front">FRONT</span></td><td>Archivos estáticos servidos tal cual: logo, íconos, imágenes.</td></tr>
+<tr><td><code>data/</code></td><td>Datos</td><td>Datos semilla o de apoyo.</td></tr>
+<tr><td><code>scripts/</code></td><td>🔧 Ops</td><td>Utilidades de operación creadas para mantenimiento: respaldo (<code>db-backup.mjs</code>), limpieza (<code>db-clean.mjs</code>) y el SQL de reparación del módulo de fiado.</td></tr>
+<tr><td><code>backups/</code></td><td>🔧 Ops</td><td>Respaldos JSON de la base (excluidos de git por contener datos de clientes).</td></tr>
+<tr><td><code>docs/</code></td><td>📄 Docs</td><td>Documentación: guía de usuario final, este documento, y el handoff de base de datos.</td></tr>
+<tr><td><code>imagesExtra/</code></td><td>📄 Ref</td><td>Material de referencia del ERP "Paladar" que inspiró módulos de POS/finanzas.</td></tr>
+</table>
+
+<h3>Archivos de configuración en la raíz</h3>
+<table>
+<tr><th>Archivo</th><th>Para qué sirve</th></tr>
+<tr><td><code>package.json</code></td><td>Lista de dependencias y comandos (<code>dev</code>, <code>build</code>, <code>start</code>).</td></tr>
+<tr><td><code>prisma.config.ts</code></td><td>Configuración de Prisma para comandos de línea (migraciones, studio).</td></tr>
+<tr><td><code>next.config.ts</code></td><td>Ajustes de Next.js (imágenes, paquetes externos del servidor).</td></tr>
+<tr><td><code>vercel.json</code></td><td>Instrucciones de despliegue en Vercel. <strong>⚠️ Contiene un comando peligroso — ver sección 12.</strong></td></tr>
+<tr><td><code>docker-compose.yml</code></td><td>Levanta un PostgreSQL local en Docker para desarrollo.</td></tr>
+<tr><td><code>main.js</code></td><td>Punto de entrada de la app de escritorio Electron.</td></tr>
+<tr><td><code>.env</code></td><td>Secretos y configuración: URL de la base, secreto JWT. <strong>⚠️ Nunca debe subirse a git.</strong></td></tr>
+<tr><td><code>tsconfig.json</code>, <code>eslint.config.mjs</code>, <code>postcss.config.mjs</code></td><td>Configuración de TypeScript, linter y procesamiento de CSS.</td></tr>
+</table>
+
+<!-- ======================= 6. DÓNDE ESTÁ ======================= -->
+<h2 class="page-break">6. Dónde está el Frontend, el Backend y la Base de Datos</h2>
+
+<p>Esta es la pregunta más frecuente en un proyecto Next.js, porque todo vive junto. La separación
+es <strong>por convención de carpetas</strong>, no por proyectos distintos:</p>
+
+<h3><span class="tag tag-front">FRONTEND</span> — lo que corre en el navegador</h3>
+<ul class="tight">
+  <li><code>app/**/page.tsx</code> — las páginas visibles (llevan <code>'use client'</code> cuando son interactivas).</li>
+  <li><code>components/</code> — piezas visuales reutilizables.</li>
+  <li><code>hooks/</code> — comunicación con el backend desde el navegador.</li>
+  <li><code>stores/</code>, <code>lib/Guard.tsx</code>, <code>lib/providers.tsx</code> — estado y protección de rutas del lado cliente.</li>
+</ul>
+
+<h3><span class="tag tag-back">BACKEND</span> — lo que corre en el servidor</h3>
+<ul class="tight">
+  <li><code>app/api/**/route.ts</code> — los 81 endpoints HTTP. Es la <em>puerta</em> del backend.</li>
+  <li><code>lib/server/</code> — la <em>lógica</em> del backend (servicios de caja, finanzas, inventario, etc.).</li>
+  <li><code>lib/auth.ts</code>, <code>lib/server/auth/session.ts</code> — autenticación y sesiones.</li>
+  <li><code>lib/prisma.ts</code> — el único punto que habla con la base de datos.</li>
+</ul>
+
+<h3><span class="tag tag-db">BASE DE DATOS</span> — dónde viven los datos</h3>
+<ul class="tight">
+  <li><strong>Motor:</strong> PostgreSQL alojado en <code>db.prisma.io</code> (servicio gestionado, compartido entre desarrollo y producción).</li>
+  <li><strong>Definición:</strong> <code>prisma/schema.prisma</code> describe las 32 tablas (Usuario, Producto, Insumo, Transaccion, CajaTurno, MovimientoCaja, CuentaCorriente, RegistroAuditoria, etc.).</li>
+  <li><strong>Acceso:</strong> exclusivamente vía Prisma Client. Ningún componente del navegador puede tocarla directamente.</li>
+</ul>
+
+<div class="callout"><strong>Analogía:</strong> el <em>frontend</em> es el salón del restaurante (lo que ve el
+cliente), el <em>backend</em> es la cocina (donde se procesan los pedidos con reglas y controles), y la
+<em>base de datos</em> es la despensa/archivo (donde se guarda todo). El mesero (API) es el único que
+cruza entre el salón y la cocina; el cliente nunca entra a la despensa.</div>
+
+<!-- ======================= 7. INTERACCIÓN ======================= -->
+<h2>7. Cómo interactúan Frontend y Backend</h2>
+
+<p>La comunicación es siempre por <strong>HTTP</strong>, con un <strong>token JWT</strong> que identifica
+al usuario. Este es el viaje completo de una acción típica ("el cajero registra una venta"):</p>
+
+<div class="diagram">1. El cajero pulsa "Cobrar" en la pantalla        →  app/caja/venta/page.tsx  (FRONT)
+2. El componente llama a un hook                  →  useRegistrarVenta()  en hooks/caja.ts
+3. El hook usa Axios para enviar POST /api/caja/venta
+   · Axios añade el header  Authorization: Bearer &lt;token&gt;   (interceptor en hooks/api.ts)
+4. Llega al endpoint                              →  app/api/caja/venta/route.ts  (BACK)
+   · isRateLimited()      → ¿demasiadas peticiones? (máx. 3 en 10s)
+   · requireAuth()        → verifica el JWT y carga el usuario activo
+   · requireRole()        → ¿es CAJERO/ADMIN/DUENO?
+   · VentaFisicaDTO.parse → valida los datos con Zod
+5. El endpoint delega en la lógica de negocio     →  lib/server/caja/caja.service.ts
+   · recalcula el total EN EL SERVIDOR (no confía en el precio del navegador)
+   · descuenta stock por receta, registra el movimiento de caja, audita
+   · todo dentro de una TRANSACCIÓN (o se hace todo, o no se hace nada)
+6. Prisma traduce a SQL y escribe en PostgreSQL   →  lib/prisma.ts
+7. La respuesta JSON regresa al navegador; React Query actualiza la pantalla</div>
+
+<h3>Las piezas que hacen esto posible</h3>
+<table>
+<tr><th>Pieza</th><th>Archivo</th><th>Función</th></tr>
+<tr><td>Cliente HTTP</td><td><code>hooks/api.ts</code></td><td>Axios con dos "interceptores": uno añade el token a cada petición; otro, si recibe <code>401</code>, borra el token y manda al login.</td></tr>
+<tr><td>Caché de datos</td><td><code>lib/providers.tsx</code></td><td>React Query cachea respuestas, evita peticiones duplicadas y refresca datos automáticamente.</td></tr>
+<tr><td>Guardia de rutas</td><td><code>lib/Guard.tsx</code></td><td><code>ProtectedRoute</code> envuelve páginas privadas: comprueba el token y el rol antes de mostrarlas (protección de <em>experiencia</em>, no de seguridad — la real está en el backend).</td></tr>
+<tr><td>Sesión de servidor</td><td><code>lib/server/auth/session.ts</code></td><td><code>requireAuth</code> lee el token (del header <em>o</em> de una cookie), lo verifica y carga el usuario. <code>requireRole</code> aplica los permisos.</td></tr>
+</table>
+
+<div class="callout ok"><strong>Detalle de seguridad importante:</strong> el precio y el total de una
+venta <strong>siempre se recalculan en el servidor</strong> a partir de los precios reales de la base.
+Aunque alguien manipule el navegador para "pagar" un producto a 0 Bs, el backend ignora ese dato y usa
+el precio verdadero. Nunca se confía en el cliente.</div>
+
+<!-- ======================= 8. WEBHOOKS ======================= -->
+<h2 class="page-break">8. Webhooks e integraciones externas</h2>
+
+<p>El sistema es mayormente auto-contenido, pero tiene varios puntos de integración con el exterior:</p>
+
+<h3>8.1 Enlace del repartidor (patrón tipo webhook por token)</h3>
+<p>Cuando un pedido sale a delivery, el sistema genera un <code>driver_link_id</code> (un identificador
+corto e impredecible). El repartidor abre <code>app/driver/[token]</code> desde su celular, sin necesidad
+de tener cuenta. Ese token le da acceso <em>solo</em> a ese pedido, y le permite:</p>
+<ul class="tight">
+  <li>Ver los datos del pedido: <code>GET /api/pedidos/driver/[token]</code></li>
+  <li>Actualizar el estado (EN_CAMINO → LLEGÓ → ENTREGADO): <code>POST</code> del mismo endpoint</li>
+  <li>Enviar su ubicación GPS en vivo (<code>driver_lat</code>, <code>driver_lng</code>), que el admin ve en el mapa Leaflet.</li>
+</ul>
+<p>Es un patrón "webhook-like": una URL con un token secreto reemplaza al login para un actor externo de un solo uso.</p>
+
+<h3>8.2 Almacenamiento de imágenes (Vercel Blob)</h3>
+<p>Las imágenes de productos no se guardan en la base de datos (sería lento y caro), sino en
+<strong>Vercel Blob</strong>, un almacenamiento de archivos en la nube. La base solo guarda la URL.
+El endpoint <code>app/api/admin/upload</code> gestiona la subida.</p>
+
+<h3>8.3 Alertas de inventario (WhatsApp — simulado/preparado)</h3>
+<p>Existe un servicio de alertas (<code>lib/server/alertas/whatsapp.service.ts</code>) que, cuando los
+insumos bajan del umbral crítico, prepara y registra notificaciones (por ahora en modo simulado, listo
+para conectar un proveedor real de WhatsApp). Los envíos quedan registrados en la tabla
+<code>RegistroAlerta</code>.</p>
+
+<h3>8.4 Sondeo en tiempo real (polling)</h3>
+<p>Para "tiempo real" sin la complejidad de WebSockets, el frontend usa <strong>polling</strong>: el hook
+<code>useOrderPolling.ts</code> vuelve a preguntar por pedidos nuevos cada pocos segundos. Así el panel
+de caja/admin muestra pedidos entrantes y el mapa de repartidores se actualiza sin recargar la página.</p>
+
+<!-- ======================= 9. CIBERSEGURIDAD ======================= -->
+<h2>9. Ciberseguridad: capas, dónde y cómo</h2>
+
+<p>La seguridad está implementada en <strong>capas</strong> (defensa en profundidad). Cada petición
+sensible atraviesa varios controles antes de tocar la base de datos:</p>
+
+<table>
+<tr><th>#</th><th>Control</th><th>Dónde</th><th>Cómo protege</th></tr>
+<tr><td>1</td><td><strong>Contraseñas cifradas</strong></td><td><code>lib/auth.ts</code></td><td>bcrypt con "salt" (10 rondas). Las contraseñas nunca se guardan en texto plano; ni el administrador puede leerlas.</td></tr>
+<tr><td>2</td><td><strong>Tokens JWT firmados</strong></td><td><code>lib/auth.ts</code></td><td>Al iniciar sesión se emite un token firmado con un secreto. Sin ese secreto nadie puede falsificar una identidad. Expira a las 20 horas.</td></tr>
+<tr><td>3</td><td><strong>Verificación por endpoint</strong></td><td><code>session.ts</code> → <code>requireAuth</code></td><td>Cada endpoint privado revalida el token y confirma que el usuario existe y está <em>activo</em> en la base (un usuario desactivado pierde acceso al instante).</td></tr>
+<tr><td>4</td><td><strong>Control de roles (RBAC)</strong></td><td><code>requireRole</code></td><td>Cada endpoint declara qué roles pueden usarlo (DUENO, ADMIN, CAJERO, CLIENTE). Un cajero no puede entrar a funciones de dueño.</td></tr>
+<tr><td>5</td><td><strong>Validación de entrada</strong></td><td><code>lib/server/dto/*</code> (Zod)</td><td>Todo dato entrante se valida contra un esquema estricto (tipos, rangos, longitudes máximas). Rechaza datos malformados o maliciosos antes de procesarlos.</td></tr>
+<tr><td>6</td><td><strong>Límite de peticiones</strong></td><td><code>rate-limit</code></td><td>Frena abusos: p. ej. máximo 3 ventas en 10 segundos. Mitiga ataques de fuerza bruta y duplicados.</td></tr>
+<tr><td>7</td><td><strong>Recálculo en servidor</strong></td><td><code>caja.service.ts</code></td><td>Precios y totales se calculan con datos de la base, nunca con lo que envía el navegador. Impide manipulación de precios.</td></tr>
+<tr><td>8</td><td><strong>Lista blanca de campos</strong></td><td><code>pedidos/[id]/route.ts</code></td><td>Al actualizar un registro solo se aceptan campos explícitamente permitidos. Previene "mass assignment" (que alguien inyecte campos que no debería).</td></tr>
+<tr><td>9</td><td><strong>Bitácora de auditoría</strong></td><td><code>audit.service.ts</code></td><td>Cada acción sensible (venta, apertura/cierre de caja, cambios) se registra con usuario, rol, IP y navegador en una tabla <em>solo-append</em>. Trazabilidad total.</td></tr>
+<tr><td>10</td><td><strong>Protección contra inyección SQL</strong></td><td>Prisma</td><td>Prisma usa consultas parametrizadas por diseño. No se concatena SQL a mano, así que la inyección SQL clásica no aplica.</td></tr>
+<tr><td>11</td><td><strong>Aislamiento de paquetes de servidor</strong></td><td><code>next.config.ts</code></td><td>bcrypt y Prisma se marcan como "externos del servidor": nunca se envían al navegador, evitando filtrar lógica sensible.</td></tr>
+</table>
+
+<h3>Cómo se ve en la práctica (un endpoint real)</h3>
+<pre><code>export async function POST(req) {
+  if (isRateLimited(req, 10000, 3))        // 6. límite de peticiones
+    return 429;
+  const session = await requireAuth(req);  // 3. verifica identidad (JWT)
+  requireRole(session, ['CAJERO','DUENO','ADMIN']); // 4. permisos por rol
+  const dto = VentaFisicaDTO.parse(body);  // 5. valida entrada (Zod)
+  const venta = await caja.registrarVentaFisica(session, dto, {ip, userAgent});
+  // ↑ dentro: recálculo en servidor (7) + auditoría con IP (9), todo en transacción
+}</code></pre>
+
+<div class="callout ok"><strong>Fortaleza:</strong> la seguridad real vive en el <em>backend</em>. El
+guardia del frontend (<code>ProtectedRoute</code>) solo mejora la experiencia (no muestra pantallas que
+no corresponden), pero aunque alguien lo saltee, el backend rechaza cualquier petición sin token válido y
+rol correcto. Esto es lo correcto: <em>nunca confiar en el cliente</em>.</div>
+
+<!-- ======================= 10. FLUJOS ======================= -->
+<h2 class="page-break">10. Flujos completos de ejemplo</h2>
+
+<h3>10.1 Venta en caja (mostrador)</h3>
+<div class="diagram">Cajero abre turno  →  agrega productos al carrito  →  elige EFECTIVO/QR  →  Cobrar
+   ↓
+POST /api/caja/venta  →  valida  →  recalcula total  →  crea Transaccion
+   ↓
+descuenta stock de insumos por receta (MovimientoInterno)
+   ↓
+registra MovimientoCaja + actualiza saldo de la cuenta (EFECTIVO o QR)
+   ↓
+audita la operación  →  responde  →  el dashboard refleja la venta al instante</div>
+
+<h3>10.2 Pedido web con delivery</h3>
+<div class="diagram">Cliente arma pedido en la tienda  →  POST /api/pedidos  (crea Transaccion PENDIENTE)
+   ↓
+El cajero lo ve por polling  →  lo prepara  →  genera enlace de repartidor (token)
+   ↓
+Repartidor abre app/driver/[token]  →  actualiza estado + envía GPS
+   ↓
+Admin ve la ubicación en el mapa (Leaflet)  →  ENTREGADO  →  se descuenta stock y se cierra</div>
+
+<h3>10.3 Cierre de caja</h3>
+<div class="diagram">Cajero cuenta el dinero físico  →  POST /api/caja/cierre (real_efectivo, real_qr)
+   ↓
+El sistema calcula ESPERADO = apertura + ventas − gastos
+   ↓
+Compara ESPERADO vs REAL  →  registra la DIFERENCIA (sobrante/faltante) por método
+   ↓
+Marca el turno CERRADO y lo archiva en el historial (auditado)</div>
+
+<!-- ======================= 11. DEPLOY ======================= -->
+<h2>11. Despliegue (deploy)</h2>
+<p>El proyecto está preparado para desplegarse en <strong>Vercel</strong> (la plataforma nativa de
+Next.js). El proceso, definido en <code>vercel.json</code>, hace: instalar dependencias → generar el
+cliente Prisma → sincronizar el esquema con la base → construir la app.</p>
+<p>Alternativamente, la caja puede correr como <strong>app de escritorio</strong> empaquetada con Electron
+(<code>npm run electron:build</code>), que abre la web en una ventana nativa de Windows.</p>
+
+<!-- ======================= 12. RIESGOS ======================= -->
+<h2>12. Riesgos detectados y recomendaciones</h2>
+<p>Durante la revisión se identificaron puntos que conviene atender. Se ordenan por severidad:</p>
+
+<div class="callout danger">
+<h4 style="margin-top:0">🔴 CRÍTICO — <code>vercel.json</code> ejecuta <code>prisma db push --accept-data-loss</code> en cada build</h4>
+<p style="margin-bottom:0">El comando de despliegue incluye <code>prisma db push --accept-data-loss</code>,
+que fuerza la base a coincidir con el esquema <em>y acepta perder datos si hay diferencias</em>. Si se
+despliega desde una rama con el esquema desactualizado, <strong>puede borrar tablas y datos de
+producción</strong> — exactamente el incidente que ocurrió con el módulo de fiado. <strong>Recomendación:</strong>
+quitar <code>db push --accept-data-loss</code> del build y usar migraciones controladas
+(<code>prisma migrate deploy</code>), que nunca destruye datos.</p>
+</div>
+
+<div class="callout danger">
+<h4 style="margin-top:0">🔴 ALTO — Secretos en <code>.env</code></h4>
+<p style="margin-bottom:0">El archivo <code>.env</code> contiene la URL de la base (con usuario y contraseña)
+y el secreto JWT en texto plano. Debe estar <strong>siempre</strong> en <code>.gitignore</code> y nunca
+subirse al repositorio. Si alguna vez se subió, esas credenciales deben rotarse (cambiarse). El secreto
+JWT actual es corto y predecible; conviene reemplazarlo por uno largo y aleatorio.</p>
+</div>
+
+<div class="callout warn">
+<h4 style="margin-top:0">🟡 MEDIO — JWT en <code>localStorage</code></h4>
+<p style="margin-bottom:0">El token se guarda en <code>localStorage</code> del navegador, lo que lo hace
+accesible a JavaScript y por tanto vulnerable a ataques XSS. Una alternativa más segura es una cookie
+<code>httpOnly</code> (inaccesible desde JavaScript). El backend ya soporta leer el token desde cookie,
+así que la migración es viable.</p>
+</div>
+
+<div class="callout warn">
+<h4 style="margin-top:0">🟡 MEDIO — Token del repartidor corto</h4>
+<p style="margin-bottom:0">El <code>driver_link_id</code> es un fragmento de UUID (8 caracteres). Para un
+enlace de bajo valor y corta vida es aceptable, pero conviene usar un token más largo y con expiración
+para evitar que se adivine.</p>
+</div>
+
+<div class="callout warn">
+<h4 style="margin-top:0">🟡 MENOR — Base de datos compartida sin coordinación de migraciones</h4>
+<p style="margin-bottom:0">Desarrollo y producción usan la misma base, y distintas ramas han aplicado
+esquemas diferentes. Se recomienda separar la base de desarrollo de la de producción, y acordar que los
+cambios de esquema siempre pasen por migraciones revisadas (nunca <code>db push</code> directo).</p>
+</div>
+
+<hr>
+<p style="text-align:center; color:var(--muted); font-size:9pt; margin-top:30px">
+Fin del documento · Elevate — Documentación de Arquitectura · Julio 2026<br>
+Preparado para revisión técnica. Las secciones 9 y 12 son las relevantes para la evaluación de ciberseguridad.
+</p>
+
+</div>
+</body>
+</html>

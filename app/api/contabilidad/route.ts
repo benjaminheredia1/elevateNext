@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
+import { guard, ADMIN } from '@/lib/server/auth/guard';
 
 export async function GET(req: NextRequest) {
+  const auth = await guard(req, ADMIN);
+  if (auth instanceof NextResponse) return auth;
+
   try {
     const { searchParams } = new URL(req.url);
     const rango = searchParams.get('rango') || 'mes'; // hoy | semana | mes | rango
@@ -46,7 +50,7 @@ export async function GET(req: NextRequest) {
       }
     });
 
-    const totalVentas = transacciones.reduce((a, t) => a + t.total, 0);
+    const totalVentas = transacciones.reduce((a, t) => a + Number(t.total), 0);
     const totalPedidos = transacciones.length;
     const ticketPromedio = totalPedidos > 0 ? totalVentas / totalPedidos : 0;
 
@@ -72,11 +76,11 @@ export async function GET(req: NextRequest) {
     const gastos = await prisma.gasto.findMany({
       where: { created_at: { gte: fechaInicio, lte: fechaFin } },
     });
-    const totalGastos = gastos.reduce((a, g) => a + g.monto, 0);
+    const totalGastos = gastos.reduce((a, g) => a + Number(g.monto), 0);
 
     // Ventas por método de pago
-    const ventasEfectivo = transacciones.filter(t => t.metodo_pago === 'EFECTIVO').reduce((a, t) => a + t.total, 0);
-    const ventasQR = transacciones.filter(t => t.metodo_pago === 'QR').reduce((a, t) => a + t.total, 0);
+    const ventasEfectivo = transacciones.filter(t => t.metodo_pago === 'EFECTIVO').reduce((a, t) => a + Number(t.total), 0);
+    const ventasQR = transacciones.filter(t => t.metodo_pago === 'QR').reduce((a, t) => a + Number(t.total), 0);
 
     // Más vendidos
     const productoMap: Record<number, { nombre: string; cantidad: number; ingresos: number }> = {};
@@ -86,7 +90,7 @@ export async function GET(req: NextRequest) {
           productoMap[d.producto_id] = { nombre: d.producto.nombre, cantidad: 0, ingresos: 0 };
         }
         productoMap[d.producto_id].cantidad += d.cantidad;
-        productoMap[d.producto_id].ingresos += d.precio_unitario * d.cantidad;
+        productoMap[d.producto_id].ingresos += Number(d.precio_unitario) * d.cantidad;
       }
     }
     const masVendidos = Object.values(productoMap).sort((a, b) => b.cantidad - a.cantidad).slice(0, 5);

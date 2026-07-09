@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
+import { guard, ADMIN } from '@/lib/server/auth/guard';
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const auth = await guard(req, ADMIN);
+  if (auth instanceof NextResponse) return auth;
+
   try {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -15,7 +19,7 @@ export async function GET() {
       prisma.insumo.findMany(),
     ]);
 
-    const ingresosHoy = pedidosHoy.reduce((acc, p) => acc + p.total, 0);
+    const ingresosHoy = pedidosHoy.reduce((acc, p) => acc + Number(p.total), 0);
     const criticos = insumos.filter(i => i.stock_actual <= i.stock_minimo).length;
     const advertencia = insumos.filter(
       i => i.stock_actual > i.stock_minimo && i.stock_actual <= i.stock_minimo * 1.5

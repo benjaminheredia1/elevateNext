@@ -33,7 +33,7 @@ export async function GET(
     if (!cliente) throw new NotFoundError('Cliente no encontrado');
 
     const txs = cliente.transacciones;
-    const total_gastado = txs.reduce((s, t) => s + t.total, 0);
+    const total_gastado = txs.reduce((s, t) => s + Number(t.total), 0);
     const primer_pedido = txs.length > 0
       ? txs.reduce((min, t) => t.created_at < min ? t.created_at : min, txs[0].created_at)
       : null;

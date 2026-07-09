@@ -179,7 +179,7 @@ model Transaccion {
   tipo_entrega      TipoEntrega?
   codigo_descuento  String?
   metodo_pago       TipoCuenta?
-  total             Float
+  total             Decimal           @db.Decimal(12, 2)
   estado            EstadoTransaccion @default(PENDIENTE)
   payment_status    EstadoPago        @default(PENDIENTE)
   codigo            String?           @unique
@@ -219,7 +219,7 @@ model Producto {
   id                       Int                     @id @default(autoincrement())
   nombre                   String
   descripcion              String
-  precio                   Float
+  precio                   Decimal                 @db.Decimal(12, 2)
   imagen_url               String?
   disponible               Boolean                 @default(true)
   // FASE 5A — tipo, publicación, nutrición y marcas
@@ -245,8 +245,8 @@ model Producto {
 model TransaccionesDetalles {
   id                Int         @id @default(autoincrement())
   transaccion_id    Int
-  precio_unitario   Float
-  descuentoAplicado Float       @default(0)
+  precio_unitario   Decimal     @db.Decimal(12, 2)
+  descuentoAplicado Decimal     @default(0) @db.Decimal(12, 2)
   producto_id       Int
   cantidad          Float
   transaccion       Transaccion @relation(fields: [transaccion_id], references: [id], onDelete: Cascade)
@@ -398,10 +398,10 @@ enum EstadoCaja {
 
 model Caja {
   id             Int        @id @default(autoincrement())
-  monto_inicial  Float      @default(0)
-  monto_final    Float?
-  ingresos       Float      @default(0)
-  egresos        Float      @default(0)
+  monto_inicial  Decimal    @default(0) @db.Decimal(12, 2)
+  monto_final    Decimal?   @db.Decimal(12, 2)
+  ingresos       Decimal    @default(0) @db.Decimal(12, 2)
+  egresos        Decimal    @default(0) @db.Decimal(12, 2)
   estado         EstadoCaja @default(ABIERTA)
   fecha_apertura DateTime   @default(now())
   fecha_cierre   DateTime?
@@ -413,7 +413,7 @@ model Caja {
 model Gasto {
   id          Int      @id @default(autoincrement())
   caja_id     Int
-  monto       Float
+  monto       Decimal  @db.Decimal(12, 2)
   descripcion String
   caja        Caja     @relation(fields: [caja_id], references: [id])
   created_at  DateTime @default(now())

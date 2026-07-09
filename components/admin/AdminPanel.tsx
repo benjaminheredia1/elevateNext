@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useOrderPolling, useAlertasPolling, type NuevoPedido } from '@/hooks/useOrderPolling';
+import { useAuth } from '@/hooks/auth';
 
 /* ============================
    ICONS
@@ -274,9 +275,7 @@ export default function AdminPanel({ children }: { children: React.ReactNode }) 
           </div>
           <button
             onClick={() => {
-              localStorage.removeItem('token');
-              localStorage.removeItem('rol');
-              localStorage.removeItem('user');
+              useAuth.logout();
               router.push('/login');
             }}
             style={{
