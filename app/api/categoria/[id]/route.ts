@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
+import { guard, ADMIN } from '@/lib/server/auth/guard';
 
 export async function GET(_: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -13,6 +14,9 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
 }
 
 export async function PUT(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const auth = await guard(request, ADMIN);
+  if (auth instanceof NextResponse) return auth;
+
   try {
     const { id } = await params;
     const { nombre, detalles } = await request.json();
@@ -27,6 +31,9 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
 }
 
 export async function DELETE(_: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const auth = await guard(_, ADMIN);
+  if (auth instanceof NextResponse) return auth;
+
   try {
     const { id } = await params;
     await prisma.categoria.delete({ where: { id: Number(id) } });

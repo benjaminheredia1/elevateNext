@@ -21,24 +21,16 @@ export function homeForRole(rol?: string): string {
   }
 }
 
-function authHeader() {
-  const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
-
 export const useAuth = {
   login: async (identifier: string, password: string) => {
+    // La sesión queda en una cookie httpOnly seteada por el servidor;
+    // el token NO se guarda en localStorage (mitiga robo por XSS).
     const response = await apiClient.post('/login', { identifier, password });
-    const body = response.data; // { access_token, user }
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('token', body.access_token);
-      if (body.user?.rol) localStorage.setItem('rol', body.user.rol);
-    }
-    return body as { access_token: string; user: { rol: Rol; nombre: string; id: number } };
+    return response.data as { access_token: string; user: { rol: Rol; nombre: string; id: number } };
   },
 
   me: async () => {
-    const res = await apiClient.get('/me', { headers: authHeader() });
+    const res = await apiClient.get('/me'); // autenticado por cookie
     return res.data as { id: number; nombre: string; rol: Rol; sucursal_id: number | null };
   },
 
@@ -52,9 +44,14 @@ export const useAuth = {
   },
 
   logout: () => {
+    // Borra la cookie httpOnly en el servidor (el JS no puede tocarla).
+    // fire-and-forget: no bloquea la redirección a /login.
+    apiClient.post('/logout').catch(() => {});
     if (typeof window !== 'undefined') {
+      // Limpieza de valores heredados del esquema anterior (localStorage)
       localStorage.removeItem('token');
       localStorage.removeItem('rol');
+      localStorage.removeItem('user');
     }
   },
 };

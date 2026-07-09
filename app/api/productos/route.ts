@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { calcularRinde } from '@/lib/server/inventario/disponibilidad';
+import { calcularPrecioFinal } from '@/lib/server/productos/precio';
+import { guard, ADMIN } from '@/lib/server/auth/guard';
 
 export async function GET(req: NextRequest) {
   try {
@@ -32,30 +34,8 @@ export async function GET(req: NextRequest) {
     const now = new Date();
 
     const data = productos.map(p => {
-      let precioFinal = p.precio;
-      let descuentoActivo = false;
-      let descuentoMonto = 0;
-
-      for (const pp of p.promocionProducto_id) {
-        const promo = pp.promocionDescuentos;
-        // Check if any rule is active
-        const isActiva = promo.reglasHorarias_id.some(r => now >= r.fecha_inicio && now <= r.fecha_fin);
-        
-        if (isActiva) {
-          descuentoActivo = true;
-          let nuevoPrecio = p.precio;
-          if (promo.valor.includes('%')) {
-            const pct = parseFloat(promo.valor.replace('%', ''));
-            nuevoPrecio = p.precio - (p.precio * pct / 100);
-          } else {
-            nuevoPrecio = p.precio - parseFloat(promo.valor);
-          }
-          if (nuevoPrecio < precioFinal) {
-            precioFinal = Math.max(0, nuevoPrecio);
-            descuentoMonto = p.precio - precioFinal;
-          }
-        }
-      }
+      // Lógica de precio compartida con POST /api/pedidos (server-side pricing)
+      const { precioFinal, descuento: descuentoMonto } = calcularPrecioFinal(p, now);
 
       const { rinde, agotado } = calcularRinde(p);
 
@@ -77,6 +57,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await guard(req, ADMIN);
+  if (auth instanceof NextResponse) return auth;
+
   try {
     const body = await req.json();
     const { nombre, descripcion, precio, imagen_url, disponible, estado_publicacion, marcas } = body;

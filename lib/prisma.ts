@@ -1,6 +1,14 @@
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
+
+// Las columnas Decimal llegan como objetos Decimal.js; sin esto, JSON.stringify
+// las emitiría como string ("130.00") y el frontend (que espera number) se rompería.
+// Con montos de máx. 12 dígitos la conversión a number es exacta (< 2^53).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+(Prisma.Decimal.prototype as any).toJSON = function () {
+  return this.toNumber();
+};
 
 declare global {
   // eslint-disable-next-line no-var

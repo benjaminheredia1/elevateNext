@@ -331,9 +331,9 @@ export async function foodCostPct(
   tx: Prisma.TransactionClient = prisma,
 ): Promise<number> {
   const producto = await tx.producto.findUnique({ where: { id: productoId } });
-  if (!producto || producto.precio <= 0) return 0;
+  if (!producto || Number(producto.precio) <= 0) return 0;
   const costo = await costoFichaTecnica(productoId, tx);
-  return (costo / producto.precio) * 100;
+  return (costo / Number(producto.precio)) * 100;
 }
 
 // ─────────────────────────────────────────────

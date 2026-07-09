@@ -71,8 +71,8 @@ export async function getAnalitica(rango: Rango): Promise<AnaliticaResult> {
   for (const t of transacciones) {
     const fecha = t.created_at.toISOString().slice(0, 10);
     const prev  = ventasDiaMap.get(fecha) ?? { total: 0, cantidad: 0 };
-    ventasDiaMap.set(fecha, { total: prev.total + t.total, cantidad: prev.cantidad + 1 });
-    totalVentas += t.total;
+    ventasDiaMap.set(fecha, { total: prev.total + Number(t.total), cantidad: prev.cantidad + 1 });
+    totalVentas += Number(t.total);
   }
 
   const ventasPorDia: VentaDia[] = Array.from(ventasDiaMap.entries()).map(
@@ -89,12 +89,12 @@ export async function getAnalitica(rango: Rango): Promise<AnaliticaResult> {
         nombre:      d.producto.nombre,
         ventas:      0,
         totalVentas: 0,
-        precio:      d.producto.precio,
+        precio:      Number(d.producto.precio),
       };
       productoVentas.set(pid, {
         ...prev,
         ventas:      prev.ventas + d.cantidad,
-        totalVentas: prev.totalVentas + d.precio_unitario * d.cantidad,
+        totalVentas: prev.totalVentas + Number(d.precio_unitario) * d.cantidad,
       });
     }
   }
@@ -148,7 +148,7 @@ export async function getAnalitica(rango: Rango): Promise<AnaliticaResult> {
   const heatmapMap = new Map<string, number>();
   for (const t of transacciones) {
     const key = `${t.created_at.getDay()}-${t.created_at.getHours()}`;
-    heatmapMap.set(key, (heatmapMap.get(key) ?? 0) + t.total);
+    heatmapMap.set(key, (heatmapMap.get(key) ?? 0) + Number(t.total));
   }
   const heatmap: HeatmapCell[] = Array.from(heatmapMap.entries()).map(([k, v]) => {
     const [dia, hora] = k.split('-').map(Number);
@@ -161,7 +161,7 @@ export async function getAnalitica(rango: Rango): Promise<AnaliticaResult> {
     for (const d of t.transaccionesDetalles_id) {
       const cats = d.producto.categoria_id;
       const nombre = cats[0]?.categoria?.nombre ?? 'Sin categoría';
-      catMap.set(nombre, (catMap.get(nombre) ?? 0) + d.precio_unitario * d.cantidad);
+      catMap.set(nombre, (catMap.get(nombre) ?? 0) + Number(d.precio_unitario) * d.cantidad);
     }
   }
   const mixCategoria = toMixItems(catMap);
@@ -172,7 +172,7 @@ export async function getAnalitica(rango: Rango): Promise<AnaliticaResult> {
     for (const d of t.transaccionesDetalles_id) {
       const ms = d.producto.marcas;
       const nombre = ms[0]?.marca?.nombre ?? 'Sin marca';
-      marcaMap.set(nombre, (marcaMap.get(nombre) ?? 0) + d.precio_unitario * d.cantidad);
+      marcaMap.set(nombre, (marcaMap.get(nombre) ?? 0) + Number(d.precio_unitario) * d.cantidad);
     }
   }
   const mixMarca = toMixItems(marcaMap);

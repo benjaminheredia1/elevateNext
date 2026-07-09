@@ -95,6 +95,8 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
+    const session = await requireAuth(_req);
+    requireRole(session, ['DUENO', 'ADMIN']);
     const { id } = await params;
     await prisma.transaccion.delete({ where: { id: parseInt(id) } });
     return NextResponse.json({ message: 'Pedido eliminado' });
