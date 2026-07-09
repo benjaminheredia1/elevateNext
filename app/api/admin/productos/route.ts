@@ -26,7 +26,8 @@ export async function GET(req: NextRequest) {
     const enriquecidos = await Promise.all(
       productos.map(async (p) => {
         const costo    = await costoFichaTecnica(p.id);
-        const foodCost = p.precio > 0 ? Math.round((costo / p.precio) * 10000) / 100 : 0;
+        const precioNum = Number(p.precio);
+        const foodCost = precioNum > 0 ? Math.round((costo / precioNum) * 10000) / 100 : 0;
         return { ...p, costo_calculado: Math.round(costo * 100) / 100, food_cost_pct: foodCost };
       }),
     );
@@ -134,7 +135,8 @@ export async function POST(req: NextRequest) {
 
     // Calcular costo tras la creación
     const costo    = await costoFichaTecnica(producto.id);
-    const foodCost = producto.precio > 0 ? Math.round((costo / producto.precio) * 10000) / 100 : 0;
+    const precioNum = Number(producto.precio);
+    const foodCost = precioNum > 0 ? Math.round((costo / precioNum) * 10000) / 100 : 0;
 
     return NextResponse.json(
       { data: { ...producto, costo_calculado: Math.round(costo * 100) / 100, food_cost_pct: foodCost } },

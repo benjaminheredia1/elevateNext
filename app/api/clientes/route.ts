@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
+import { guard, ADMIN } from '@/lib/server/auth/guard';
 
 export async function GET(req: NextRequest) {
+  const auth = await guard(req, ADMIN);
+  if (auth instanceof NextResponse) return auth;
+
   try {
     const { searchParams } = new URL(req.url);
     const search = searchParams.get('search') || '';
@@ -28,7 +32,7 @@ export async function GET(req: NextRequest) {
     const clientesConStats = clientes.map(c => ({
       ...c,
       total_pedidos: c.transacciones.length,
-      total_gastado: c.transacciones.reduce((a, t) => a + t.total, 0),
+      total_gastado: c.transacciones.reduce((a, t) => a + Number(t.total), 0),
       primer_pedido: c.transacciones[0]?.created_at ?? null,
     }));
 
@@ -50,6 +54,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await guard(req, ADMIN);
+  if (auth instanceof NextResponse) return auth;
+
   try {
     const body = await req.json();
     const { nombre, telefono, direccion } = body;

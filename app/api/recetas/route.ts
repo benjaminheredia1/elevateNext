@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
+import { guard, ADMIN } from '@/lib/server/auth/guard';
 
 export async function GET(req: NextRequest) {
+  const auth = await guard(req, ADMIN);
+  if (auth instanceof NextResponse) return auth;
+
   try {
     const { searchParams } = new URL(req.url);
     const productoId = searchParams.get('producto_id');
@@ -17,6 +21,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await guard(req, ADMIN);
+  if (auth instanceof NextResponse) return auth;
+
   try {
     const body = await req.json();
     const { producto_id, insumo_id, cantidad_utilizada } = body;

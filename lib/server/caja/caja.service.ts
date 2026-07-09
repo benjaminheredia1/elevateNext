@@ -367,9 +367,9 @@ export async function resumenRepartidoresTurno(session: Session) {
     const key = p.driver_nombre as string;
     const cur = map.get(key) ?? { repartidor: key, pedidos: 0, en_curso: 0, entregados: 0, efectivo_adelantado: 0, total: 0 };
     cur.pedidos += 1;
-    cur.total += p.total;
+    cur.total += Number(p.total);
     if (p.estado === 'ENTREGADO') cur.entregados += 1; else cur.en_curso += 1;
-    if (p.metodo_pago === 'EFECTIVO' && p.payment_status === 'PAGADO') cur.efectivo_adelantado += p.total;
+    if (p.metodo_pago === 'EFECTIVO' && p.payment_status === 'PAGADO') cur.efectivo_adelantado += Number(p.total);
     map.set(key, cur);
   }
 
@@ -432,13 +432,13 @@ export async function entregarPedido(
     if (esDelivery) {
       if (!dto.driver_nombre?.trim()) throw new ValidationError('Indica el repartidor que retira el pedido');
       if (pedido.payment_status === 'COD_PENDIENTE') {
-        cobroEfectivo = pedido.total; // el repartidor adelanta el efectivo a caja
+        cobroEfectivo = Number(pedido.total); // el repartidor adelanta el efectivo a caja
         nuevoPago = 'PAGADO';
       }
       nuevoEstado = 'EN_LOCAL'; // driver está retirando del local
     } else {
       if (pedido.payment_status !== 'PAGADO') {
-        cobroEfectivo = pedido.total; // cobro en mostrador al recoger
+        cobroEfectivo = Number(pedido.total); // cobro en mostrador al recoger
         nuevoPago = 'PAGADO';
       }
       nuevoEstado = 'ENTREGADO'; // pickup: se entrega directamente
