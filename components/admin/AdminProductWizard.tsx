@@ -115,7 +115,6 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, onClo
   if (!p.nombre.trim()) gate.push('Define el nombre del producto.');
   if (!p.descripcion.trim()) gate.push('Agrega una descripción.');
   if (!(p.precio > 0)) gate.push('Define un precio de venta.');
-  if (!p.imagen_url?.trim()) gate.push('Agrega una foto del producto.');
   if (p.marcas.length === 0) gate.push('Asigna al menos un menú.');
   if (
     p.tipo === 'ELABORADO'
