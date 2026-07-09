@@ -20,7 +20,6 @@ export function faltantesPublicacion(producto: ProductoPublicable) {
   if (!producto.nombre.trim()) faltantes.push('nombre');
   if (!producto.descripcion.trim()) faltantes.push('descripcion');
   if (!(monto(producto.precio) > 0)) faltantes.push('precio de venta');
-  if (!producto.imagen_url?.trim()) faltantes.push('imagen');
   if (producto.marcas.length === 0) faltantes.push('menu donde aparecera');
 
   if (producto.tipo === 'REVENTA') {
