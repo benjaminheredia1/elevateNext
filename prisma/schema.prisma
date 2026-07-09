@@ -263,12 +263,12 @@ model CategoriasProducto {
   update_at    DateTime  @updatedAt
 }
 
-enum Unidad_medida {
-  KG
-  GR
-  UNIDAD
-  LT
-  ML
+model UnidadMedida {
+  id         Int      @id @default(autoincrement())
+  nombre     String   @unique
+  activo     Boolean  @default(true)
+  created_at DateTime @default(now())
+  update_at  DateTime @updatedAt
 }
 
 model Insumo {
@@ -276,7 +276,7 @@ model Insumo {
   nombre               String
   stock_actual         Float
   stock_minimo         Float
-  unidad_medida        Unidad_medida
+  unidad_medida        String
   costo_promedio       Float                @default(0)
   es_mixto             Boolean              @default(false)
   // FASE 5A — campos de inventario avanzado
