@@ -19,6 +19,8 @@ interface Insumo {
   uso_diario_promedio: number | null;
   categoria_insumo: string | null;
   proveedor: string | null;
+  equivalencia_unidad: string | null;
+  equivalencia_cantidad: number | null;
 }
 
 interface Movimiento {
@@ -47,6 +49,8 @@ interface FormState {
   costo_promedio: string;
   costo_unitario: string;
   descripcion: string;
+  equivalencia_cantidad: string;
+  equivalencia_unidad: string;
   nuevo_stock: string;
   nombre: string;
   proveedor: string;
@@ -62,6 +66,8 @@ const EMPTY_FORM: FormState = {
   costo_promedio: '',
   costo_unitario: '',
   descripcion: '',
+  equivalencia_cantidad: '',
+  equivalencia_unidad: '',
   nuevo_stock: '',
   nombre: '',
   proveedor: '',
@@ -314,6 +320,8 @@ export default function AdminInsumos() {
         stock_minimo: String(insumo.stock_minimo),
         punto_critico: String(insumo.punto_critico),
         proveedor: insumo.proveedor ?? '',
+        equivalencia_unidad: insumo.equivalencia_unidad ?? '',
+        equivalencia_cantidad: insumo.equivalencia_cantidad != null ? String(insumo.equivalencia_cantidad) : '',
       });
     } else {
       setForm({
@@ -344,6 +352,14 @@ export default function AdminInsumos() {
 
   const submitModal = async (event: FormEvent) => {
     event.preventDefault();
+    if (modalAction === 'crear' || modalAction === 'editar') {
+      const tieneUnidad = form.equivalencia_unidad.trim() !== '';
+      const tieneCantidad = form.equivalencia_cantidad.trim() !== '';
+      if (tieneUnidad !== tieneCantidad) {
+        setFormError('Completa la unidad y la cantidad de la equivalencia, o deja ambas vacías.');
+        return;
+      }
+    }
     setSaving(true);
     setFormError('');
     try {
@@ -351,6 +367,8 @@ export default function AdminInsumos() {
         await apiClient.post('/api/insumo', {
           categoria_insumo: form.categoria_insumo.trim() || null,
           costo_promedio: Number(form.costo_promedio || 0),
+          equivalencia_unidad: form.equivalencia_unidad.trim() || null,
+          equivalencia_cantidad: form.equivalencia_cantidad.trim() ? Number(form.equivalencia_cantidad) : null,
           nombre: form.nombre.trim(),
           proveedor: form.proveedor.trim() || null,
           punto_critico: Number(form.punto_critico || 0),
@@ -363,6 +381,8 @@ export default function AdminInsumos() {
         await apiClient.put(`/api/insumo/${selected.id}`, {
           categoria_insumo: form.categoria_insumo.trim() || null,
           costo_promedio: Number(form.costo_promedio || 0),
+          equivalencia_unidad: form.equivalencia_unidad.trim() || null,
+          equivalencia_cantidad: form.equivalencia_cantidad.trim() ? Number(form.equivalencia_cantidad) : null,
           nombre: form.nombre.trim(),
           proveedor: form.proveedor.trim() || null,
           punto_critico: Number(form.punto_critico || 0),
@@ -539,6 +559,7 @@ export default function AdminInsumos() {
                   <tr>
                     <th>Insumo</th>
                     <th>Categoría</th>
+                    <th>Equivalencia</th>
                     <th>Nivel</th>
                     <th className="num">Stock</th>
                     <th className="num">Reorden</th>
@@ -566,6 +587,7 @@ export default function AdminInsumos() {
                           </div>
                         </td>
                         <td>{insumo.categoria_insumo || '—'}</td>
+                        <td>{insumo.equivalencia_cantidad != null && insumo.equivalencia_unidad ? `${number(insumo.equivalencia_cantidad)} ${insumo.equivalencia_unidad}` : '—'}</td>
                         <td><span className={`pub-badge ${meta.className}`} style={{ color: meta.color }}>{meta.label}</span></td>
                         <td className="num"><span className={`stock-val ${state !== 'ok' ? 'low' : ''}`}>{number(insumo.stock_actual)} {insumo.unidad_medida}</span></td>
                         <td className="num">{number(insumo.stock_minimo)}</td>
@@ -724,6 +746,20 @@ export default function AdminInsumos() {
                   <label className="form-group"><span>Stock mínimo</span><input type="number" min="0" step="0.01" value={form.stock_minimo} onChange={event => setForm(prev => ({ ...prev, stock_minimo: event.target.value }))} required /></label>
                   <label className="form-group"><span>Stock crítico</span><input type="number" min="0" step="0.01" value={form.punto_critico} onChange={event => setForm(prev => ({ ...prev, punto_critico: event.target.value }))} /></label>
                   <label className="form-group full"><span>Proveedor</span><input value={form.proveedor} onChange={event => setForm(prev => ({ ...prev, proveedor: event.target.value }))} /></label>
+                  <div className="form-group full">
+                    <span className="form-hint">Equivalencia (opcional): a cuánto equivale una unidad en otra medida. Ej. 1 UNIDAD de pan = 300 GR.</span>
+                  </div>
+                  <label className="form-group">
+                    <span>Cantidad equivalente</span>
+                    <input type="number" min="0" step="0.01" value={form.equivalencia_cantidad} onChange={event => setForm(prev => ({ ...prev, equivalencia_cantidad: event.target.value }))} />
+                  </label>
+                  <label className="form-group">
+                    <span>Unidad equivalente</span>
+                    <select value={form.equivalencia_unidad} onChange={event => setForm(prev => ({ ...prev, equivalencia_unidad: event.target.value }))}>
+                      <option value="">—</option>
+                      {unidadesParaSelect.map(unidad => <option key={unidad.id} value={unidad.nombre}>{unidad.nombre}</option>)}
+                    </select>
+                  </label>
                 </div>
               ) : modalAction === 'editar' ? (
                 <div className="form-grid">
@@ -742,6 +778,20 @@ export default function AdminInsumos() {
                   <label className="form-group"><span>Stock mínimo</span><input type="number" min="0" step="0.01" value={form.stock_minimo} onChange={event => setForm(prev => ({ ...prev, stock_minimo: event.target.value }))} required /></label>
                   <label className="form-group"><span>Stock crítico</span><input type="number" min="0" step="0.01" value={form.punto_critico} onChange={event => setForm(prev => ({ ...prev, punto_critico: event.target.value }))} /></label>
                   <label className="form-group full"><span>Proveedor</span><input value={form.proveedor} onChange={event => setForm(prev => ({ ...prev, proveedor: event.target.value }))} /></label>
+                  <div className="form-group full">
+                    <span className="form-hint">Equivalencia (opcional): a cuánto equivale una unidad en otra medida. Ej. 1 UNIDAD de pan = 300 GR.</span>
+                  </div>
+                  <label className="form-group">
+                    <span>Cantidad equivalente</span>
+                    <input type="number" min="0" step="0.01" value={form.equivalencia_cantidad} onChange={event => setForm(prev => ({ ...prev, equivalencia_cantidad: event.target.value }))} />
+                  </label>
+                  <label className="form-group">
+                    <span>Unidad equivalente</span>
+                    <select value={form.equivalencia_unidad} onChange={event => setForm(prev => ({ ...prev, equivalencia_unidad: event.target.value }))}>
+                      <option value="">—</option>
+                      {unidadesParaSelect.map(unidad => <option key={unidad.id} value={unidad.nombre}>{unidad.nombre}</option>)}
+                    </select>
+                  </label>
                   <div className="form-group full">
                     <span className="form-hint">
                       Este formulario no cambia la cantidad en stock. Para corregir una cantidad mal registrada, usa el botón ✓ "Corregir stock" en la fila del insumo.
