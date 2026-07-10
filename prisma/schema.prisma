@@ -117,6 +117,7 @@ model Usuario {
   movimientos_caja     MovimientoCaja[]
   cajas                Caja[]
   auditorias           RegistroAuditoria[]
+  horarios             HorarioTrabajador[]
   created_at           DateTime            @default(now())
   update_at            DateTime            @updatedAt
 }
@@ -429,11 +430,12 @@ model Sucursal {
   lat        Float?
   lng        Float?
   activa     Boolean            @default(true)
-  usuarios   Usuario[]
-  cuentas    CuentaFinanciera[]
-  turnos     CajaTurno[]
-  created_at DateTime           @default(now())
-  update_at  DateTime           @updatedAt
+  usuarios     Usuario[]
+  cuentas      CuentaFinanciera[]
+  turnos       CajaTurno[]
+  diasFeriados DiaFeriado[]
+  created_at   DateTime           @default(now())
+  update_at    DateTime           @updatedAt
 }
 
 /**
@@ -649,4 +651,29 @@ model RegistroAlerta {
   insumo_ids Int[]    @default([])
   estado     String // sent | failed | simulated
   preview    String
+}
+
+model HorarioTrabajador {
+  id           Int      @id @default(autoincrement())
+  usuario_id   Int
+  dia_semana   Int      // 1=lunes ... 7=domingo (ISO 8601)
+  es_libre     Boolean  @default(false)
+  hora_entrada String?  // "HH:MM", null cuando es_libre = true
+  hora_salida  String?  // "HH:MM", null cuando es_libre = true
+  usuario      Usuario  @relation(fields: [usuario_id], references: [id], onDelete: Cascade)
+  created_at   DateTime @default(now())
+  update_at    DateTime @updatedAt
+
+  @@unique([usuario_id, dia_semana])
+}
+
+model DiaFeriado {
+  id          Int       @id @default(autoincrement())
+  fecha       DateTime  @db.Date
+  nombre      String
+  sucursal_id Int?
+  sucursal    Sucursal? @relation(fields: [sucursal_id], references: [id])
+  created_at  DateTime  @default(now())
+
+  @@unique([fecha, sucursal_id])
 }
