@@ -6,10 +6,14 @@ import prisma from '@/lib/prisma';
 
 describe('PUT /api/admin/productos/[id]', () => {
   const createdIds: number[] = [];
+  const createdInsumoIds: number[] = [];
 
   afterAll(async () => {
     if (createdIds.length > 0) {
       await prisma.producto.deleteMany({ where: { id: { in: createdIds } } });
+    }
+    if (createdInsumoIds.length > 0) {
+      await prisma.insumo.deleteMany({ where: { id: { in: createdInsumoIds } } });
     }
   });
 
@@ -48,5 +52,9 @@ describe('PUT /api/admin/productos/[id]', () => {
     expect(response.status).toBe(200);
     expect(body.data.estado_publicacion).toBe('PUBLICADO');
     expect(body.data.imagen_url).toBeNull();
+
+    if (body.data.insumo_reventa_id) {
+      createdInsumoIds.push(body.data.insumo_reventa_id);
+    }
   });
 });
