@@ -45,13 +45,14 @@ del array `gate`. El resto de las condiciones del gate permanecen intactas.
 ### Base de datos de test
 Mismo contenedor Docker `elevate_postgres` (puerto 5433), pero una base de datos separada: `elevate_db_test`. No requiere infraestructura nueva — Prisma crea la base automáticamente al correr `db push` contra una URL cuya base de datos no existe todavía (el usuario `elevate_user` del contenedor tiene privilegios suficientes).
 
-### `.env.test` (nuevo archivo, ya cubierto por el `.gitignore` existente `.env*`)
+### `.env.test` (nuevo archivo, ya cubierto por el `.gitignore` existente `.env*`; se documenta con `.env.test.example` committeado)
 ```
 DATABASE_URL="postgres://elevate_user:elevate_pass123@localhost:5433/elevate_db_test"
+DATABASE_URL_PRISMA_DATABASE_URL="postgres://elevate_user:elevate_pass123@localhost:5433/elevate_db_test"
 SECRET_JWT="KAFJCMDAFJCJDLAQPFWMASDPADUWQPWM"
 SALT_ROUNDS=10
 ```
-(Mismos valores no-sensibles de `SECRET_JWT`/`SALT_ROUNDS` que `.env.local`, ya que es un proyecto local de desarrollo.)
+(Mismos valores no-sensibles de `SECRET_JWT`/`SALT_ROUNDS` que `.env.local`, ya que es un proyecto local de desarrollo. **Ambas variables de base de datos son necesarias**: `prisma.config.ts` no lee `DATABASE_URL` — lee específicamente `DATABASE_URL_PRISMA_DATABASE_URL` para las operaciones del CLI, `db push`/`db seed`. Si solo se definiera `DATABASE_URL`, el CLI caería en el valor de `.env` raíz, que apunta a la base de **dev**.)
 
 ### `vitest.config.ts` (nuevo, raíz del proyecto)
 - Plugin `vite-tsconfig-paths` para resolver `@/*`.
@@ -62,9 +63,9 @@ SALT_ROUNDS=10
 ```json
 "test": "vitest run",
 "test:watch": "vitest",
-"pretest": "dotenv -e .env.test -- prisma db push"
+"pretest": "dotenv -e .env.test -- prisma db push && dotenv -e .env.test -- prisma db seed"
 ```
-(`pretest` corre automáticamente antes de `npm test`/`npm run test` vía la convención npm de scripts `pre*`, sincronizando el schema contra `elevate_db_test` antes de cada corrida. Ese hook automático **no** aplica a `test:watch` — para modo watch, correr `npm test` al menos una vez primero deja `elevate_db_test` sincronizada. Requiere agregar `dotenv-cli` como devDependency para poder pasarle un archivo de env distinto al comando `prisma db push` sin afectar `.env`/`.env.local`.)
+(`pretest` corre automáticamente antes de `npm test`/`npm run test` vía la convención npm de scripts `pre*`, sincronizando el schema Y sembrando los datos base (usuarios, marcas) contra `elevate_db_test` antes de cada corrida — el seed es necesario porque los tests de integración usan el login del admin sembrado y las marcas base, y una base de test recién creada no tiene esos datos. Ese hook automático **no** aplica a `test:watch` — para modo watch, correr `npm test` al menos una vez primero deja `elevate_db_test` sincronizada y sembrada. Requiere agregar `dotenv-cli` como devDependency para poder pasarle un archivo de env distinto a los comandos de Prisma sin afectar `.env`/`.env.local`.)
 
 ### Convención de tests
 Co-ubicados junto al código: `archivo.ts` → `archivo.test.ts` (convención estándar de Vitest, sin carpeta `__tests__` separada).
