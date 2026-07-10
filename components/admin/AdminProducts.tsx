@@ -97,7 +97,7 @@ export default function AdminProducts() {
       load();
     } catch (e: unknown) {
       const err = e as { response?: { data?: { error?: string } } };
-      setActionError(err?.response?.data?.error ?? 'No se pudo cambiar el estado. Verifica nombre, descripcion, precio, imagen, menu y receta.');
+      setActionError(err?.response?.data?.error ?? 'No se pudo cambiar el estado. Verifica nombre, descripcion, precio, menu y receta.');
       setTimeout(() => setActionError(''), 6000);
     }
   };

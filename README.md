@@ -20,6 +20,16 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Running tests
+
+Tests use [Vitest](https://vitest.dev) against a dedicated test database (separate from your dev database, same Docker container).
+
+1. Make sure the Postgres container is running: `docker compose up -d postgres`
+2. Copy `.env.test.example` to `.env.test` (values are non-sensitive local dev defaults, safe to use as-is)
+3. Run `npm test` — this syncs the schema and seeds base data into the test database (`elevate_db_test`) before running the suite
+
+Use `npm run test:watch` for watch mode (run `npm test` at least once first so the test database is up to date).
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:
