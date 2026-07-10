@@ -151,6 +151,8 @@ export default function AdminInsumos() {
   const [unidadForm, setUnidadForm] = useState<{ nombre: string; activo: boolean }>({ nombre: '', activo: true });
   const [unidadSaving, setUnidadSaving] = useState(false);
   const [unidadError, setUnidadError] = useState('');
+  const [selectedCategorias, setSelectedCategorias] = useState<string[]>([]);
+  const [categoriaMenuOpen, setCategoriaMenuOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -187,12 +189,26 @@ export default function AdminInsumos() {
     }, { ok: 0, bajo: 0, critico: 0, agotado: 0 } as Record<EstadoStock, number>);
   }, [insumos]);
 
+  const categoriasDisponibles = useMemo(() => {
+    const set = new Set<string>();
+    for (const insumo of insumos) {
+      const cat = insumo.categoria_insumo?.trim();
+      if (cat) set.add(cat);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [insumos]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return insumos
       .filter(insumo => statusFilter === 'todos' || stockState(insumo) === statusFilter)
-      .filter(insumo => !q || insumo.nombre.toLowerCase().includes(q) || (insumo.categoria_insumo ?? '').toLowerCase().includes(q));
-  }, [insumos, search, statusFilter]);
+      .filter(insumo => !q || insumo.nombre.toLowerCase().includes(q) || (insumo.categoria_insumo ?? '').toLowerCase().includes(q))
+      .filter(insumo => selectedCategorias.length === 0 || selectedCategorias.includes(insumo.categoria_insumo ?? ''));
+  }, [insumos, search, statusFilter, selectedCategorias]);
+
+  const toggleCategoria = (categoria: string) => {
+    setSelectedCategorias(prev => prev.includes(categoria) ? prev.filter(c => c !== categoria) : [...prev, categoria]);
+  };
 
   const recipesByProduct = useMemo(() => {
     const groups = new Map<number, { producto: Receta['producto']; items: Receta[]; costo: number }>();
@@ -455,6 +471,38 @@ export default function AdminInsumos() {
             <div className="admin-search">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
               <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Buscar insumo..." />
+            </div>
+            <div style={{ position: 'relative' }}>
+              <button className="admin-btn secondary" onClick={() => setCategoriaMenuOpen(prev => !prev)} type="button" disabled={categoriasDisponibles.length === 0}>
+                Categorías{selectedCategorias.length > 0 ? ` (${selectedCategorias.length})` : ''}
+                <span style={{ marginLeft: 6 }}>{categoriaMenuOpen ? '▲' : '▼'}</span>
+              </button>
+              {categoriaMenuOpen && (
+                <div
+                  style={{
+                    position: 'absolute', top: '110%', left: 0, zIndex: 20, minWidth: 220,
+                    background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 'var(--radius)',
+                    boxShadow: 'var(--shadow-md)', padding: 12,
+                  }}
+                >
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 220, overflowY: 'auto' }}>
+                    {categoriasDisponibles.map(categoria => (
+                      <label key={categoria} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                        <input type="checkbox" checked={selectedCategorias.includes(categoria)} onChange={() => toggleCategoria(categoria)} />
+                        <span>{categoria}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <button
+                    className="admin-btn ghost"
+                    style={{ marginTop: 10, width: '100%' }}
+                    onClick={() => setSelectedCategorias([])}
+                    type="button"
+                  >
+                    Limpiar selección
+                  </button>
+                </div>
+              )}
             </div>
             <div className="admin-cat-filters">
               {[
