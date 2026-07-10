@@ -26,6 +26,11 @@ interface ReglaPayload {
   fecha_fin: string;
 }
 
+interface PromocionPayload {
+  nombre: string;
+  valor: string;
+}
+
 function fmtDate(value: string) {
   return new Date(value).toLocaleString('es-BO', {
     day: '2-digit',
@@ -68,6 +73,14 @@ function useEliminarRegla() {
   return useMutation({
     mutationFn: async (id: number) => (await apiClient.delete(`/api/reglas-horarias/${id}`)).data,
     onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'reglas-horarias'] }),
+  });
+}
+
+function useCrearPromocion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: PromocionPayload) => (await apiClient.post<Promocion>('/api/promociones', payload)).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'promociones'] }),
   });
 }
 
@@ -149,12 +162,138 @@ function NuevaReglaModal({
   );
 }
 
+interface NuevaPromocionValue {
+  nombre: string;
+  valor: string;
+  activar: boolean;
+  fecha_inicio: string;
+  fecha_fin: string;
+}
+
+function NuevaPromocionModal({
+  onClose,
+  onSubmit,
+  saving,
+  error,
+}: {
+  onClose: () => void;
+  onSubmit: (value: NuevaPromocionValue) => void;
+  saving: boolean;
+  error: string;
+}) {
+  const [form, setForm] = useState<NuevaPromocionValue>({
+    nombre: '',
+    valor: '',
+    activar: false,
+    fecha_inicio: '',
+    fecha_fin: '',
+  });
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    onSubmit(form);
+  };
+
+  return (
+    <div className="admin-modal-overlay">
+      <form onSubmit={submit} className="admin-modal">
+        <div className="admin-modal-header">
+          <h2>Nueva promoción</h2>
+          <button type="button" className="admin-modal-close" onClick={onClose}>×</button>
+        </div>
+        <div className="admin-modal-body">
+          <div className="form-grid">
+            <div className="form-group full">
+              <label>Nombre</label>
+              <input
+                value={form.nombre}
+                onChange={event => setForm({ ...form, nombre: event.target.value })}
+                required
+              />
+            </div>
+            <div className="form-group full">
+              <label>Valor</label>
+              <input
+                value={form.valor}
+                onChange={event => setForm({ ...form, valor: event.target.value })}
+                placeholder="Ej. 10% o 5 (monto fijo)"
+                required
+              />
+            </div>
+            <div className="form-group full">
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={form.activar}
+                  onChange={event => setForm({ ...form, activar: event.target.checked })}
+                />
+                Activar ahora con un límite de tiempo
+              </label>
+            </div>
+            {form.activar && (
+              <>
+                <div className="form-group">
+                  <label>Inicio</label>
+                  <input
+                    type="datetime-local"
+                    value={form.fecha_inicio}
+                    onChange={event => setForm({ ...form, fecha_inicio: event.target.value })}
+                    required
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Fin</label>
+                  <input
+                    type="datetime-local"
+                    value={form.fecha_fin}
+                    onChange={event => setForm({ ...form, fecha_fin: event.target.value })}
+                    required
+                  />
+                </div>
+              </>
+            )}
+          </div>
+          {error && <div className="gate-warning" style={{ marginTop: 12 }}>{error}</div>}
+        </div>
+        <div className="admin-modal-footer">
+          <button type="button" className="admin-btn ghost" onClick={onClose}>Cancelar</button>
+          <button type="submit" className="admin-btn primary" disabled={saving}>Guardar</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 export default function ReglasHorarias() {
   const reglas = useReglasHorarias();
   const promociones = usePromociones();
   const crear = useCrearRegla();
   const eliminar = useEliminarRegla();
+  const crearPromocion = useCrearPromocion();
   const [showModal, setShowModal] = useState(false);
+  const [showPromoModal, setShowPromoModal] = useState(false);
+  const [promoSaving, setPromoSaving] = useState(false);
+  const [promoError, setPromoError] = useState('');
+
+  const handleCrearPromocion = async (value: NuevaPromocionValue) => {
+    setPromoError('');
+    setPromoSaving(true);
+    try {
+      const promo = await crearPromocion.mutateAsync({ nombre: value.nombre, valor: value.valor });
+      if (value.activar) {
+        await crear.mutateAsync({
+          promocionesDescuentos_id: promo.id,
+          fecha_inicio: value.fecha_inicio,
+          fecha_fin: value.fecha_fin,
+        });
+      }
+      setShowPromoModal(false);
+    } catch {
+      setPromoError('No se pudo crear la promoción. Intenta de nuevo.');
+    } finally {
+      setPromoSaving(false);
+    }
+  };
 
   const rows = reglas.data ?? [];
   const resumen = useMemo(() => {
@@ -170,7 +309,10 @@ export default function ReglasHorarias() {
           <h1>Horarios</h1>
           <p>Reglas de vigencia para promociones aplicadas por fecha y hora.</p>
         </div>
-        <button className="admin-btn primary" onClick={() => setShowModal(true)}>Nueva regla</button>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button className="admin-btn secondary" onClick={() => setShowPromoModal(true)}>+ Promo</button>
+          <button className="admin-btn primary" onClick={() => setShowModal(true)}>Nueva regla</button>
+        </div>
       </div>
 
       {reglas.isLoading ? (
@@ -245,6 +387,15 @@ export default function ReglasHorarias() {
           onClose={() => setShowModal(false)}
           onSubmit={payload => crear.mutate(payload, { onSuccess: () => setShowModal(false) })}
           saving={crear.isPending}
+        />
+      )}
+
+      {showPromoModal && (
+        <NuevaPromocionModal
+          onClose={() => setShowPromoModal(false)}
+          onSubmit={handleCrearPromocion}
+          saving={promoSaving}
+          error={promoError}
         />
       )}
     </>
