@@ -22,6 +22,8 @@ export async function POST(request: NextRequest) {
     const {
       categoria_insumo,
       costo_promedio,
+      equivalencia_cantidad,
+      equivalencia_unidad,
       nombre,
       proveedor,
       punto_critico,
@@ -29,10 +31,13 @@ export async function POST(request: NextRequest) {
       stock_minimo,
       unidad_medida,
     } = await request.json();
+    const tieneEquivalencia = equivalencia_unidad && equivalencia_cantidad;
     const insumo = await prisma.insumo.create({
       data: {
         categoria_insumo: categoria_insumo || null,
         costo_promedio: Number(costo_promedio || 0),
+        equivalencia_cantidad: tieneEquivalencia ? Number(equivalencia_cantidad) : null,
+        equivalencia_unidad: tieneEquivalencia ? equivalencia_unidad : null,
         nombre,
         proveedor: proveedor || null,
         punto_critico: Number(punto_critico || 0),

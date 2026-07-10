@@ -291,6 +291,9 @@ model Insumo {
   activo               Boolean              @default(true)
   fecha_baja           DateTime?
   motivo_baja          String?
+  // Equivalencia informativa (ej. 1 UNIDAD = 300 GR) — no afecta stock/recetas
+  equivalencia_unidad   String?
+  equivalencia_cantidad Float?
   movimientoInterno_id MovimientoInterno[]
   recetaProducto_id    RecetasProducto[]
   insumos_mixtos_padre InsumoMixtoDetalle[] @relation("InsumoPadre")
