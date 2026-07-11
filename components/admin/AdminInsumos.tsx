@@ -114,10 +114,6 @@ function medidaInfo(u: string) {
   return UNIDAD_LABELS[u.toUpperCase()] ?? { label: u.toLowerCase(), sufijo: u.toLowerCase() };
 }
 
-function esUnidadDeMedida(u: string) {
-  return UNIDADES_MEDIDA.includes(u.toUpperCase());
-}
-
 function UnidadFieldGroup({
   unidadMedida,
   unidadesParaSelect,
@@ -137,7 +133,7 @@ function UnidadFieldGroup({
   onEquivalenciaCantidadChange: (value: string) => void;
   onNuevaUnidad: () => void;
 }) {
-  const mostrarPanel = unidadMedida.trim() !== '' && !esUnidadDeMedida(unidadMedida);
+  const mostrarPanel = unidadMedida.trim() !== '';
   const info = equivalenciaUnidad ? medidaInfo(equivalenciaUnidad) : null;
 
   return (
@@ -819,66 +815,40 @@ export default function AdminInsumos() {
                 <div className="form-grid">
                   <label className="form-group full"><span>Nombre</span><input value={form.nombre} onChange={event => setForm(prev => ({ ...prev, nombre: event.target.value }))} required /></label>
                   <label className="form-group"><span>Categoría</span><input placeholder="Granos" value={form.categoria_insumo} onChange={event => setForm(prev => ({ ...prev, categoria_insumo: event.target.value }))} /></label>
-                  <label className="form-group">
-                    <span>Unidad</span>
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      <select value={form.unidad_medida} onChange={event => setForm(prev => ({ ...prev, unidad_medida: event.target.value }))} style={{ flex: 1 }}>
-                        {unidadesParaSelect.map(unidad => <option key={unidad.id} value={unidad.nombre}>{unidad.nombre}</option>)}
-                      </select>
-                      <button className="admin-btn secondary" onClick={() => openUnidadModal('crear')} type="button">+ Nueva</button>
-                    </div>
-                  </label>
+                  <UnidadFieldGroup
+                    unidadMedida={form.unidad_medida}
+                    unidadesParaSelect={unidadesParaSelect}
+                    equivalenciaUnidad={form.equivalencia_unidad}
+                    equivalenciaCantidad={form.equivalencia_cantidad}
+                    onUnidadChange={value => setForm(prev => ({ ...prev, unidad_medida: value }))}
+                    onEquivalenciaUnidadChange={value => setForm(prev => ({ ...prev, equivalencia_unidad: value }))}
+                    onEquivalenciaCantidadChange={value => setForm(prev => ({ ...prev, equivalencia_cantidad: value }))}
+                    onNuevaUnidad={() => openUnidadModal('crear')}
+                  />
                   <label className="form-group"><span>Stock</span><input type="number" min="0" step="0.01" value={form.stock_actual} onChange={event => setForm(prev => ({ ...prev, stock_actual: event.target.value }))} required /></label>
                   <label className="form-group"><span>Costo unitario (Bs)</span><input type="number" min="0" step="0.01" value={form.costo_promedio} onChange={event => setForm(prev => ({ ...prev, costo_promedio: event.target.value }))} /></label>
                   <label className="form-group"><span>Stock mínimo</span><input type="number" min="0" step="0.01" value={form.stock_minimo} onChange={event => setForm(prev => ({ ...prev, stock_minimo: event.target.value }))} required /></label>
                   <label className="form-group"><span>Stock crítico</span><input type="number" min="0" step="0.01" value={form.punto_critico} onChange={event => setForm(prev => ({ ...prev, punto_critico: event.target.value }))} /></label>
                   <label className="form-group full"><span>Proveedor</span><input value={form.proveedor} onChange={event => setForm(prev => ({ ...prev, proveedor: event.target.value }))} /></label>
-                  <div className="form-group full">
-                    <span className="form-hint">Equivalencia (opcional): a cuánto equivale una unidad en otra medida. Ej. 1 UNIDAD de pan = 300 GR.</span>
-                  </div>
-                  <label className="form-group">
-                    <span>Cantidad equivalente</span>
-                    <input type="number" min="0" step="0.01" value={form.equivalencia_cantidad} onChange={event => setForm(prev => ({ ...prev, equivalencia_cantidad: event.target.value }))} />
-                  </label>
-                  <label className="form-group">
-                    <span>Unidad equivalente</span>
-                    <select value={form.equivalencia_unidad} onChange={event => setForm(prev => ({ ...prev, equivalencia_unidad: event.target.value }))}>
-                      <option value="">—</option>
-                      {unidadesParaSelect.map(unidad => <option key={unidad.id} value={unidad.nombre}>{unidad.nombre}</option>)}
-                    </select>
-                  </label>
                 </div>
               ) : modalAction === 'editar' ? (
                 <div className="form-grid">
                   <label className="form-group full"><span>Nombre</span><input value={form.nombre} onChange={event => setForm(prev => ({ ...prev, nombre: event.target.value }))} required /></label>
                   <label className="form-group"><span>Categoría</span><input placeholder="Granos" value={form.categoria_insumo} onChange={event => setForm(prev => ({ ...prev, categoria_insumo: event.target.value }))} /></label>
-                  <label className="form-group">
-                    <span>Unidad</span>
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      <select value={form.unidad_medida} onChange={event => setForm(prev => ({ ...prev, unidad_medida: event.target.value }))} style={{ flex: 1 }}>
-                        {unidadesParaSelect.map(unidad => <option key={unidad.id} value={unidad.nombre}>{unidad.nombre}</option>)}
-                      </select>
-                      <button className="admin-btn secondary" onClick={() => openUnidadModal('crear')} type="button">+ Nueva</button>
-                    </div>
-                  </label>
+                  <UnidadFieldGroup
+                    unidadMedida={form.unidad_medida}
+                    unidadesParaSelect={unidadesParaSelect}
+                    equivalenciaUnidad={form.equivalencia_unidad}
+                    equivalenciaCantidad={form.equivalencia_cantidad}
+                    onUnidadChange={value => setForm(prev => ({ ...prev, unidad_medida: value }))}
+                    onEquivalenciaUnidadChange={value => setForm(prev => ({ ...prev, equivalencia_unidad: value }))}
+                    onEquivalenciaCantidadChange={value => setForm(prev => ({ ...prev, equivalencia_cantidad: value }))}
+                    onNuevaUnidad={() => openUnidadModal('crear')}
+                  />
                   <label className="form-group"><span>Costo unitario (Bs)</span><input type="number" min="0" step="0.01" value={form.costo_promedio} onChange={event => setForm(prev => ({ ...prev, costo_promedio: event.target.value }))} /></label>
                   <label className="form-group"><span>Stock mínimo</span><input type="number" min="0" step="0.01" value={form.stock_minimo} onChange={event => setForm(prev => ({ ...prev, stock_minimo: event.target.value }))} required /></label>
                   <label className="form-group"><span>Stock crítico</span><input type="number" min="0" step="0.01" value={form.punto_critico} onChange={event => setForm(prev => ({ ...prev, punto_critico: event.target.value }))} /></label>
                   <label className="form-group full"><span>Proveedor</span><input value={form.proveedor} onChange={event => setForm(prev => ({ ...prev, proveedor: event.target.value }))} /></label>
-                  <div className="form-group full">
-                    <span className="form-hint">Equivalencia (opcional): a cuánto equivale una unidad en otra medida. Ej. 1 UNIDAD de pan = 300 GR.</span>
-                  </div>
-                  <label className="form-group">
-                    <span>Cantidad equivalente</span>
-                    <input type="number" min="0" step="0.01" value={form.equivalencia_cantidad} onChange={event => setForm(prev => ({ ...prev, equivalencia_cantidad: event.target.value }))} />
-                  </label>
-                  <label className="form-group">
-                    <span>Unidad equivalente</span>
-                    <select value={form.equivalencia_unidad} onChange={event => setForm(prev => ({ ...prev, equivalencia_unidad: event.target.value }))}>
-                      <option value="">—</option>
-                      {unidadesParaSelect.map(unidad => <option key={unidad.id} value={unidad.nombre}>{unidad.nombre}</option>)}
-                    </select>
-                  </label>
                   <div className="form-group full">
                     <span className="form-hint">
                       Este formulario no cambia la cantidad en stock. Para corregir una cantidad mal registrada, usa el botón ✓ "Corregir stock" en la fila del insumo.
