@@ -100,6 +100,93 @@ interface UnidadMedidaRow {
   activo: boolean;
 }
 
+const UNIDADES_MEDIDA = ['ML', 'LT', 'GR', 'KG'];
+
+const UNIDAD_LABELS: Record<string, { label: string; sufijo: string }> = {
+  ML: { label: 'mililitros', sufijo: 'ml' },
+  LT: { label: 'litros', sufijo: 'L' },
+  GR: { label: 'gramos', sufijo: 'g' },
+  KG: { label: 'kilogramos', sufijo: 'kg' },
+  UNIDAD: { label: 'unidades', sufijo: 'u.' },
+};
+
+function medidaInfo(u: string) {
+  return UNIDAD_LABELS[u.toUpperCase()] ?? { label: u.toLowerCase(), sufijo: u.toLowerCase() };
+}
+
+function esUnidadDeMedida(u: string) {
+  return UNIDADES_MEDIDA.includes(u.toUpperCase());
+}
+
+function UnidadFieldGroup({
+  unidadMedida,
+  unidadesParaSelect,
+  equivalenciaUnidad,
+  equivalenciaCantidad,
+  onUnidadChange,
+  onEquivalenciaUnidadChange,
+  onEquivalenciaCantidadChange,
+  onNuevaUnidad,
+}: {
+  unidadMedida: string;
+  unidadesParaSelect: UnidadMedidaRow[];
+  equivalenciaUnidad: string;
+  equivalenciaCantidad: string;
+  onUnidadChange: (value: string) => void;
+  onEquivalenciaUnidadChange: (value: string) => void;
+  onEquivalenciaCantidadChange: (value: string) => void;
+  onNuevaUnidad: () => void;
+}) {
+  const mostrarPanel = unidadMedida.trim() !== '' && !esUnidadDeMedida(unidadMedida);
+  const info = equivalenciaUnidad ? medidaInfo(equivalenciaUnidad) : null;
+
+  return (
+    <label className="form-group">
+      <span>Unidad</span>
+      <div style={{ display: 'flex', gap: 6 }}>
+        <select value={unidadMedida} onChange={event => onUnidadChange(event.target.value)} style={{ flex: 1 }}>
+          {unidadesParaSelect.map(unidad => <option key={unidad.id} value={unidad.nombre}>{unidad.nombre}</option>)}
+        </select>
+        <button className="admin-btn secondary" onClick={onNuevaUnidad} type="button">+ Nueva</button>
+      </div>
+      {mostrarPanel && (
+        <div className="unidad-contenido-panel">
+          <span className="form-hint">Contenido por unidad (opcional)</span>
+          <div className="form-grid">
+            <div className="form-group">
+              <span>Unidad de medida</span>
+              <select value={equivalenciaUnidad} onChange={event => onEquivalenciaUnidadChange(event.target.value)}>
+                <option value="">—</option>
+                {UNIDADES_MEDIDA.map(u => <option key={u} value={u}>{medidaInfo(u).label}</option>)}
+              </select>
+            </div>
+            {equivalenciaUnidad && info && (
+              <div className="form-group">
+                <span>Cantidad ({info.label})</span>
+                <div className="input-suffix">
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={equivalenciaCantidad}
+                    onChange={event => onEquivalenciaCantidadChange(event.target.value)}
+                  />
+                  <span>{info.sufijo}</span>
+                </div>
+              </div>
+            )}
+          </div>
+          {equivalenciaUnidad && equivalenciaCantidad && info && (
+            <span className="form-hint">
+              Ej.: 1 {unidadMedida} de este insumo = {equivalenciaCantidad} {info.sufijo}. No afecta stock ni recetas.
+            </span>
+          )}
+        </div>
+      )}
+    </label>
+  );
+}
+
 function stockState(insumo: Insumo): EstadoStock {
   if (insumo.stock_actual <= 0) return 'agotado';
   const critico = insumo.punto_critico > 0 ? insumo.punto_critico : insumo.stock_minimo;

@@ -17,6 +17,7 @@ interface Producto {
   descripcion?: string | null;
   precio: number;
   disponible: boolean;
+  categoria_id?: { categoria: { id: number; nombre: string } }[];
 }
 
 interface CartItem extends Producto {
@@ -29,6 +30,7 @@ export default function VentaCajaPage() {
   const [productos, setProductos] = useState<Producto[]>([]);
   const [loading, setLoading] = useState(true);
   const [busqueda, setBusqueda] = useState('');
+  const [filterCat, setFilterCat] = useState<number | null>(null);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [metodoPago, setMetodoPago] = useState<Metodo>('EFECTIVO');
   const [esCortesia, setEsCortesia] = useState(false);
@@ -80,7 +82,17 @@ export default function VentaCajaPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  const filtrados = productos.filter(p => p.nombre.toLowerCase().includes(busqueda.toLowerCase()));
+  const categorias = useMemo(() => {
+    const map = new Map<number, string>();
+    productos.flatMap(p => p.categoria_id ?? []).forEach(c => map.set(c.categoria.id, c.categoria.nombre));
+    return Array.from(map, ([id, nombre]) => ({ id, nombre }))
+      .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+  }, [productos]);
+
+  const filtrados = productos.filter(p =>
+    p.nombre.toLowerCase().includes(busqueda.toLowerCase()) &&
+    (filterCat === null || (p.categoria_id ?? []).some(c => c.categoria.id === filterCat))
+  );
   const subtotal = useMemo(() => cart.reduce((sum, item) => sum + item.precio * item.cantidad, 0), [cart]);
   const descuentoPct = (!anonimo && clienteSeleccionado?.descuento_pct) ? clienteSeleccionado.descuento_pct : 0;
   const descuentoMonto = Number((subtotal * (descuentoPct / 100)).toFixed(2));
@@ -165,13 +177,23 @@ export default function VentaCajaPage() {
 
       <div className="dashboard-grid">
         <section className="dash-card span-8">
-          <div className="admin-search" style={{ width: '100%', marginBottom: 18 }}>
+          <div className="admin-search" style={{ width: '100%', marginBottom: 12 }}>
             <input value={busqueda} onChange={e => setBusqueda(e.target.value)} placeholder="Buscar producto..." />
+          </div>
+          <div className="admin-cat-filters" style={{ marginBottom: 18 }}>
+            <button className={`cat-filter-btn ${filterCat === null ? 'active' : ''}`} type="button" onClick={() => setFilterCat(null)}>Todos</button>
+            {categorias.map(cat => (
+              <button key={cat.id} className={`cat-filter-btn ${filterCat === cat.id ? 'active' : ''}`} type="button" onClick={() => setFilterCat(cat.id)}>{cat.nombre}</button>
+            ))}
           </div>
           {loading ? (
             <div style={{ minHeight: 220 }} />
           ) : filtrados.length === 0 ? (
-            <EmptyState title="Sin productos" hint="No hay productos disponibles para venta." />
+            productos.length === 0 ? (
+              <EmptyState title="Sin productos" hint="No hay productos disponibles para venta." />
+            ) : (
+              <EmptyState title="Sin resultados" hint="Ningún producto coincide con el filtro o la búsqueda." />
+            )
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
               {filtrados.map(producto => (

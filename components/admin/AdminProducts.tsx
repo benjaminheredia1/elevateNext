@@ -68,7 +68,7 @@ export default function AdminProducts() {
     apiClient.get('/api/categoria')
       .then(r => {
         const cats: { nombre: string }[] = Array.isArray(r.data) ? r.data : r.data?.data ?? [];
-        setDbCategorias(['Todos', ...cats.map(c => c.nombre)]);
+        setDbCategorias(['Todos', ...new Set(cats.map(c => c.nombre))]);
       })
       .catch(() => setDbCategorias(['Todos']));
   }, []);

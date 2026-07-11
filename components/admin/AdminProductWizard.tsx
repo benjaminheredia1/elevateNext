@@ -113,7 +113,6 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, onClo
   /* ---- gate de publicación ---- */
   const gate: string[] = [];
   if (!p.nombre.trim()) gate.push('Define el nombre del producto.');
-  if (!p.descripcion.trim()) gate.push('Agrega una descripción.');
   if (!(p.precio > 0)) gate.push('Define un precio de venta.');
   if (p.marcas.length === 0) gate.push('Asigna al menos un menú.');
   if (
@@ -235,7 +234,7 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, onClo
                   {cats.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
                 </select>
               </div>
-              <div className="form-group full"><label>Descripción</label><textarea rows={3} value={p.descripcion} onChange={e => set({ descripcion: e.target.value })} /></div>
+              <div className="form-group full"><label>Descripción (opcional)</label><textarea rows={3} value={p.descripcion} onChange={e => set({ descripcion: e.target.value })} /></div>
             </div>
           )}
 
