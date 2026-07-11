@@ -47,4 +47,27 @@ describe('POST /api/admin/productos', () => {
       createdInsumoIds.push(body.data.insumo_reventa_id);
     }
   });
+
+  it('crea un borrador sin descripcion', async () => {
+    const { access_token } = await login('benjaherediaruiz@gmail.com', 'benja122');
+
+    const request = new NextRequest('http://localhost/api/admin/productos', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${access_token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        nombre: 'Producto de test sin descripcion',
+        precio: 20,
+        tipo: 'REVENTA',
+        estado_publicacion: 'BORRADOR',
+      }),
+    });
+
+    const response = await POST(request);
+    const body = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(body.data.descripcion).toBe('');
+
+    createdIds.push(body.data.id);
+  });
 });

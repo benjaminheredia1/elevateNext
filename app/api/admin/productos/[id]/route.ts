@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import prisma from '@/lib/prisma';
 import { requireAuth, requireRole } from '@/lib/server/auth/session';
-import { handleApiError } from '@/lib/server/errors';
+import { handleApiError, ConflictError } from '@/lib/server/errors';
 import { ProductoConFichaSchema } from '@/lib/server/dto/inventario.dto';
 import { costoFichaTecnica } from '@/lib/server/inventario/inventario.service';
 import { logAudit } from '@/lib/server/audit/audit.service';
@@ -205,6 +205,11 @@ export async function DELETE(req: NextRequest, { params }: Ctx) {
 
     const prod = await prisma.producto.findUnique({ where: { id: productoId } });
     if (!prod) return NextResponse.json({ error: 'Producto no encontrado' }, { status: 404 });
+
+    const tieneVentas = await prisma.transaccionesDetalles.count({ where: { producto_id: productoId } });
+    if (tieneVentas > 0) {
+      throw new ConflictError('No se puede eliminar: el producto tiene pedidos asociados. Usa "Dar de baja" en su lugar.');
+    }
 
     await prisma.$transaction(async (tx) => {
       await tx.categoriasProducto.deleteMany({ where: { producto_id: productoId } });

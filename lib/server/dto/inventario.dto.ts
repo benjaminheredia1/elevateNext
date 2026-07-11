@@ -61,7 +61,7 @@ export type NuevoInsumoReventaInput = z.infer<typeof NuevoInsumoReventaSchema>;
 
 export const ProductoConFichaSchema = z.object({
   nombre:             z.string().min(1),
-  descripcion:        z.string().min(1),
+  descripcion:        z.string().optional().default(''),
   precio:             z.number().positive(),
   imagen_url:         ImagenProductoSchema.optional(),
   disponible:         z.boolean().optional().default(true),
