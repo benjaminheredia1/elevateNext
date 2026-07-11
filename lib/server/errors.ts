@@ -11,6 +11,7 @@ export class ConflictError extends AppError { constructor(m = 'Conflicto') { sup
 
 export function handleApiError(e: unknown): NextResponse {
   if (e instanceof ZodError) {
+    console.error('Validation error:', JSON.stringify(e.issues));
     return NextResponse.json({ error: 'Datos inválidos', code: 'VALIDATION', detalles: e.issues }, { status: 422 });
   }
   if (e instanceof AuthError) return NextResponse.json({ error: e.message }, { status: 401 });
