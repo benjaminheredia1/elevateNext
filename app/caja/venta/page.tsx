@@ -114,6 +114,16 @@ export default function VentaCajaPage() {
 
   const cobrar = async () => {
     try {
+      // Validar que si es fiado en modo manual, haya al menos un identificador
+      if (esFiado && modoManual && !cTelefono.trim() && !cEmail.trim() && !cNit.trim()) {
+        setAlert({
+          title: 'Dato requerido',
+          description: 'Para cargar a cuenta (fiado), ingresa al menos el celular, email o NIT del cliente.',
+          type: 'warning',
+        });
+        return;
+      }
+
       const venta = await registrarVenta.mutateAsync({
         items: cart.map(item => ({ producto_id: item.id, cantidad: item.cantidad })),
         metodo_pago: metodoPago,
@@ -305,6 +315,19 @@ export default function VentaCajaPage() {
                   <input placeholder="NIT / C.I." inputMode="numeric" value={cNit} onChange={e => setCNit(e.target.value.replace(/\D/g, ''))} />
                   <input placeholder="Correo (opcional)" value={cEmail} onChange={e => setCEmail(e.target.value)} />
                   <span className="form-hint">Se registrará como cliente nuevo. Si el celular/NIT ya existe, se vinculará automáticamente.</span>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--ink)' }}>
+                    <input type="checkbox" checked={esFiado} onChange={e => { setEsFiado(e.target.checked); if (e.target.checked) setEsCortesia(false); }} />
+                    Cargar a cuenta (fiado) <span className="dim">— paga después</span>
+                  </label>
+                  {esFiado && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <span className="form-hint">Vencimiento (opcional):</span>
+                      <input type="date" value={fiadoVencimiento} onChange={e => setFiadoVencimiento(e.target.value)} />
+                      <span className="form-hint" style={{ color: 'var(--amber)' }}>
+                        No entra dinero a caja ahora. Queda como deuda por cobrar del cliente.
+                      </span>
+                    </div>
+                  )}
                   <button type="button" className="admin-btn ghost" onClick={() => { setModoManual(false); setCNombre(''); setCTelefono(''); setCEmail(''); setCNit(''); }}>
                     ← Volver a buscar
                   </button>
@@ -343,7 +366,16 @@ export default function VentaCajaPage() {
               )}
             </div>
 
-            <button className="admin-btn primary" type="button" disabled={cart.length === 0 || registrarVenta.isPending} onClick={() => setConfirmOpen(true)}>
+            <button
+              className="admin-btn primary"
+              type="button"
+              disabled={
+                cart.length === 0
+                || registrarVenta.isPending
+                || (esFiado && modoManual && !cTelefono.trim() && !cEmail.trim() && !cNit.trim())
+              }
+              onClick={() => setConfirmOpen(true)}
+            >
               {esFiado ? 'Cargar a cuenta' : 'Cobrar'}
             </button>
           </div>
