@@ -7,7 +7,13 @@ export async function GET(req: NextRequest) {
   if (auth instanceof NextResponse) return auth;
 
   try {
-    const insumos = await prisma.insumo.findMany({ where: { activo: true } });
+    // Por defecto solo activos (selector de recetas, etc.). El panel de inventario
+    // pide también los dados de baja para poder mostrarlos y reactivarlos.
+    const incluirInactivos = new URL(req.url).searchParams.get('incluir_inactivos') === '1';
+    const insumos = await prisma.insumo.findMany({
+      where: incluirInactivos ? undefined : { activo: true },
+      orderBy: { nombre: 'asc' },
+    });
     return NextResponse.json(insumos);
   } catch {
     return NextResponse.json({ message: 'Error al obtener insumos' }, { status: 500 });

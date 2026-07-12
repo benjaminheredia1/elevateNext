@@ -22,7 +22,7 @@ export interface WizardInitial {
   insumo_reventa_id: number | null;
 }
 
-interface InsumoOpt { id: number; nombre: string; unidad_medida: string; costo_promedio: number; stock_actual: number; stock_minimo?: number; punto_critico?: number; proveedor?: string | null; }
+interface InsumoOpt { id: number; nombre: string; unidad_medida: string; costo_promedio: number; stock_actual: number; stock_minimo?: number; punto_critico?: number; proveedor?: string | null; activo: boolean; }
 interface CategoriaOpt { id: number; nombre: string; }
 interface MarcaOpt { id: number; nombre: string; key?: string; color?: string; }
 
@@ -56,13 +56,16 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, onClo
   const [uploadError, setUploadError] = useState('');
 
   useEffect(() => {
-    apiClient.get('/api/insumo').then(r => setInsumos(Array.isArray(r.data) ? r.data : r.data?.data ?? [])).catch(() => setInsumos([]));
+    // Se cargan también los inactivos para poder detectar y señalar recetas que
+    // referencian insumos dados de baja (el selector solo ofrece los activos).
+    apiClient.get('/api/insumo?incluir_inactivos=1').then(r => setInsumos(Array.isArray(r.data) ? r.data : r.data?.data ?? [])).catch(() => setInsumos([]));
     apiClient.get('/api/categoria').then(r => setCats(Array.isArray(r.data) ? r.data : r.data?.data ?? [])).catch(() => setCats([]));
     apiClient.get('/api/admin/marcas').then(r => setMarcas(r.data?.data ?? r.data?.items ?? [])).catch(() => setMarcas([]));
   }, []);
 
   const set = (patch: Partial<WizardInitial>) => setP(prev => ({ ...prev, ...patch }));
   const insumoOf = (id: number) => insumos.find(i => i.id === id);
+  const insumosActivos = useMemo(() => insumos.filter(i => i.activo !== false), [insumos]);
 
   // Datos del insumo de inventario para productos de reventa (paso 3)
   const [reventaInsumo, setReventaInsumo] = useState<ReventaInsumo>(EMPTY_REVENTA);
@@ -119,6 +122,12 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, onClo
     p.tipo === 'ELABORADO'
     && (p.receta.length === 0 || p.receta.some(item => !item.insumo_id || !(item.cantidad_utilizada > 0)))
   ) gate.push('Falta la ficha técnica con insumos y cantidades válidas.');
+  const insumosDeBajaEnReceta = p.tipo === 'ELABORADO'
+    ? p.receta.filter(item => insumoOf(item.insumo_id)?.activo === false)
+    : [];
+  if (insumosDeBajaEnReceta.length > 0) {
+    gate.push(`La receta usa ${insumosDeBajaEnReceta.length} insumo(s) dado(s) de baja: ${insumosDeBajaEnReceta.map(item => insumoOf(item.insumo_id)?.nombre).join(', ')}. Reemplázalo(s) o quítalo(s).`);
+  }
   if (p.tipo === 'REVENTA' && !(reventaInsumo.costo_unitario > 0)) gate.push('Define el costo unitario del insumo de reventa.');
   const canPublish = gate.length === 0;
 
@@ -126,7 +135,7 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, onClo
 
   const updateRecipe = (idx: number, patch: Partial<{ insumo_id: number; cantidad_utilizada: number }>) =>
     set({ receta: p.receta.map((it, i) => i === idx ? { ...it, ...patch } : it) });
-  const addRecipe = () => set({ receta: [...p.receta, { insumo_id: insumos[0]?.id ?? 0, cantidad_utilizada: 0.1 }] });
+  const addRecipe = () => set({ receta: [...p.receta, { insumo_id: insumosActivos[0]?.id ?? 0, cantidad_utilizada: 0.1 }] });
   const removeRecipe = (idx: number) => set({ receta: p.receta.filter((_, i) => i !== idx) });
 
   const save = async (publish: boolean) => {
@@ -315,18 +324,32 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, onClo
                 <p className="form-hint" style={{ marginBottom: 12 }}>Agrega insumos de la ficha técnica. El costo se calcula en vivo.</p>
                 {p.receta.map((it, idx) => {
                   const ins = insumoOf(it.insumo_id);
+                  const esDeBaja = ins?.activo === false;
                   return (
-                    <div key={idx} className="recipe-builder-row">
-                      <select value={it.insumo_id} onChange={e => updateRecipe(idx, { insumo_id: +e.target.value })}>
-                        {insumos.map(i => <option key={i.id} value={i.id}>{i.nombre} ({i.unidad_medida})</option>)}
-                      </select>
-                      <input type="number" step="0.01" value={it.cantidad_utilizada} onChange={e => updateRecipe(idx, { cantidad_utilizada: +e.target.value })} />
-                      <span className="dim" style={{ fontSize: '0.8rem' }}>{ins?.unidad_medida}</span>
-                      <button className="action-btn delete" onClick={() => removeRecipe(idx)}>×</button>
+                    <div key={idx}>
+                      <div className="recipe-builder-row" style={esDeBaja ? { border: '1px solid var(--danger)', borderRadius: 8, padding: 6 } : undefined}>
+                        <select
+                          value={it.insumo_id}
+                          onChange={e => updateRecipe(idx, { insumo_id: +e.target.value })}
+                          style={esDeBaja ? { color: 'var(--danger)', fontWeight: 600 } : undefined}
+                        >
+                          {/* El insumo de baja se muestra solo en su propia fila, para que se vea qué era y se pueda reemplazar */}
+                          {esDeBaja && ins && <option value={ins.id}>⛔ {ins.nombre} (dado de baja)</option>}
+                          {insumosActivos.map(i => <option key={i.id} value={i.id}>{i.nombre} ({i.unidad_medida})</option>)}
+                        </select>
+                        <input type="number" step="0.01" value={it.cantidad_utilizada} onChange={e => updateRecipe(idx, { cantidad_utilizada: +e.target.value })} />
+                        <span className="dim" style={{ fontSize: '0.8rem' }}>{ins?.unidad_medida}</span>
+                        <button className="action-btn delete" onClick={() => removeRecipe(idx)}>×</button>
+                      </div>
+                      {esDeBaja && (
+                        <div style={{ color: 'var(--danger)', fontSize: '0.78rem', margin: '4px 0 8px 2px' }}>
+                          Este insumo fue dado de baja. Selecciona un reemplazo o elimina la fila (×) para poder publicar.
+                        </div>
+                      )}
                     </div>
                   );
                 })}
-                <button className="admin-btn secondary" onClick={addRecipe} style={{ marginTop: 8 }} disabled={insumos.length === 0}>+ Agregar insumo</button>
+                <button className="admin-btn secondary" onClick={addRecipe} style={{ marginTop: 8 }} disabled={insumosActivos.length === 0}>+ Agregar insumo</button>
                 <div style={{ marginTop: 16, fontWeight: 600 }}>Costo calculado: <span style={{ color: 'var(--orange)' }}>Bs {cost.toFixed(2)}</span></div>
               </div>
             )

@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import apiClient from '@/hooks/api';
+import { useDarDeBajaInsumo, useReactivarInsumo, type ResultadoBajaInsumo, type ResultadoReactivarInsumo } from '@/hooks/insumos';
 
 type Tab = 'insumos' | 'movimientos' | 'recetas' | 'unidades';
 type EstadoStock = 'ok' | 'bajo' | 'critico' | 'agotado';
@@ -21,6 +22,9 @@ interface Insumo {
   proveedor: string | null;
   equivalencia_unidad: string | null;
   equivalencia_cantidad: number | null;
+  activo: boolean;
+  fecha_baja: string | null;
+  motivo_baja: string | null;
 }
 
 interface Movimiento {
@@ -242,12 +246,17 @@ export default function AdminInsumos() {
   const [unidadError, setUnidadError] = useState('');
   const [selectedCategorias, setSelectedCategorias] = useState<string[]>([]);
   const [categoriaMenuOpen, setCategoriaMenuOpen] = useState(false);
+  const [resultadoBaja, setResultadoBaja] = useState<ResultadoBajaInsumo | null>(null);
+  const [resultadoReactivar, setResultadoReactivar] = useState<ResultadoReactivarInsumo | null>(null);
+  const [vistaInsumos, setVistaInsumos] = useState<'activos' | 'baja'>('activos');
+  const darDeBaja = useDarDeBajaInsumo();
+  const reactivar = useReactivarInsumo();
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const [insumosRes, movimientosRes, recetasRes, unidadesRes] = await Promise.all([
-        apiClient.get('/api/insumo'),
+        apiClient.get('/api/insumo?incluir_inactivos=1'),
         apiClient.get('/api/insumo/movimiento'),
         apiClient.get('/api/recetas'),
         apiClient.get('/api/unidades-medida'),
@@ -271,12 +280,27 @@ export default function AdminInsumos() {
     load();
   }, [load]);
 
+  const insumosActivos = useMemo(() => insumos.filter(i => i.activo), [insumos]);
+  // Base de la vista actual: activos o dados de baja (los filtros de stock cuentan sobre esta)
+  const insumosVista = useMemo(
+    () => (vistaInsumos === 'baja' ? insumos.filter(i => !i.activo) : insumosActivos),
+    [vistaInsumos, insumos, insumosActivos],
+  );
+
+  // KPIs de cabecera: siempre sobre activos (los de baja no son inventario operativo)
   const counts = useMemo(() => {
-    return insumos.reduce((acc, insumo) => {
+    return insumosActivos.reduce((acc, insumo) => {
       acc[stockState(insumo)] += 1;
       return acc;
     }, { ok: 0, bajo: 0, critico: 0, agotado: 0 } as Record<EstadoStock, number>);
-  }, [insumos]);
+  }, [insumosActivos]);
+
+  const countsVista = useMemo(() => {
+    return insumosVista.reduce((acc, insumo) => {
+      acc[stockState(insumo)] += 1;
+      return acc;
+    }, { ok: 0, bajo: 0, critico: 0, agotado: 0 } as Record<EstadoStock, number>);
+  }, [insumosVista]);
 
   const categoriasDisponibles = useMemo(() => {
     const set = new Set<string>();
@@ -289,11 +313,11 @@ export default function AdminInsumos() {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return insumos
+    return insumosVista
       .filter(insumo => statusFilter === 'todos' || stockState(insumo) === statusFilter)
       .filter(insumo => !q || insumo.nombre.toLowerCase().includes(q) || (insumo.categoria_insumo ?? '').toLowerCase().includes(q))
       .filter(insumo => selectedCategorias.length === 0 || selectedCategorias.includes(insumo.categoria_insumo ?? ''));
-  }, [insumos, search, statusFilter, selectedCategorias]);
+  }, [insumosVista, search, statusFilter, selectedCategorias]);
 
   const toggleCategoria = (categoria: string) => {
     setSelectedCategorias(prev => prev.includes(categoria) ? prev.filter(c => c !== categoria) : [...prev, categoria]);
@@ -387,7 +411,7 @@ export default function AdminInsumos() {
     }
   };
 
-  const totalValue = insumos.reduce((sum, item) => sum + item.stock_actual * item.costo_promedio, 0);
+  const totalValue = insumosActivos.reduce((sum, item) => sum + item.stock_actual * item.costo_promedio, 0);
 
   const openModal = (action: ModalAction, insumo?: Insumo) => {
     setFormError('');
@@ -419,6 +443,8 @@ export default function AdminInsumos() {
     setSelected(null);
     setForm(EMPTY_FORM);
     setFormError('');
+    setResultadoBaja(null);
+    setResultadoReactivar(null);
   };
 
   const handleDelete = async (insumo: Insumo) => {
@@ -427,6 +453,22 @@ export default function AdminInsumos() {
     try {
       await apiClient.delete(`/api/insumo/${insumo.id}`);
       setPageMsg({ type: 'ok', text: `Insumo "${insumo.nombre}" eliminado.` });
+      await load();
+    } catch (err) {
+      setPageMsg({ type: 'error', text: errorMsg(err) });
+    }
+  };
+
+  const handleReactivar = async (insumo: Insumo) => {
+    if (!window.confirm(`¿Reactivar el insumo "${insumo.nombre}"? Los productos en revisión se resolverán automáticamente.`)) return;
+    setPageMsg(null);
+    try {
+      const resultado = await reactivar.mutateAsync(insumo.id);
+      setResultadoReactivar(resultado);
+      setPageMsg({
+        type: 'ok',
+        text: `Insumo "${resultado.insumo.nombre}" reactivado. ${resultado.productosResueltos} producto(s) resuelto(s).`,
+      });
       await load();
     } catch (err) {
       setPageMsg({ type: 'error', text: errorMsg(err) });
@@ -497,10 +539,17 @@ export default function AdminInsumos() {
         });
       }
       if (modalAction === 'baja' && selected) {
-        await apiClient.post('/api/admin/insumos/baja', {
-          insumo_id: selected.id,
-          motivo: form.descripcion || `Baja de ${selected.nombre}`,
+        const resultado = await darDeBaja.mutateAsync({
+          id: selected.id,
+          motivo: form.descripcion.trim() || `Baja de ${selected.nombre}`,
         });
+        setResultadoBaja(resultado);
+        setPageMsg({
+          type: 'ok',
+          text: `Insumo "${resultado.insumo.nombre}" dado de baja. ${resultado.productosEnRevision} producto(s) pasó/pasaron a revisión.`,
+        });
+        await load(); // Refresca la tabla detrás del modal de resultado
+        return; // No cierra el modal aún, muestra resultado
       }
       closeModal();
       await load();
@@ -552,7 +601,7 @@ export default function AdminInsumos() {
         <div className="inv-stat"><div className="inv-stat-label">Valor total</div><div className="inv-stat-val">{money(totalValue)}</div></div>
         <div className="inv-stat"><div className="inv-stat-label">Bajo umbral</div><div className="inv-stat-val" style={{ color: 'var(--amber)' }}>{counts.bajo}</div></div>
         <div className="inv-stat"><div className="inv-stat-label">Críticos</div><div className="inv-stat-val" style={{ color: 'var(--danger)' }}>{counts.critico + counts.agotado}</div></div>
-        <div className="inv-stat"><div className="inv-stat-label">Insumos</div><div className="inv-stat-val">{insumos.length}</div></div>
+        <div className="inv-stat"><div className="inv-stat-label">Insumos</div><div className="inv-stat-val">{insumosActivos.length}</div></div>
       </div>
 
       <div className="inv-tabs">
@@ -570,6 +619,23 @@ export default function AdminInsumos() {
 
       {tab === 'insumos' && (
         <>
+          <div className="admin-cat-filters" style={{ marginBottom: 16 }}>
+            <button
+              className={`cat-filter-btn ${vistaInsumos === 'activos' ? 'active' : ''}`}
+              onClick={() => { setVistaInsumos('activos'); setStatusFilter('todos'); }}
+              type="button"
+            >
+              Activos ({insumos.filter(i => i.activo).length})
+            </button>
+            <button
+              className={`cat-filter-btn ${vistaInsumos === 'baja' ? 'active' : ''}`}
+              onClick={() => { setVistaInsumos('baja'); setStatusFilter('todos'); }}
+              type="button"
+              style={vistaInsumos === 'baja' ? { borderColor: 'var(--danger)' } : undefined}
+            >
+              ⛔ De Baja ({insumos.filter(i => !i.activo).length})
+            </button>
+          </div>
           <div className="admin-filters">
             <div className="admin-search">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
@@ -609,11 +675,11 @@ export default function AdminInsumos() {
             </div>
             <div className="admin-cat-filters">
               {[
-                ['todos', 'Todos', insumos.length],
-                ['ok', 'OK', counts.ok],
-                ['bajo', 'Bajo', counts.bajo],
-                ['critico', 'Crítico', counts.critico],
-                ['agotado', 'Agotado', counts.agotado],
+                ['todos', 'Todos', insumosVista.length],
+                ['ok', 'OK', countsVista.ok],
+                ['bajo', 'Bajo', countsVista.bajo],
+                ['critico', 'Crítico', countsVista.critico],
+                ['agotado', 'Agotado', countsVista.agotado],
               ].map(([key, label, count]) => (
                 <button
                   key={key}
@@ -665,8 +731,14 @@ export default function AdminInsumos() {
                             <span className="product-cell-name">
                               {insumo.nombre}
                               {insumo.es_mixto && <span className="cat-badge" style={{ marginLeft: 6 }}>Mixto</span>}
+                              {!insumo.activo && <span className="cat-badge" style={{ marginLeft: 6, background: 'var(--danger)', color: 'white' }}>INACTIVO</span>}
                             </span>
                             <span className="product-cell-desc">{insumo.unidad_medida}</span>
+                            {!insumo.activo && insumo.fecha_baja && (
+                              <span className="product-cell-desc" style={{ color: 'var(--danger)', marginTop: 4 }}>
+                                Baja: {new Date(insumo.fecha_baja).toLocaleDateString()}
+                              </span>
+                            )}
                           </div>
                         </td>
                         <td>{insumo.categoria_insumo || '—'}</td>
@@ -680,12 +752,20 @@ export default function AdminInsumos() {
                         <td>{insumo.proveedor || '—'}</td>
                         <td>
                           <div className="action-btns">
-                            <button className="action-btn edit" title="Editar insumo (nombre, costo, mínimos, proveedor)" onClick={() => openModal('editar', insumo)} type="button">✏</button>
-                            <button className="action-btn edit" title="Compra" onClick={() => openModal('compra', insumo)} type="button">↥</button>
-                            <button className="action-btn delete" title="Merma" onClick={() => openModal('merma', insumo)} type="button">⌫</button>
-                            <button className="action-btn" title="Corregir stock (conteo físico) — usa esto si te equivocaste en una cantidad" onClick={() => openModal('conteo', insumo)} type="button">✓</button>
-                            <button className="action-btn delete" title="Dar de baja" onClick={() => openModal('baja', insumo)} type="button">⛔</button>
-                            <button className="action-btn delete" title="Eliminar insumo" onClick={() => handleDelete(insumo)} type="button">🗑</button>
+                            {insumo.activo ? (
+                              <>
+                                <button className="action-btn edit" title="Editar insumo (nombre, costo, mínimos, proveedor)" onClick={() => openModal('editar', insumo)} type="button">✏</button>
+                                <button className="action-btn edit" title="Compra" onClick={() => openModal('compra', insumo)} type="button">↥</button>
+                                <button className="action-btn delete" title="Merma" onClick={() => openModal('merma', insumo)} type="button">⌫</button>
+                                <button className="action-btn" title="Corregir stock (conteo físico) — usa esto si te equivocaste en una cantidad" onClick={() => openModal('conteo', insumo)} type="button">✓</button>
+                                <button className="action-btn delete" title="Dar de baja" onClick={() => openModal('baja', insumo)} type="button">⛔</button>
+                                <button className="action-btn delete" title="Eliminar insumo" onClick={() => handleDelete(insumo)} type="button">🗑</button>
+                              </>
+                            ) : (
+                              <>
+                                <button className="action-btn edit" title="Reactivar insumo" onClick={() => handleReactivar(insumo)} type="button">↩</button>
+                              </>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -856,9 +936,39 @@ export default function AdminInsumos() {
                   </div>
                 </div>
               ) : modalAction === 'baja' ? (
-                <div className="form-grid">
-                  <label className="form-group full"><span>Motivo de la baja</span><textarea rows={3} value={form.descripcion} onChange={event => setForm(prev => ({ ...prev, descripcion: event.target.value }))} required /></label>
-                </div>
+                resultadoBaja ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                    <div className="gate-warning" style={{ background: 'rgba(31,169,113,.12)', borderColor: 'rgba(31,169,113,.35)', color: 'var(--fresh)' }}>
+                      ✅ Insumo "{resultadoBaja.insumo.nombre}" dado de baja correctamente.
+                    </div>
+                    {resultadoBaja.productosEnRevision > 0 && (
+                      <>
+                        <div>
+                          <strong style={{ color: 'var(--amber)' }}>⚠️ {resultadoBaja.productosEnRevision} producto(s) requiere(n) revisión:</strong>
+                          <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 200, overflowY: 'auto' }}>
+                            {resultadoBaja.productos.map(p => (
+                              <div key={p.id} style={{ padding: '8px 10px', background: 'var(--surface-soft)', borderRadius: 'var(--radius)', borderLeft: '3px solid var(--amber)' }}>
+                                <strong>{p.nombre}</strong>
+                              </div>
+                            ))}
+                          </div>
+                          <p style={{ marginTop: 12, fontSize: 13, color: 'var(--slate)' }}>
+                            Estos productos están en estado "EN REVISIÓN". Ve a la sección "Productos en Revisión" en el admin para editarlos o darlos de baja.
+                          </p>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  <div className="form-grid">
+                    <label className="form-group full"><span>Motivo de la baja</span><textarea rows={3} value={form.descripcion} onChange={event => setForm(prev => ({ ...prev, descripcion: event.target.value }))} placeholder="Ej: Proveedor descontinuó, Cambio de receta, etc." required /></label>
+                    <div className="form-group full">
+                      <span className="form-hint">
+                        Si este insumo está en recetas de productos, esos productos pasarán a estado "EN REVISIÓN" para que los edites o los des de baja.
+                      </span>
+                    </div>
+                  </div>
+                )
               ) : (
                 <div className="form-grid">
                   {modalAction === 'conteo' ? (
@@ -882,8 +992,14 @@ export default function AdminInsumos() {
               {formError && <div className="gate-warning" style={{ marginTop: 12 }}>{formError}</div>}
             </div>
             <div className="admin-modal-footer">
-              <button className="admin-btn secondary" onClick={closeModal} type="button">Cancelar</button>
-              <button className="admin-btn primary" disabled={saving} type="submit">{saving ? 'Guardando...' : 'Guardar'}</button>
+              {modalAction === 'baja' && resultadoBaja ? (
+                <button className="admin-btn primary" onClick={closeModal} type="button">Cerrar</button>
+              ) : (
+                <>
+                  <button className="admin-btn secondary" onClick={closeModal} type="button">Cancelar</button>
+                  <button className="admin-btn primary" disabled={saving || darDeBaja.isPending} type="submit">{saving || darDeBaja.isPending ? 'Guardando...' : 'Guardar'}</button>
+                </>
+              )}
             </div>
           </form>
         </div>

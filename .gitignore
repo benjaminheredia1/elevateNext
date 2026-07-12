@@ -12,6 +12,8 @@
 
 # testing
 /coverage
+# e2e temporales con credenciales reales y que mutan la BD compartida — no versionar
+*.e2e.test.ts
 
 # next.js
 /.next/
