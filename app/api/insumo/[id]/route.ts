@@ -78,21 +78,43 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     const insumo = await prisma.insumo.findUnique({ where: { id: insumoId } });
     if (!insumo) throw new NotFoundError('Insumo no encontrado');
 
-    // No permitir eliminar si está en uso (recetas, productos de reventa o insumos mixtos)
-    const [enRecetas, enReventa, comoHijo, comoPadre] = await Promise.all([
-      prisma.recetasProducto.count({ where: { insumo_id: insumoId } }),
-      prisma.producto.count({ where: { insumo_reventa_id: insumoId } }),
+    // Verificar si está en uso en recetas (ELABORADOS)
+    const enRecetas = await prisma.recetasProducto.count({
+      where: { insumo_id: insumoId },
+    });
+
+    // Verificar si es producto de reventa (con compras)
+    const enReventa = await prisma.producto.count({
+      where: { insumo_reventa_id: insumoId },
+    });
+
+    // Verificar insumos mixtos
+    const [comoHijo, comoPadre] = await Promise.all([
       prisma.insumoMixtoDetalle.count({ where: { insumo_hijo_id: insumoId } }),
       prisma.insumoMixtoDetalle.count({ where: { insumo_padre_id: insumoId } }),
     ]);
+
+    // Mostrar errores indicando qué opción usar
     const usos: string[] = [];
-    if (enRecetas) usos.push(`${enRecetas} receta(s)`);
-    if (enReventa) usos.push(`${enReventa} producto(s) de reventa`);
-    if (comoHijo || comoPadre) usos.push('insumos mixtos');
-    if (usos.length > 0) {
-      throw new ConflictError(`No se puede eliminar: está en uso por ${usos.join(', ')}. Quita esas referencias primero.`);
+    if (enRecetas) {
+      usos.push(
+        `${enRecetas} receta(s) de ELABORADOS — usa "Dar de baja" en su lugar`
+      );
+    }
+    if (enReventa) {
+      usos.push(`${enReventa} producto(s) de REVENTA — usa "Dar de baja" o edita el producto`);
+    }
+    if (comoHijo || comoPadre) {
+      usos.push('insumos mixtos — quita esas referencias primero');
     }
 
+    if (usos.length > 0) {
+      throw new ConflictError(
+        `No se puede eliminar: ${usos.join('; ')}. Usa "Dar de baja" (PATCH) si quieres desactivarlo con cascada.`
+      );
+    }
+
+    // Solo eliminar si no tiene ninguna referencia
     await prisma.$transaction([
       prisma.movimientoInterno.deleteMany({ where: { insumo_id: insumoId } }),
       prisma.insumo.delete({ where: { id: insumoId } }),
