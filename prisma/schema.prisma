@@ -52,6 +52,9 @@ enum TipoCuenta {
   QR
   TARJETA
   BANCO
+  // Pago dividido QR + efectivo (solo Transaccion.metodo_pago; el desglose
+  // real vive en los MovimientoCaja hijos, que siempre son EFECTIVO o QR)
+  MIXTO
 }
 
 enum EstadoTurno {

@@ -7,9 +7,9 @@ import AlertPopup from '@/components/AlertPopup';
 import MethodPill from '@/components/ui/MethodPill';
 import MoneyText from '@/components/ui/MoneyText';
 import EmptyState from '@/components/ui/EmptyState';
-import { useBuscarClientes, useRegistrarVenta, type ClienteResultado } from '@/hooks/caja';
+import { useAbonarDeuda, useBuscarClientes, useRegistrarVenta, type ClienteResultado } from '@/hooks/caja';
 
-type Metodo = 'EFECTIVO' | 'QR' | 'TARJETA';
+type Metodo = 'EFECTIVO' | 'QR' | 'TARJETA' | 'MIXTO';
 
 interface Producto {
   id: number;
@@ -27,12 +27,15 @@ interface CartItem extends Producto {
 export default function VentaCajaPage() {
   const router = useRouter();
   const registrarVenta = useRegistrarVenta();
+  const abonarDeuda = useAbonarDeuda();
   const [productos, setProductos] = useState<Producto[]>([]);
   const [loading, setLoading] = useState(true);
   const [busqueda, setBusqueda] = useState('');
   const [filterCat, setFilterCat] = useState<number | null>(null);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [metodoPago, setMetodoPago] = useState<Metodo>('EFECTIVO');
+  // Pago mixto: el efectivo es la fuente de verdad; el QR es el resto del total.
+  const [mixtoEfectivo, setMixtoEfectivo] = useState(0);
   const [esCortesia, setEsCortesia] = useState(false);
   const [anonimo, setAnonimo] = useState(false);
   const [cNombre, setCNombre] = useState('');
@@ -45,6 +48,8 @@ export default function VentaCajaPage() {
   const [busquedaClienteDebounced, setBusquedaClienteDebounced] = useState('');
   const [esFiado, setEsFiado] = useState(false);
   const [fiadoVencimiento, setFiadoVencimiento] = useState('');
+  // Abono a la deuda del cliente cobrado junto con la venta
+  const [abonoDeuda, setAbonoDeuda] = useState('');
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [alert, setAlert] = useState<{ title: string; description: string; type: 'success' | 'error' | 'warning' } | null>(null);
 
@@ -71,6 +76,7 @@ export default function VentaCajaPage() {
     setBusquedaCliente('');
     setEsFiado(false);
     setFiadoVencimiento('');
+    setAbonoDeuda('');
     setCNombre(''); setCTelefono(''); setCEmail(''); setCNit('');
   };
 
@@ -97,6 +103,16 @@ export default function VentaCajaPage() {
   const descuentoPct = (!anonimo && clienteSeleccionado?.descuento_pct) ? clienteSeleccionado.descuento_pct : 0;
   const descuentoMonto = Number((subtotal * (descuentoPct / 100)).toFixed(2));
   const total = Number((subtotal - descuentoMonto).toFixed(2));
+  const mixtoQr = Number((total - mixtoEfectivo).toFixed(2));
+  const mixtoValido = metodoPago !== 'MIXTO' || (mixtoEfectivo > 0 && mixtoQr > 0);
+  const deudaCliente = clienteSeleccionado?.deuda_saldo ?? 0;
+  const abonoNum = Number(abonoDeuda) || 0;
+  const abonoActivo = !esFiado && !esCortesia && metodoPago !== 'MIXTO' && deudaCliente > 0;
+  const abonoValido = !abonoActivo || abonoNum === 0 || (abonoNum > 0 && abonoNum <= deudaCliente);
+  const totalCobrar = Number((total + (abonoActivo ? abonoNum : 0)).toFixed(2));
+  // Cobro de deuda sin compra: carrito vacío pero con abono válido
+  // (abonoActivo ya excluye fiado, cortesía y pago mixto)
+  const soloDeuda = cart.length === 0 && abonoActivo && abonoNum > 0 && abonoValido;
 
   const addProduct = (producto: Producto) => {
     setCart(prev => {
@@ -114,6 +130,24 @@ export default function VentaCajaPage() {
 
   const cobrar = async () => {
     try {
+      // Cobro de deuda sin compra (carrito vacío)
+      if (soloDeuda && clienteSeleccionado) {
+        const r = await abonarDeuda.mutateAsync({
+          clienteId: clienteSeleccionado.id,
+          monto: abonoNum,
+          metodo_pago: metodoPago as 'EFECTIVO' | 'QR' | 'TARJETA',
+        });
+        setConfirmOpen(false);
+        setAbonoDeuda('');
+        limpiarCliente();
+        setAlert({
+          title: 'Deuda cobrada',
+          description: `Se cobró Bs ${Number(r.abonado).toFixed(2)}. Saldo restante: Bs ${Number(r.saldo_restante).toFixed(2)}.`,
+          type: 'success',
+        });
+        return;
+      }
+
       // Validar que si es fiado en modo manual, haya al menos un identificador
       if (esFiado && modoManual && !cTelefono.trim() && !cEmail.trim() && !cNit.trim()) {
         setAlert({
@@ -127,6 +161,8 @@ export default function VentaCajaPage() {
       const venta = await registrarVenta.mutateAsync({
         items: cart.map(item => ({ producto_id: item.id, cantidad: item.cantidad })),
         metodo_pago: metodoPago,
+        pago_mixto: metodoPago === 'MIXTO' ? { efectivo: mixtoEfectivo, qr: mixtoQr } : undefined,
+        abono_deuda: abonoActivo && abonoNum > 0 ? abonoNum : undefined,
         es_cortesia: esCortesia,
         es_fiado: esFiado,
         fiado_vencimiento: esFiado && fiadoVencimiento ? fiadoVencimiento : undefined,
@@ -141,12 +177,15 @@ export default function VentaCajaPage() {
       setCart([]);
       setEsCortesia(false);
       setAnonimo(false);
+      setMixtoEfectivo(0);
       limpiarCliente();
       setAlert({
         title: esFiado ? 'Fiado registrado' : 'Venta registrada',
         description: esFiado
           ? `Venta #${venta.id} cargada a la cuenta del cliente.`
-          : `Venta #${venta.id} creada correctamente.`,
+          : venta.abono_deuda
+            ? `Venta #${venta.id} creada. Incluye abono a deuda de Bs ${Number(venta.abono_deuda).toFixed(2)}.`
+            : `Venta #${venta.id} creada correctamente.`,
         type: 'success',
       });
     } catch (error: unknown) {
@@ -168,13 +207,17 @@ export default function VentaCajaPage() {
         isOpen={confirmOpen}
         onClose={() => setConfirmOpen(false)}
         onConfirm={cobrar}
-        title={esFiado ? 'Confirmar fiado' : 'Confirmar venta'}
-        description={esFiado
+        title={soloDeuda ? 'Confirmar cobro de deuda' : esFiado ? 'Confirmar fiado' : 'Confirmar venta'}
+        description={soloDeuda
+          ? `Cobrar Bs ${abonoNum.toFixed(2)} de la deuda de ${clienteSeleccionado?.nombre ?? 'cliente'} (${metodoPago}). Sin productos.`
+          : esFiado
           ? `Cargar Bs ${total.toFixed(2)} a la cuenta de ${clienteSeleccionado?.nombre ?? 'cliente'}. No entra dinero a caja.`
-          : `Total informativo: Bs ${total.toFixed(2)} · Método: ${metodoPago}${esCortesia ? ' · Cortesía' : ''}`}
-        confirmLabel={esFiado ? 'Cargar a cuenta' : 'Cobrar'}
+          : metodoPago === 'MIXTO'
+            ? `Total: Bs ${total.toFixed(2)} · Mixto: Bs ${mixtoEfectivo.toFixed(2)} efectivo + Bs ${mixtoQr.toFixed(2)} QR${esCortesia ? ' · Cortesía' : ''}`
+            : `Total informativo: Bs ${total.toFixed(2)}${abonoActivo && abonoNum > 0 ? ` + Bs ${abonoNum.toFixed(2)} abono deuda = Bs ${totalCobrar.toFixed(2)}` : ''} · Método: ${metodoPago}${esCortesia ? ' · Cortesía' : ''}`}
+        confirmLabel={soloDeuda ? 'Cobrar deuda' : esFiado ? 'Cargar a cuenta' : 'Cobrar'}
         loadingLabel={esFiado ? 'Registrando...' : 'Cobrando...'}
-        isLoading={registrarVenta.isPending}
+        isLoading={registrarVenta.isPending || abonarDeuda.isPending}
         variant="confirm"
       />
 
@@ -257,14 +300,50 @@ export default function VentaCajaPage() {
               <div className="review-stat-val"><MoneyText value={total} /></div>
             </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {(['EFECTIVO', 'QR', 'TARJETA'] as Metodo[]).map(metodo => (
-                <button key={metodo} className={`cat-filter-btn ${metodoPago === metodo ? 'active' : ''}`} type="button" onClick={() => setMetodoPago(metodo)}>
+              {(['EFECTIVO', 'QR', 'TARJETA', 'MIXTO'] as Metodo[]).map(metodo => (
+                <button
+                  key={metodo}
+                  className={`cat-filter-btn ${metodoPago === metodo ? 'active' : ''}`}
+                  type="button"
+                  disabled={metodo === 'MIXTO' && (esFiado || esCortesia)}
+                  style={metodo === 'MIXTO' && (esFiado || esCortesia) ? { opacity: 0.4 } : undefined}
+                  onClick={() => { setMetodoPago(metodo); if (metodo === 'MIXTO') setMixtoEfectivo(0); }}
+                >
                   <MethodPill metodo={metodo} />
                 </button>
               ))}
             </div>
+            {metodoPago === 'MIXTO' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 12px', border: '1px solid var(--line)', borderRadius: 10 }}>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <div style={{ flex: 1 }}>
+                    <span className="form-hint">Efectivo (Bs)</span>
+                    <input
+                      type="number" min="0.01" max={Math.max(total - 0.01, 0)} step="0.01"
+                      value={mixtoEfectivo || ''}
+                      onChange={e => setMixtoEfectivo(Math.min(Math.max(Number(e.target.value) || 0, 0), total))}
+                      placeholder="0.00"
+                    />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <span className="form-hint">QR (Bs)</span>
+                    <input
+                      type="number" min="0.01" max={Math.max(total - 0.01, 0)} step="0.01"
+                      value={mixtoQr > 0 ? mixtoQr : ''}
+                      onChange={e => setMixtoEfectivo(Number((total - Math.min(Math.max(Number(e.target.value) || 0, 0), total)).toFixed(2)))}
+                      placeholder="0.00"
+                    />
+                  </div>
+                </div>
+                <span className="form-hint" style={{ color: mixtoValido ? undefined : 'var(--amber)' }}>
+                  {mixtoValido
+                    ? `Bs ${mixtoEfectivo.toFixed(2)} en efectivo + Bs ${mixtoQr.toFixed(2)} por QR = Bs ${total.toFixed(2)}`
+                    : 'Ingresa cuánto paga por cada método: ambas partes deben ser mayores a 0 y sumar el total.'}
+                </span>
+              </div>
+            )}
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--ink)', opacity: esFiado ? 0.4 : 1 }}>
-              <input type="checkbox" checked={esCortesia} disabled={esFiado} onChange={e => setEsCortesia(e.target.checked)} />
+              <input type="checkbox" checked={esCortesia} disabled={esFiado} onChange={e => { setEsCortesia(e.target.checked); if (e.target.checked && metodoPago === 'MIXTO') setMetodoPago('EFECTIVO'); }} />
               Cortesía <span className="dim">(no suma a ingresos)</span>
             </label>
 
@@ -294,8 +373,43 @@ export default function VentaCajaPage() {
                     </div>
                     <button type="button" className="admin-btn ghost" onClick={limpiarCliente}>Cambiar</button>
                   </div>
+                  {deudaCliente > 0 && (
+                    <div style={{ border: '1px solid var(--amber)', borderRadius: 10, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      <span style={{ color: 'var(--amber)', fontWeight: 700 }}>
+                        Debe <MoneyText value={deudaCliente} /> en fiados
+                      </span>
+                      {abonoActivo ? (
+                        <>
+                          <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            <span className="form-hint">Cobrar deuda ahora (opcional)</span>
+                            <input
+                              type="number"
+                              min="0"
+                              max={deudaCliente}
+                              step="0.01"
+                              placeholder="0.00"
+                              value={abonoDeuda}
+                              onChange={e => setAbonoDeuda(e.target.value)}
+                            />
+                          </label>
+                          {abonoNum > 0 && abonoValido && (
+                            <span className="form-hint" style={{ fontWeight: 600 }}>
+                              ✓ Se cobrará: Bs {total.toFixed(2)} de la venta + Bs {abonoNum.toFixed(2)} de deuda = Bs {totalCobrar.toFixed(2)}
+                            </span>
+                          )}
+                          {!abonoValido && (
+                            <span className="form-hint" style={{ color: 'var(--amber)' }}>
+                              El abono no puede superar la deuda (Bs {deudaCliente.toFixed(2)}).
+                            </span>
+                          )}
+                        </>
+                      ) : (
+                        <span className="form-hint">Para cobrar deuda aquí, usa venta normal (sin fiado/cortesía) con un solo método de pago.</span>
+                      )}
+                    </div>
+                  )}
                   <label style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--ink)' }}>
-                    <input type="checkbox" checked={esFiado} onChange={e => { setEsFiado(e.target.checked); if (e.target.checked) setEsCortesia(false); }} />
+                    <input type="checkbox" checked={esFiado} onChange={e => { setEsFiado(e.target.checked); if (e.target.checked) { setEsCortesia(false); if (metodoPago === 'MIXTO') setMetodoPago('EFECTIVO'); } }} />
                     Cargar a cuenta (fiado) <span className="dim">— paga después</span>
                   </label>
                   {esFiado && (
@@ -316,7 +430,7 @@ export default function VentaCajaPage() {
                   <input placeholder="Correo (opcional)" value={cEmail} onChange={e => setCEmail(e.target.value)} />
                   <span className="form-hint">Se registrará como cliente nuevo. Si el celular/NIT ya existe, se vinculará automáticamente.</span>
                   <label style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--ink)' }}>
-                    <input type="checkbox" checked={esFiado} onChange={e => { setEsFiado(e.target.checked); if (e.target.checked) setEsCortesia(false); }} />
+                    <input type="checkbox" checked={esFiado} onChange={e => { setEsFiado(e.target.checked); if (e.target.checked) { setEsCortesia(false); if (metodoPago === 'MIXTO') setMetodoPago('EFECTIVO'); } }} />
                     Cargar a cuenta (fiado) <span className="dim">— paga después</span>
                   </label>
                   {esFiado && (
@@ -370,13 +484,16 @@ export default function VentaCajaPage() {
               className="admin-btn primary"
               type="button"
               disabled={
-                cart.length === 0
+                (cart.length === 0 && !soloDeuda)
                 || registrarVenta.isPending
+                || abonarDeuda.isPending
+                || !mixtoValido
+                || !abonoValido
                 || (esFiado && modoManual && !cTelefono.trim() && !cEmail.trim() && !cNit.trim())
               }
               onClick={() => setConfirmOpen(true)}
             >
-              {esFiado ? 'Cargar a cuenta' : 'Cobrar'}
+              {soloDeuda ? 'Cobrar deuda' : esFiado ? 'Cargar a cuenta' : 'Cobrar'}
             </button>
           </div>
         </aside>

@@ -10,7 +10,8 @@ services:
       POSTGRES_PASSWORD: elevate_pass123
       POSTGRES_DB: elevate_db
     ports:
-      - "5433:5432"
+      # 5435 en el host: 5433 suele chocar con Postgres nativo de Windows
+      - "5435:5432"
     volumes:
       - elevate_postgres_data:/var/lib/postgresql/data
 

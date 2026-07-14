@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { guard, ADMIN } from '@/lib/server/auth/guard';
+import { rangoDiaNegocio, horaNegocio } from '@/lib/server/fechas';
 
 export async function GET(req: NextRequest) {
   const auth = await guard(req, ADMIN);
   if (auth instanceof NextResponse) return auth;
 
   try {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const { desde: today } = rangoDiaNegocio();
 
     const [pedidosHoy, pedidosPendientes, insumos] = await Promise.all([
       prisma.transaccion.findMany({
@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
       const count = pedidosHoy.filter(p =>
         new Date(p.created_at) >= h && new Date(p.created_at) < next
       ).length;
-      return { hora: `${h.getHours()}:00`, pedidos: count };
+      return { hora: horaNegocio(h), pedidos: count };
     });
 
     const recentOrders = await prisma.transaccion.findMany({

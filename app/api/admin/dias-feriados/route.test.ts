@@ -15,9 +15,18 @@ function req(url: string, init: { method?: string; body?: string; token: string 
 describe('/api/admin/dias-feriados', () => {
   let adminToken: string;
   let cajeroToken: string;
-  const createdIds: number[] = [];
+  // Fechas exclusivas de esta suite: se limpian antes y después para que
+  // los tests sean idempotentes aunque una corrida anterior haya fallado.
+  const FECHAS_TEST = ['2027-01-01', '2027-05-01', '2027-08-06'];
+
+  async function limpiarFeriadosDeTest() {
+    await prisma.diaFeriado.deleteMany({
+      where: { fecha: { in: FECHAS_TEST.map((f) => new Date(f)) } },
+    });
+  }
 
   beforeAll(async () => {
+    await limpiarFeriadosDeTest();
     const admin = await login('benjaherediaruiz@gmail.com', 'benja122');
     adminToken = admin.access_token;
     const cajero = await login('cajero@elevate.com', 'cajero123');
@@ -25,9 +34,7 @@ describe('/api/admin/dias-feriados', () => {
   });
 
   afterAll(async () => {
-    if (createdIds.length > 0) {
-      await prisma.diaFeriado.deleteMany({ where: { id: { in: createdIds } } });
-    }
+    await limpiarFeriadosDeTest();
   });
 
   it('GET rechaza sin token (401)', async () => {
@@ -50,7 +57,6 @@ describe('/api/admin/dias-feriados', () => {
 
     expect(response.status).toBe(201);
     expect(body.sucursal_id).toBeNull();
-    createdIds.push(body.id);
   });
 
   it('POST duplicado (misma fecha+sucursal) devuelve 409', async () => {
@@ -59,8 +65,7 @@ describe('/api/admin/dias-feriados', () => {
       method: 'POST', token: adminToken,
       body: JSON.stringify({ fecha, nombre: 'Feriado test dup' }),
     }));
-    const firstBody = await first.json();
-    createdIds.push(firstBody.id);
+    expect(first.status).toBe(201);
 
     const second = await POST(req('http://localhost/api/admin/dias-feriados', {
       method: 'POST', token: adminToken,
