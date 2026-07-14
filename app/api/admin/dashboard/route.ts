@@ -2,18 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireAuth, requireRole } from '@/lib/server/auth/session';
 import { handleApiError } from '@/lib/server/errors';
-
-function startOfDay(date = new Date()) {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-
-function endOfDay(date = new Date()) {
-  const d = new Date(date);
-  d.setHours(23, 59, 59, 999);
-  return d;
-}
+import { rangoDiaNegocio, horaNegocio } from '@/lib/server/fechas';
 
 function decimalNumber(value: any) {
   return Number(Number(value ?? 0).toFixed(2));
@@ -24,9 +13,7 @@ export async function GET(req: NextRequest) {
     const session = await requireAuth(req);
     requireRole(session, ['DUENO', 'ADMIN']);
     const { searchParams } = new URL(req.url);
-    const fecha = searchParams.get('fecha') ? new Date(String(searchParams.get('fecha'))) : new Date();
-    const desde = startOfDay(fecha);
-    const hasta = endOfDay(fecha);
+    const { desde, hasta } = rangoDiaNegocio(searchParams.get('fecha'));
     const sucursal = searchParams.get('sucursal') ? Number(searchParams.get('sucursal')) : undefined;
 
     const [pedidosHoy, pedidosPendientes, detallesHoy, movimientosHoy, insumos, turnoActivo, recentOrders] = await Promise.all([
@@ -83,7 +70,7 @@ export async function GET(req: NextRequest) {
       const next = new Date(h);
       next.setHours(next.getHours() + 1);
       return {
-        hora: `${h.getHours()}:00`,
+        hora: horaNegocio(h),
         pedidos: pedidosHoy.filter(p => new Date(p.created_at) >= h && new Date(p.created_at) < next).length,
       };
     });
