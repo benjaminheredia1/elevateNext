@@ -81,6 +81,7 @@ const PAYMENT_LABELS: Record<string, string> = {
   BANCO: 'Transferencia',
   transfer: 'Transferencia',
   TARJETA: 'Tarjeta',
+  MIXTO: 'QR + Efectivo',
 };
 
 function statusMeta(status: string) {

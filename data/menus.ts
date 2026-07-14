@@ -121,7 +121,7 @@ const fitbullProducts: Product[] = [
   }
 ]
 
-/* ===== Gathering Elevate — the signature healthy gathering menu ===== */
+/* ===== Catering Elevate — the signature healthy catering menu ===== */
 const elevateProducts: Product[] = [
   {
     id: 1,
@@ -227,7 +227,7 @@ export const BRANDS: Record<BrandKey, Brand> = {
     key: 'elevate',
     slug: 'elevate',
     eyebrow: 'Nuestra casa',
-    title: 'Gathering Elevate',
+    title: 'Catering Elevate',
     tagline: 'Comida saludable, fresca y deliciosa para cada momento del día.',
     categories: ['Todos', 'Bowls', 'Ensaladas', 'Wraps', 'Bebidas', 'Snacks'],
     products: elevateProducts,

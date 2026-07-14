@@ -39,6 +39,16 @@ export async function POST(req: NextRequest) {
 
     const input = feriadoCreateSchema.parse(await req.json());
 
+    // La unique (fecha, sucursal_id) no cubre sucursal_id NULL en Postgres
+    // (NULLs son distintos entre sí), así que el duplicado global se valida aquí.
+    const existente = await prisma.diaFeriado.findFirst({
+      where: { fecha: input.fecha, sucursal_id: input.sucursal_id ?? null },
+      select: { id: true },
+    });
+    if (existente) {
+      throw new ConflictError('Ya existe un feriado para esa fecha y sucursal');
+    }
+
     const feriado = await prisma.diaFeriado.create({
       data: {
         fecha: input.fecha,
