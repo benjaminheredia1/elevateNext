@@ -92,7 +92,12 @@ const STATUS_META: Record<string, { label: string; color: string; bg: string; ac
 };
 
 function isoDate(date: Date) {
-  return date.toISOString().slice(0, 10);
+  // Fecha local del navegador (no UTC): pasada la 8pm en Bolivia,
+  // toISOString() ya devuelve el día siguiente.
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
 function dateRange(days: number) {

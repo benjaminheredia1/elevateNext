@@ -26,11 +26,15 @@ function PrivilegioModal({ inicial, onClose, onSubmit, saving }: {
     porcentaje: inicial?.porcentaje ?? 10,
     activo: inicial?.activo ?? true,
   });
+  // Texto crudo del porcentaje: permite borrar el campo y reescribir sin que
+  // el 0 reaparezca (el número solo se materializa al guardar).
+  const [pctTxt, setPctTxt] = useState(String(inicial?.porcentaje ?? 10));
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (!form.nombre.trim() || form.porcentaje < 0 || form.porcentaje > 100) return;
-    onSubmit({ ...form, descripcion: form.descripcion?.trim() || undefined });
+    const pct = parseFloat(pctTxt);
+    if (!form.nombre.trim() || !Number.isFinite(pct) || pct < 0 || pct > 100) return;
+    onSubmit({ ...form, porcentaje: pct, descripcion: form.descripcion?.trim() || undefined });
   };
 
   return (
@@ -48,7 +52,7 @@ function PrivilegioModal({ inicial, onClose, onSubmit, saving }: {
             </div>
             <div className="form-group">
               <label>Descuento (%)</label>
-              <input type="number" min="0" max="100" step="0.5" value={form.porcentaje} onChange={e => setForm(f => ({ ...f, porcentaje: Number(e.target.value) }))} required />
+              <input type="number" min="0" max="100" step="0.5" placeholder="10" value={pctTxt} onChange={e => setPctTxt(e.target.value)} required />
             </div>
             <div className="form-group">
               <label>Estado</label>

@@ -52,6 +52,9 @@ enum TipoCuenta {
   QR
   TARJETA
   BANCO
+  // Pago dividido QR + efectivo (solo Transaccion.metodo_pago; el desglose
+  // real vive en los MovimientoCaja hijos, que siempre son EFECTIVO o QR)
+  MIXTO
 }
 
 enum EstadoTurno {
@@ -247,6 +250,11 @@ model Producto {
   // Baja definitiva del producto (retiro del catálogo)
   motivo_baja              String?
   fecha_baja               DateTime?
+  // En revisión: cuando un insumo en su receta fue dado de baja
+  en_revision              Boolean                 @default(false)
+  revision_desde           DateTime?
+  motivo_revision          String?
+  insumo_causa_revision_id Int?
   categoria_id             CategoriasProducto[]
   created_at               DateTime                @default(now())
   update_at                DateTime                @updatedAt

@@ -128,6 +128,22 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
         });
       }
 
+      // Si estaba en revisión y la nueva ficha ya no referencia insumos dados de
+      // baja, la revisión queda resuelta automáticamente al guardar.
+      const idsReferenciados = [
+        ...parsed.receta.map((item) => item.insumo_id),
+        ...(insumoReventaId ? [insumoReventaId] : []),
+      ];
+      const inactivosRestantes = idsReferenciados.length > 0
+        ? await tx.insumo.count({ where: { id: { in: idsReferenciados }, activo: false } })
+        : 0;
+      if (inactivosRestantes === 0) {
+        await tx.producto.updateMany({
+          where: { id: productoId, en_revision: true },
+          data: { en_revision: false, revision_desde: null, motivo_revision: null, insumo_causa_revision_id: null },
+        });
+      }
+
       await logAudit({
         usuarioId: session.id, rol: session.rol, accion: 'MODIFICO',
         entidad: 'Producto', entidadId: productoId,
@@ -178,6 +194,10 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
         disponible: estado_publicacion === 'PUBLICADO',
         motivo_baja: estado_publicacion === 'BAJA' ? motivo : null,
         fecha_baja: estado_publicacion === 'BAJA' ? new Date() : null,
+        // Dar de baja el producto es una de las salidas del flujo de revisión
+        ...(estado_publicacion === 'BAJA'
+          ? { en_revision: false, revision_desde: null, motivo_revision: null, insumo_causa_revision_id: null }
+          : {}),
       },
     });
 

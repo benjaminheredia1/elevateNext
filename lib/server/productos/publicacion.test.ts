@@ -23,9 +23,9 @@ describe('faltantesPublicacion', () => {
     expect(faltantes).toContain('nombre');
   });
 
-  it('sigue exigiendo descripcion', () => {
+  it('no exige descripcion', () => {
     const faltantes = faltantesPublicacion({ ...productoCompleto, descripcion: '' });
-    expect(faltantes).toContain('descripcion');
+    expect(faltantes).not.toContain('descripcion');
   });
 
   it('sigue exigiendo precio de venta positivo', () => {

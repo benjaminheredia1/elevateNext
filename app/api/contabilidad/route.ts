@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { guard, ADMIN } from '@/lib/server/auth/guard';
+import { rangoDiaNegocio, inicioMesNegocio } from '@/lib/server/fechas';
 
 export async function GET(req: NextRequest) {
   const auth = await guard(req, ADMIN);
@@ -17,16 +18,16 @@ export async function GET(req: NextRequest) {
     let fechaFin: Date = new Date();
 
     if (rango === 'hoy') {
-      fechaInicio = new Date(); fechaInicio.setHours(0, 0, 0, 0);
+      fechaInicio = rangoDiaNegocio().desde;
     } else if (rango === '7dias') {
       fechaInicio = new Date(); fechaInicio.setDate(now.getDate() - 7);
     } else if (rango === 'mes') {
-      fechaInicio = new Date(now.getFullYear(), now.getMonth(), 1);
+      fechaInicio = inicioMesNegocio();
     } else if (rango === 'rango' && desde && hasta) {
-      fechaInicio = new Date(desde);
-      fechaFin = new Date(hasta);
+      fechaInicio = rangoDiaNegocio(desde).desde;
+      fechaFin = rangoDiaNegocio(hasta).hasta;
     } else {
-      fechaInicio = new Date(now.getFullYear(), now.getMonth(), 1);
+      fechaInicio = inicioMesNegocio();
     }
 
     // Ventas del período

@@ -6,7 +6,7 @@ import './App.css';
 export const metadata: Metadata = {
   title: 'Elevate — Beyond Performance | Comida Saludable Santa Cruz',
   description:
-    'Gathering de comida saludable premium en Santa Cruz de la Sierra, Bolivia. Bowls, wraps, smoothies y más. Entrega rápida a domicilio.',
+    'Catering de comida saludable premium en Santa Cruz de la Sierra, Bolivia. Bowls, wraps, smoothies y más. Entrega rápida a domicilio.',
   keywords: 'comida saludable, Santa Cruz, Bolivia, delivery, bowls, proteína, Elevate',
   openGraph: {
     title: 'Elevate — Beyond Performance',
