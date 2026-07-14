@@ -1,47 +1,39 @@
+import { rangoDiaNegocio, inicioMesNegocio, hoyISO } from '@/lib/server/fechas';
+
 export interface RangoFechas {
   desde: Date;
   hasta: Date;
 }
 
-function startOfDay(date: Date): Date {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-
-function endOfDay(date: Date): Date {
-  const d = new Date(date);
-  d.setHours(23, 59, 59, 999);
-  return d;
-}
-
+/**
+ * Rangos de reportes anclados al día de negocio (Bolivia, UTC-4), sin importar
+ * la zona del servidor. Ver lib/server/fechas.ts.
+ */
 export function parseRango(searchParams: URLSearchParams): RangoFechas {
   const rango = searchParams.get('rango') ?? 'mes';
-  const now = new Date();
+  const hoy = rangoDiaNegocio();
 
   if (rango === 'hoy') {
-    return { desde: startOfDay(now), hasta: endOfDay(now) };
+    return hoy;
   }
 
   if (rango === '7d') {
-    const desde = startOfDay(now);
-    desde.setDate(desde.getDate() - 6);
-    return { desde, hasta: endOfDay(now) };
+    const [anio, mes, dia] = hoyISO().split('-').map(Number);
+    const inicio = new Date(Date.UTC(anio, mes - 1, dia - 6));
+    const desde = rangoDiaNegocio(inicio.toISOString().slice(0, 10)).desde;
+    return { desde, hasta: hoy.hasta };
   }
 
   if (rango === 'custom') {
     const desdeParam = searchParams.get('desde');
     const hastaParam = searchParams.get('hasta');
     return {
-      desde: desdeParam ? startOfDay(new Date(desdeParam)) : startOfDay(now),
-      hasta: hastaParam ? endOfDay(new Date(hastaParam)) : endOfDay(now),
+      desde: rangoDiaNegocio(desdeParam).desde,
+      hasta: rangoDiaNegocio(hastaParam).hasta,
     };
   }
 
-  return {
-    desde: new Date(now.getFullYear(), now.getMonth(), 1),
-    hasta: endOfDay(now),
-  };
+  return { desde: inicioMesNegocio(), hasta: hoy.hasta };
 }
 
 export function parseSucursal(searchParams: URLSearchParams): number | undefined {

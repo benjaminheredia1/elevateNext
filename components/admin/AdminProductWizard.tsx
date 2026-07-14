@@ -5,6 +5,7 @@ import apiClient from '@/hooks/api';
 import {
   foodCostColor, classifyMenu, menuClassMeta, buildablePortions, computeRecipeCost, foodCostPct,
 } from './inventoryData';
+import { convertir, unidadesEntrada, redondearCantidad } from '@/lib/unidades';
 
 export interface WizardInitial {
   id?: number;
@@ -18,7 +19,9 @@ export interface WizardInitial {
   imagen_url: string | null;
   categorias: number[];
   marcas: number[];
-  receta: { insumo_id: number; cantidad_utilizada: number }[];
+  // ui_txt / ui_unidad son estado de edición (texto crudo y unidad tecleada);
+  // cantidad_utilizada SIEMPRE está en la unidad base del insumo y es lo único que se guarda.
+  receta: { insumo_id: number; cantidad_utilizada: number; ui_txt?: string; ui_unidad?: string }[];
   insumo_reventa_id: number | null;
 }
 
@@ -37,6 +40,63 @@ interface ReventaInsumo {
   proveedor: string;
 }
 const EMPTY_REVENTA: ReventaInsumo = { unidad_medida: 'UNIDAD', stock: 0, costo_unitario: 0, punto_reorden: 0, nivel_critico: 0, proveedor: '' };
+
+/** Combobox de insumo con búsqueda por nombre (el catálogo puede tener cientos). */
+function InsumoPicker({ opciones, seleccionado, esDeBaja, onPick }: {
+  opciones: InsumoOpt[];
+  seleccionado: InsumoOpt | undefined;
+  esDeBaja: boolean;
+  onPick: (id: number) => void;
+}) {
+  const [abierto, setAbierto] = useState(false);
+  const [q, setQ] = useState('');
+
+  const filtrados = useMemo(() => {
+    const term = q.trim().toLowerCase();
+    if (!term) return opciones;
+    return opciones.filter(i => i.nombre.toLowerCase().includes(term));
+  }, [opciones, q]);
+
+  const etiqueta = seleccionado
+    ? `${esDeBaja ? '⛔ ' : ''}${seleccionado.nombre} (${seleccionado.unidad_medida})${esDeBaja ? ' — dado de baja' : ''}`
+    : 'Buscar insumo...';
+
+  return (
+    <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
+      <input
+        value={abierto ? q : etiqueta}
+        placeholder="Buscar insumo..."
+        onFocus={() => { setAbierto(true); setQ(''); }}
+        onBlur={() => setTimeout(() => setAbierto(false), 150)}
+        onChange={e => setQ(e.target.value)}
+        style={{ width: '100%', ...(esDeBaja && !abierto ? { color: 'var(--danger)', fontWeight: 600 } : {}) }}
+      />
+      {abierto && (
+        <div style={{
+          position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 30,
+          background: 'var(--card, #fff)', border: '1px solid var(--line)', borderRadius: 8,
+          maxHeight: 220, overflowY: 'auto', boxShadow: '0 8px 24px rgba(0,0,0,.12)',
+        }}>
+          {filtrados.length === 0 && (
+            <div className="dim" style={{ padding: '8px 10px', fontSize: '0.85rem' }}>Sin resultados para “{q}”</div>
+          )}
+          {filtrados.map(i => (
+            <div
+              key={i.id}
+              onMouseDown={() => { onPick(i.id); setAbierto(false); }}
+              style={{ padding: '7px 10px', cursor: 'pointer', fontSize: '0.9rem', display: 'flex', justifyContent: 'space-between', gap: 8 }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--canvas, #f5f5f5)'; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
+            >
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{i.nombre}</span>
+              <span className="dim" style={{ fontSize: '0.78rem', flexShrink: 0 }}>{i.unidad_medida}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function AdminProductWizard({ initial, avgSales, avgMargin, onClose, onSaved }: {
   initial: WizardInitial;
@@ -133,7 +193,7 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, onClo
 
   const toggleMarca = (id: number) => set({ marcas: p.marcas.includes(id) ? p.marcas.filter(x => x !== id) : [...p.marcas, id] });
 
-  const updateRecipe = (idx: number, patch: Partial<{ insumo_id: number; cantidad_utilizada: number }>) =>
+  const updateRecipe = (idx: number, patch: Partial<WizardInitial['receta'][number]>) =>
     set({ receta: p.receta.map((it, i) => i === idx ? { ...it, ...patch } : it) });
   const addRecipe = () => set({ receta: [...p.receta, { insumo_id: insumosActivos[0]?.id ?? 0, cantidad_utilizada: 0.1 }] });
   const removeRecipe = (idx: number) => set({ receta: p.receta.filter((_, i) => i !== idx) });
@@ -147,9 +207,12 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, onClo
     const estado: WizardInitial['estado_publicacion'] = publish ? 'PUBLICADO' : (p.estado_publicacion === 'ARCHIVADO' ? 'ARCHIVADO' : 'BORRADOR');
     const body: Record<string, unknown> = {
       nombre: p.nombre, descripcion: p.descripcion, precio: p.precio,
-      calorias: p.calorias ?? undefined, proteina: p.proteina ?? undefined,
+      calorias: p.calorias ?? undefined,
+      proteina: p.proteina?.trim() ? p.proteina.trim() : undefined,
       tipo: p.tipo, estado_publicacion: estado, disponible: estado === 'PUBLICADO',
-      categorias: p.categorias, marcas: p.marcas, receta: p.tipo === 'REVENTA' ? [] : p.receta,
+      categorias: p.categorias, marcas: p.marcas,
+      // Solo los campos persistibles: el estado de edición (ui_*) no viaja a la API
+      receta: p.tipo === 'REVENTA' ? [] : p.receta.map(({ insumo_id, cantidad_utilizada }) => ({ insumo_id, cantidad_utilizada })),
       insumo_reventa_id: p.insumo_reventa_id ?? undefined,
       imagen_url: p.imagen_url || undefined,
     };
@@ -221,7 +284,7 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, onClo
                         {p.marcas.includes(m.id) && (
                           <span style={{ position: 'absolute', top: 8, right: 10, fontSize: 16 }}>✓</span>
                         )}
-                        <h5>{isElevate ? '🥗 Gathering Elevate' : '🏋️ Elevate × Fitbull'}</h5>
+                        <h5>{isElevate ? '🥗 Catering Elevate' : '🏋️ Elevate × Fitbull'}</h5>
                         <p style={{ fontSize: '0.78rem' }}>
                           {isElevate
                             ? 'Bowls, ensaladas, wraps y bebidas saludables del menú principal'
@@ -251,8 +314,8 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, onClo
           {step === 1 && (
             <div className="form-grid">
               <div className="form-group"><label>Precio venta (Bs)</label><input type="number" value={p.precio || ''} onChange={e => set({ precio: +e.target.value })} /></div>
-              <div className="form-group"><label>Calorías</label><input type="number" value={p.calorias ?? ''} onChange={e => set({ calorias: e.target.value ? +e.target.value : null })} /></div>
-              <div className="form-group"><label>Proteína</label><input value={p.proteina ?? ''} onChange={e => set({ proteina: e.target.value })} placeholder="30g" /></div>
+              <div className="form-group"><label>Calorías (opcional)</label><input type="number" min="0" value={p.calorias ?? ''} onChange={e => set({ calorias: e.target.value ? +e.target.value : null })} /></div>
+              <div className="form-group"><label>Proteína (opcional)</label><input value={p.proteina ?? ''} onChange={e => set({ proteina: e.target.value })} placeholder="30g" /></div>
               <div className="form-group full">
                 <label>Foto del producto</label>
                 <label
@@ -325,22 +388,54 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, onClo
                 {p.receta.map((it, idx) => {
                   const ins = insumoOf(it.insumo_id);
                   const esDeBaja = ins?.activo === false;
+                  const base = ins?.unidad_medida ?? '';
+                  const opciones = unidadesEntrada(base);
+                  const uiUnidad = it.ui_unidad ?? base.trim().toUpperCase();
+                  const uiTxt = it.ui_txt ?? (it.cantidad_utilizada ? String(it.cantidad_utilizada) : '');
+                  const costoFila = (ins?.costo_promedio ?? 0) * it.cantidad_utilizada;
+                  const convertida = uiUnidad !== base.trim().toUpperCase();
+
+                  const cambiarCantidad = (txt: string, unidad: string) => {
+                    const n = parseFloat(txt);
+                    const enBase = Number.isFinite(n) && n > 0 ? redondearCantidad(convertir(n, unidad, base) ?? n) : 0;
+                    updateRecipe(idx, { ui_txt: txt, ui_unidad: unidad, cantidad_utilizada: enBase });
+                  };
+
                   return (
                     <div key={idx}>
                       <div className="recipe-builder-row" style={esDeBaja ? { border: '1px solid var(--danger)', borderRadius: 8, padding: 6 } : undefined}>
-                        <select
-                          value={it.insumo_id}
-                          onChange={e => updateRecipe(idx, { insumo_id: +e.target.value })}
-                          style={esDeBaja ? { color: 'var(--danger)', fontWeight: 600 } : undefined}
-                        >
-                          {/* El insumo de baja se muestra solo en su propia fila, para que se vea qué era y se pueda reemplazar */}
-                          {esDeBaja && ins && <option value={ins.id}>⛔ {ins.nombre} (dado de baja)</option>}
-                          {insumosActivos.map(i => <option key={i.id} value={i.id}>{i.nombre} ({i.unidad_medida})</option>)}
-                        </select>
-                        <input type="number" step="0.01" value={it.cantidad_utilizada} onChange={e => updateRecipe(idx, { cantidad_utilizada: +e.target.value })} />
-                        <span className="dim" style={{ fontSize: '0.8rem' }}>{ins?.unidad_medida}</span>
+                        <InsumoPicker
+                          opciones={insumosActivos}
+                          seleccionado={ins}
+                          esDeBaja={esDeBaja}
+                          onPick={id => updateRecipe(idx, { insumo_id: id, ui_txt: undefined, ui_unidad: undefined })}
+                        />
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          placeholder="0"
+                          value={uiTxt}
+                          onChange={e => cambiarCantidad(e.target.value, uiUnidad)}
+                        />
+                        {opciones.length > 1 ? (
+                          <select
+                            value={uiUnidad}
+                            onChange={e => cambiarCantidad(uiTxt, e.target.value)}
+                            style={{ fontSize: '0.8rem', width: 'auto' }}
+                          >
+                            {opciones.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
+                          </select>
+                        ) : (
+                          <span className="dim" style={{ fontSize: '0.8rem' }}>{ins?.unidad_medida}</span>
+                        )}
                         <button className="action-btn delete" onClick={() => removeRecipe(idx)}>×</button>
                       </div>
+                      {it.cantidad_utilizada > 0 && (
+                        <div className="dim" style={{ fontSize: '0.78rem', margin: '2px 0 8px 2px' }}>
+                          {convertida ? `= ${it.cantidad_utilizada} ${base.toLowerCase()} · ` : ''}Bs {costoFila.toFixed(2)} de este insumo
+                        </div>
+                      )}
                       {esDeBaja && (
                         <div style={{ color: 'var(--danger)', fontSize: '0.78rem', margin: '4px 0 8px 2px' }}>
                           Este insumo fue dado de baja. Selecciona un reemplazo o elimina la fila (×) para poder publicar.

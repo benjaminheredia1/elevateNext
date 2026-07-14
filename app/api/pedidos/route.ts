@@ -6,6 +6,7 @@ import { resolverCliente } from '@/lib/server/clientes/clientes.service';
 import { calcularPrecioFinal, includePromos } from '@/lib/server/productos/precio';
 import { customAlphabet } from 'nanoid';
 import { guard, STAFF } from '@/lib/server/auth/guard';
+import { rangoDiaNegocio } from '@/lib/server/fechas';
 
 // Código de retiro/handoff legible (sin caracteres ambiguos)
 const genCodigo = customAlphabet('ABCDEFGHJKLMNPQRSTUVWXYZ23456789', 5);
@@ -59,9 +60,7 @@ export async function GET(req: NextRequest) {
     if (estado) where.estado = estado;
     if (desde) where.created_at = { gt: new Date(desde) };
     if (hoy === 'true') {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      where.created_at = { gte: today };
+      where.created_at = { gte: rangoDiaNegocio().desde };
     }
 
     const pedidos = await prisma.transaccion.findMany({
