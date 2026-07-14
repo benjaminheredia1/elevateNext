@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { calcularRinde } from '@/lib/server/inventario/disponibilidad';
 import { calcularPrecioFinal } from '@/lib/server/productos/precio';
-import { guard, ADMIN } from '@/lib/server/auth/guard';
 
 export async function GET(req: NextRequest) {
   try {
@@ -52,46 +51,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ data });
   } catch (error) {
     console.error('GET /api/productos error:', error);
-    return NextResponse.json({ error: 'Error al obtener productos', details: String(error) }, { status: 500 });
-  }
-}
-
-export async function POST(req: NextRequest) {
-  const auth = await guard(req, ADMIN);
-  if (auth instanceof NextResponse) return auth;
-
-  try {
-    const body = await req.json();
-    const { nombre, descripcion, precio, imagen_url, disponible, estado_publicacion, marcas } = body;
-    
-    const productoData: any = { 
-      nombre, 
-      descripcion, 
-      precio: Number(precio), 
-      imagen_url, 
-      disponible: disponible ?? true,
-      estado_publicacion: estado_publicacion ?? 'BORRADOR',
-    };
-
-    if (marcas && marcas.length > 0) {
-      // Find the brands by key
-      const dbMarcas = await prisma.marca.findMany({
-        where: { key: { in: marcas } }
-      });
-      if (dbMarcas.length > 0) {
-        productoData.marcas = {
-          create: dbMarcas.map(m => ({
-            marca: { connect: { id: m.id } }
-          }))
-        };
-      }
-    }
-
-    const producto = await prisma.producto.create({
-      data: productoData,
-    });
-    return NextResponse.json({ data: producto }, { status: 201 });
-  } catch (error) {
-    return NextResponse.json({ error: 'Error al crear producto' }, { status: 500 });
+    return NextResponse.json({ error: 'Error al obtener productos' }, { status: 500 });
   }
 }

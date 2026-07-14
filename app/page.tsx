@@ -53,8 +53,8 @@ const collaborations = [
     brand: BRANDS.elevate,
     imageSide: 'right' as const,
     kicker: 'Nuestra casa',
-    heading: 'Gathering Elevate',
-    body: 'El corazón de Elevate: nuestro gathering de comida saludable. Bowls, ensaladas, wraps y bebidas frescas preparadas cada día con ingredientes locales. Comida que disfrutas sin culpa, para cualquier momento del día.',
+    heading: 'Catering Elevate',
+    body: 'El corazón de Elevate: nuestro catering de comida saludable. Bowls, ensaladas, wraps y bebidas frescas preparadas cada día con ingredientes locales. Comida que disfrutas sin culpa, para cualquier momento del día.',
     bullets: ['Hecho fresco cada día', 'Ingredientes locales bolivianos', 'Opciones para todos los gustos'],
     cta: 'Menú Elevate',
     visualIcon: Icons.bowl,
@@ -244,7 +244,7 @@ export default function Home() {
           </motion.p>
 
           <motion.p className="hero-description" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.7, delay: 1.35 }}>
-            Un gathering de comida saludable con dos menús: fresco, alto en proteína y hecho cada día en Santa Cruz.
+            Un catering de comida saludable con dos menús: fresco, alto en proteína y hecho cada día en Santa Cruz.
           </motion.p>
 
           <motion.div className="hero-actions" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 1.55 }}>
@@ -542,7 +542,7 @@ export default function Home() {
               </div>
             </motion.div>
             {[
-              { title: 'Menús', links: ['Elevate × Fitbull', 'Gathering Elevate', 'Bowls', 'Ensaladas', 'Smoothies'] },
+              { title: 'Menús', links: ['Elevate × Fitbull', 'Catering Elevate', 'Bowls', 'Ensaladas', 'Smoothies'] },
               { title: 'Empresa', links: ['Sobre nosotros', 'Nuestro equipo', 'Blog', 'Trabaja con nosotros'] },
               { title: 'Contacto', links: ['Santa Cruz, Bolivia', 'info@elevate.bo', '+591 XXX XXX XX', 'Lun - Sáb: 7am - 9pm'] },
             ].map((column) => (
