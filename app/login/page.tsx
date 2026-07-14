@@ -69,8 +69,9 @@ export default function LoginPage() {
             </div>
 
             <div>
-              <div style={{ marginBottom: 8 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                 <label htmlFor="password" style={{ color: 'rgba(255,255,255,0.65)', fontSize: 13, fontWeight: 600, letterSpacing: '0.01em' }}>Contraseña</label>
+                <a href="/login/olvide-contrasena" style={{ color: '#ff7a42', fontSize: 12, fontWeight: 600, textDecoration: 'none' }}>¿Olvidaste tu contraseña?</a>
               </div>
               <div style={{ position: 'relative' }}>
                 <svg style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', opacity: 0.45 }} width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="white" strokeWidth={1.8}>

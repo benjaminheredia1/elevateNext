@@ -118,8 +118,21 @@ model Usuario {
   cajas                Caja[]
   auditorias           RegistroAuditoria[]
   horarios             HorarioTrabajador[]
+  password_reset_tokens PasswordResetToken[]
   created_at           DateTime            @default(now())
   update_at            DateTime            @updatedAt
+}
+
+model PasswordResetToken {
+  id         Int       @id @default(autoincrement())
+  token      String    @unique
+  usuario_id Int
+  usuario    Usuario   @relation(fields: [usuario_id], references: [id], onDelete: Cascade)
+  expires_at DateTime
+  used_at    DateTime?
+  created_at DateTime  @default(now())
+
+  @@index([usuario_id])
 }
 
 model Cliente {

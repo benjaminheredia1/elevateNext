@@ -4,8 +4,9 @@ import type { Rol } from '@prisma/client';
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
 
 const apiClient = axios.create({
-  baseURL: `${BASE_URL}/api/auth`,
+  baseURL: BASE_URL ? `${BASE_URL}/api/auth` : '/api/auth',
   headers: { 'Content-Type': 'application/json' },
+  timeout: 30_000,
 });
 
 /** A qué área pertenece cada rol tras login. */
@@ -53,5 +54,15 @@ export const useAuth = {
       localStorage.removeItem('rol');
       localStorage.removeItem('user');
     }
+  },
+
+  forgotPassword: async (email: string) => {
+    const response = await apiClient.post('/forgot-password', { email });
+    return response.data as { message: string };
+  },
+
+  resetPassword: async (token: string, password: string) => {
+    const response = await apiClient.post('/reset-password', { token, password });
+    return response.data as { message: string };
   },
 };
