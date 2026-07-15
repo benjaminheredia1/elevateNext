@@ -69,6 +69,8 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
       if (parsed.tipo === 'REVENTA' && parsed.nuevo_insumo_reventa) {
         const n = parsed.nuevo_insumo_reventa;
         const insumoData = {
+          // El insumo espejo hereda siempre el nombre del producto (1:1)
+          nombre:         parsed.nombre,
           unidad_medida:  n.unidad_medida,
           stock_minimo:   n.punto_reorden,
           punto_critico:  n.nivel_critico,
@@ -82,7 +84,7 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
           await tx.insumo.update({ where: { id: insumoReventaId }, data: insumoData });
         } else {
           const insumo = await tx.insumo.create({
-            data: { nombre: parsed.nombre, es_mixto: false, stock_actual: n.stock, ...insumoData },
+            data: { es_mixto: false, stock_actual: n.stock, ...insumoData },
           });
           insumoReventaId = insumo.id;
           if (n.stock > 0) {

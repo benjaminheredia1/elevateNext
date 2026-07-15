@@ -83,6 +83,34 @@ describe('POST /api/admin/productos', () => {
     expect(movimientos[0].costo_unitario).toBe(7);
   });
 
+  it('rechaza con 422 un producto REVENTA que trae receta (exclusión de tipos)', async () => {
+    const { access_token } = await login('benjaherediaruiz@gmail.com', 'benja122');
+    const nombreUnico = `Reventa con receta invalida (test ${Date.now()})`;
+    const insumo = await prisma.insumo.create({
+      data: { nombre: `Insumo ${nombreUnico}`, unidad_medida: 'UNIDAD', stock_actual: 10, stock_minimo: 0 },
+    });
+    createdInsumoIds.push(insumo.id);
+
+    const request = new NextRequest('http://localhost/api/admin/productos', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${access_token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        nombre: nombreUnico,
+        precio: 10,
+        tipo: 'REVENTA',
+        estado_publicacion: 'BORRADOR',
+        receta: [{ insumo_id: insumo.id, cantidad_utilizada: 1 }],
+        nuevo_insumo_reventa: { unidad_medida: 'UNIDAD', stock: 5, costo_unitario: 3 },
+      }),
+    });
+
+    const response = await POST(request);
+    expect(response.status).toBe(422);
+
+    const noCreado = await prisma.producto.findFirst({ where: { nombre: nombreUnico } });
+    expect(noCreado).toBeNull();
+  });
+
   it('crea un borrador sin descripcion', async () => {
     const { access_token } = await login('benjaherediaruiz@gmail.com', 'benja122');
 
