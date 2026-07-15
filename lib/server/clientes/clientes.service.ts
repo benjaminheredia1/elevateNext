@@ -5,7 +5,8 @@
  * en un único registro para minimizar clientes duplicados.
  */
 import prisma from '@/lib/prisma';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { ConflictError, ValidationError } from '@/lib/server/errors';
 
 type Db = Prisma.TransactionClient | typeof prisma;
 
@@ -80,6 +81,74 @@ export async function resolverCliente(input: ClienteInput, db: Db = prisma): Pro
     }
     return null;
   }
+}
+
+export interface CrearClienteCajaData {
+  nombre: string;
+  telefono?: string | null;
+  email?: string | null;
+  nit?: string | null;
+  privilegio_ids?: number[];
+}
+
+/**
+ * Alta explícita de cliente desde caja (sin venta de por medio). A diferencia de
+ * `resolverCliente` (checkout), aquí un duplicado por celular/email/NIT es un
+ * conflicto (409): el cajero debe buscar y usar el cliente existente, no crear otro.
+ * Solo se pueden asignar privilegios ACTIVOS (los publicados por el admin).
+ */
+export async function crearClienteDesdeCaja(input: CrearClienteCajaData) {
+  const tel = normTelefono(input.telefono);
+  const email = normEmail(input.email);
+  const nit = normNit(input.nit);
+  const nombre = input.nombre.trim();
+
+  const or: Prisma.ClienteWhereInput[] = [];
+  if (tel) or.push({ telefono: tel });
+  if (email) or.push({ email });
+  if (nit && nit.length >= 6) or.push({ nit });
+  if (or.length > 0) {
+    const existente = await prisma.cliente.findFirst({ where: { OR: or }, select: { nombre: true } });
+    if (existente) {
+      throw new ConflictError(`Ya existe un cliente con ese celular, email o NIT: ${existente.nombre}. Búscalo y selecciónalo en lugar de crearlo de nuevo.`);
+    }
+  }
+
+  const deseados = Array.from(new Set(input.privilegio_ids ?? []));
+  const activos = deseados.length > 0
+    ? await prisma.privilegio.findMany({
+        where: { id: { in: deseados }, activo: true },
+        select: { id: true, nombre: true, porcentaje: true },
+      })
+    : [];
+  if (activos.length !== deseados.length) {
+    throw new ValidationError('Solo se pueden asignar privilegios activos publicados por el administrador');
+  }
+
+  let cliente;
+  try {
+    cliente = await prisma.$transaction(async tx => {
+      const creado = await tx.cliente.create({
+        data: { nombre, telefono: tel, email, nit },
+      });
+      if (deseados.length > 0) {
+        await tx.clientePrivilegio.createMany({
+          data: deseados.map(pid => ({ cliente_id: creado.id, privilegio_id: pid })),
+          skipDuplicates: true,
+        });
+      }
+      return creado;
+    });
+  } catch (e) {
+    // Carrera: otro request registró el mismo celular entre el chequeo y el create.
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+      throw new ConflictError('Ese celular ya pertenece a otro cliente');
+    }
+    throw e;
+  }
+
+  const privilegios = activos.map(p => ({ id: p.id, nombre: p.nombre, porcentaje: Number(p.porcentaje) }));
+  return { cliente, privilegios };
 }
 
 /**
