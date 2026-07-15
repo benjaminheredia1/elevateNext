@@ -265,6 +265,41 @@ describe('POST /api/caja/venta — pago mixto', () => {
     expect(audit?.detalle).toContain('Cliente Solo Deuda E2E');
   });
 
+  it('la caja vende aunque el stock del insumo esté en negativo (no bloquea por stock)', async () => {
+    // Fixture idempotente: reventa con insumo en stock negativo
+    const NOMBRE = 'Producto Reventa Stock Negativo E2E';
+    let insumo = await prisma.insumo.findFirst({ where: { nombre: NOMBRE } });
+    if (!insumo) {
+      insumo = await prisma.insumo.create({
+        data: { nombre: NOMBRE, unidad_medida: 'UNIDAD', stock_actual: -2, stock_minimo: 0 },
+      });
+    } else {
+      await prisma.insumo.update({ where: { id: insumo.id }, data: { stock_actual: -2, activo: true } });
+    }
+    let prod = await prisma.producto.findFirst({ where: { nombre: NOMBRE } });
+    if (!prod) {
+      prod = await prisma.producto.create({
+        data: { nombre: NOMBRE, descripcion: 'Fixture stock negativo', precio: 10, tipo: 'REVENTA', disponible: true, insumo_reventa_id: insumo.id },
+      });
+    }
+
+    const res = await POST(req({
+      items: [{ producto_id: prod.id, cantidad: 1 }],
+      metodo_pago: 'EFECTIVO',
+    }, token));
+    expect(res.status).toBe(201);
+    const venta = await res.json();
+
+    // El stock siguió bajando (queda -3) y la venta dejó su MovimientoInterno
+    const insumoDespues = await prisma.insumo.findUniqueOrThrow({ where: { id: insumo.id } });
+    expect(insumoDespues.stock_actual).toBe(-3);
+    const movVenta = await prisma.movimientoInterno.findFirst({
+      where: { transaccion_id: venta.id, tipo_movimiento: 'VENTA', insumo_id: insumo.id },
+    });
+    expect(movVenta).not.toBeNull();
+    expect(movVenta?.cantidad).toBe(-1);
+  });
+
   it('venta simple sigue funcionando (regresión): un solo movimiento', async () => {
     const res = await POST(req({
       items: [{ producto_id: productoId, cantidad: 1 }],

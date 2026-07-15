@@ -359,8 +359,18 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, onClo
                   </select>
                 </div>
                 <div className="form-group">
-                  <label>Stock</label>
-                  <input type="number" step="0.01" min="0" value={reventaInsumo.stock || ''} onChange={e => setRev({ stock: +e.target.value })} placeholder="0" />
+                  <label>Stock{p.insumo_reventa_id ? ' (solo lectura)' : ' inicial'}</label>
+                  <input
+                    type="number" step="0.01" min="0"
+                    value={reventaInsumo.stock || ''}
+                    onChange={e => setRev({ stock: +e.target.value })}
+                    placeholder="0"
+                    disabled={!!p.insumo_reventa_id}
+                    title={p.insumo_reventa_id ? 'El stock se corrige desde Inventario (ajustes), no editando el producto' : undefined}
+                  />
+                  {p.insumo_reventa_id ? (
+                    <span className="form-hint">El stock se gestiona desde <strong>Inventario</strong> (compras/ajustes).</span>
+                  ) : null}
                 </div>
                 <div className="form-group">
                   <label>Costo unitario (Bs)</label>
