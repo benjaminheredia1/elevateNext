@@ -5,12 +5,17 @@
  * RINDE del panel de admin para mantener consistencia.
  */
 
-type RecetaItem = { cantidad_utilizada: number; insumo?: { stock_actual: number } | null };
+type InsumoStock = { stock_actual: number; activo?: boolean };
+type RecetaItem = { cantidad_utilizada: number; insumo?: InsumoStock | null };
 
 interface ProductoLike {
   recetaProducto_id?: RecetaItem[] | null;
-  insumo_reventa?: { stock_actual: number } | null;
+  insumo_reventa?: InsumoStock | null;
 }
+
+// Un insumo dado de baja no es vendible aunque le quede stock residual.
+const stockDisponible = (insumo: InsumoStock) =>
+  insumo.activo === false ? 0 : insumo.stock_actual;
 
 export interface RindeInfo {
   /** Porciones producibles con el stock actual. null = no se rastrea stock. */
@@ -24,7 +29,7 @@ export interface RindeInfo {
 export function calcularRinde(p: ProductoLike): RindeInfo {
   // REVENTA: mapeo 1:1 a un insumo (1 producto = 1 unidad).
   if (p.insumo_reventa) {
-    const rinde = Math.floor(p.insumo_reventa.stock_actual);
+    const rinde = Math.floor(stockDisponible(p.insumo_reventa));
     return { rinde, stockTracked: true, agotado: rinde <= 0 };
   }
 
@@ -34,7 +39,7 @@ export function calcularRinde(p: ProductoLike): RindeInfo {
     let min = Infinity;
     for (const item of receta) {
       if (!item.cantidad_utilizada || item.cantidad_utilizada <= 0) continue;
-      const stock = item.insumo?.stock_actual ?? 0;
+      const stock = item.insumo ? stockDisponible(item.insumo) : 0;
       min = Math.min(min, Math.floor(stock / item.cantidad_utilizada));
     }
     const rinde = min === Infinity ? null : min;

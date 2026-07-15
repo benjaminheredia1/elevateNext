@@ -1,6 +1,73 @@
 import prisma from '@/lib/prisma';
 import { ConflictError, NotFoundError } from '@/lib/server/errors';
-import type { PrismaClient } from '@prisma/client';
+import type { Prisma, PrismaClient } from '@prisma/client';
+
+/**
+ * Marca que la baja del insumo fue provocada por la baja de su producto de
+ * reventa (y no una baja manual del inventario). Solo las bajas con este
+ * prefijo se revierten automáticamente al restaurar el producto.
+ */
+const PREFIJO_BAJA_POR_PRODUCTO = 'Baja automática por baja del producto de reventa';
+
+/**
+ * Al dar de baja un producto de REVENTA, dar de baja también su insumo si es
+ * de uso exclusivo (ninguna receta, ningún otro producto activo, ningún mixto
+ * lo referencia). Devuelve true si el insumo fue dado de baja.
+ */
+export async function bajaInsumoExclusivoDeReventa(
+  tx: Prisma.TransactionClient,
+  producto: { id: number; nombre: string; insumo_reventa_id: number | null },
+  motivo: string,
+): Promise<boolean> {
+  if (!producto.insumo_reventa_id) return false;
+  const insumoId = producto.insumo_reventa_id;
+
+  const insumo = await tx.insumo.findUnique({ where: { id: insumoId } });
+  if (!insumo || !insumo.activo) return false;
+
+  const [enRecetas, otrosProductos, enMixtos] = await Promise.all([
+    tx.recetasProducto.count({ where: { insumo_id: insumoId } }),
+    tx.producto.count({
+      where: { insumo_reventa_id: insumoId, id: { not: producto.id }, estado_publicacion: { not: 'BAJA' } },
+    }),
+    tx.insumoMixtoDetalle.count({
+      where: { OR: [{ insumo_hijo_id: insumoId }, { insumo_padre_id: insumoId }] },
+    }),
+  ]);
+  if (enRecetas + otrosProductos + enMixtos > 0) return false;
+
+  await tx.insumo.update({
+    where: { id: insumoId },
+    data: {
+      activo: false,
+      fecha_baja: new Date(),
+      motivo_baja: `${PREFIJO_BAJA_POR_PRODUCTO} "${producto.nombre}". Motivo: ${motivo}`,
+    },
+  });
+  return true;
+}
+
+/**
+ * Al restaurar un producto de REVENTA que estaba en BAJA, reactivar su insumo
+ * solo si su baja fue la cascada automática (no una baja manual del inventario).
+ * Devuelve true si el insumo fue reactivado.
+ */
+export async function reactivarInsumoDeReventaSiCascada(
+  tx: Prisma.TransactionClient,
+  insumoReventaId: number | null,
+): Promise<boolean> {
+  if (!insumoReventaId) return false;
+
+  const insumo = await tx.insumo.findUnique({ where: { id: insumoReventaId } });
+  if (!insumo || insumo.activo) return false;
+  if (!insumo.motivo_baja?.startsWith(PREFIJO_BAJA_POR_PRODUCTO)) return false;
+
+  await tx.insumo.update({
+    where: { id: insumoReventaId },
+    data: { activo: true, fecha_baja: null, motivo_baja: null },
+  });
+  return true;
+}
 
 /**
  * Dar de baja un insumo y cascada a productos en revisión.

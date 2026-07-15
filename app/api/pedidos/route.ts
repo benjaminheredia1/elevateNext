@@ -126,8 +126,8 @@ export async function POST(req: NextRequest) {
       const prod = await prisma.producto.findFirst({
         where: { nombre: { equals: item.nombre, mode: 'insensitive' } },
         include: {
-          recetaProducto_id: { include: { insumo: { select: { stock_actual: true } } } },
-          insumo_reventa: { select: { stock_actual: true } },
+          recetaProducto_id: { include: { insumo: { select: { stock_actual: true, activo: true } } } },
+          insumo_reventa: { select: { stock_actual: true, activo: true } },
         },
       });
       if (!prod) continue; // producto no rastreado en inventario

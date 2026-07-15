@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
       include: {
         categoria_id: { include: { categoria: true } },
         recetaProducto_id: { include: { insumo: true } },
-        insumo_reventa: { select: { stock_actual: true } },
+        insumo_reventa: { select: { stock_actual: true, activo: true } },
         promocionProducto_id: {
           include: {
             promocionDescuentos: {
