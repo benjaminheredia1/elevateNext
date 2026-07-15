@@ -98,6 +98,27 @@ export function useEditarCliente() {
   });
 }
 
+export interface CrearClienteCajaInput {
+  nombre: string;
+  telefono?: string;
+  email?: string;
+  nit?: string;
+  privilegio_ids?: number[];
+}
+
+/** Alta de cliente desde caja (sin venta), con privilegios opcionales. */
+export function useCrearClienteCaja() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (datos: CrearClienteCajaInput) =>
+      (await apiClient.post('/api/caja/clientes', datos)).data.data as ClienteResultado,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['caja', 'clientes-directorio'] });
+      qc.invalidateQueries({ queryKey: ['caja', 'clientes'] });
+    },
+  });
+}
+
 /** Cobro de deuda sin compra (FIFO sobre los fiados del cliente). */
 export function useAbonarDeuda() {
   const qc = useQueryClient();

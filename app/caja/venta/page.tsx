@@ -7,7 +7,7 @@ import AlertPopup from '@/components/AlertPopup';
 import MethodPill from '@/components/ui/MethodPill';
 import MoneyText from '@/components/ui/MoneyText';
 import EmptyState from '@/components/ui/EmptyState';
-import { useAbonarDeuda, useBuscarClientes, useRegistrarVenta, type ClienteResultado } from '@/hooks/caja';
+import { useAbonarDeuda, useBuscarClientes, useCrearClienteCaja, usePrivilegiosCaja, useRegistrarVenta, type ClienteResultado } from '@/hooks/caja';
 
 type Metodo = 'EFECTIVO' | 'QR' | 'TARJETA' | 'MIXTO';
 
@@ -44,6 +44,8 @@ export default function VentaCajaPage() {
   const [cNit, setCNit] = useState('');
   const [clienteSeleccionado, setClienteSeleccionado] = useState<ClienteResultado | null>(null);
   const [modoManual, setModoManual] = useState(false);
+  // Privilegios a asignar al cliente nuevo al guardarlo desde el POS
+  const [privNuevo, setPrivNuevo] = useState<number[]>([]);
   const [busquedaCliente, setBusquedaCliente] = useState('');
   const [busquedaClienteDebounced, setBusquedaClienteDebounced] = useState('');
   const [esFiado, setEsFiado] = useState(false);
@@ -60,6 +62,9 @@ export default function VentaCajaPage() {
 
   const clientesQuery = useBuscarClientes(busquedaClienteDebounced);
   const resultadosClientes = clientesQuery.data ?? [];
+  const crearCliente = useCrearClienteCaja();
+  const privilegiosQuery = usePrivilegiosCaja();
+  const catalogoPriv = privilegiosQuery.data ?? [];
 
   const seleccionarCliente = (c: ClienteResultado) => {
     setClienteSeleccionado(c);
@@ -77,7 +82,41 @@ export default function VentaCajaPage() {
     setEsFiado(false);
     setFiadoVencimiento('');
     setAbonoDeuda('');
+    setPrivNuevo([]);
     setCNombre(''); setCTelefono(''); setCEmail(''); setCNit('');
+  };
+
+  // Alta del cliente sin necesidad de cobrar una venta: queda registrado
+  // (con sus privilegios) y seleccionado por si se quiere vender igual.
+  const guardarClienteNuevo = async () => {
+    if (!cNombre.trim()) {
+      setAlert({ title: 'Nombre requerido', description: 'Ingresa al menos el nombre del cliente.', type: 'warning' });
+      return;
+    }
+    try {
+      const creado = await crearCliente.mutateAsync({
+        nombre: cNombre.trim(),
+        telefono: cTelefono.trim() || undefined,
+        email: cEmail.trim() || undefined,
+        nit: cNit.trim() || undefined,
+        privilegio_ids: privNuevo,
+      });
+      seleccionarCliente(creado);
+      setModoManual(false);
+      setPrivNuevo([]);
+      setAlert({
+        title: 'Cliente registrado',
+        description: `${creado.nombre} quedó registrado${(creado.descuento_pct ?? 0) > 0 ? ` con ${creado.descuento_pct}% de descuento` : ''} y seleccionado. Puedes cobrar una venta o continuar sin vender.`,
+        type: 'success',
+      });
+    } catch (error: unknown) {
+      const resp = (error as { response?: { status?: number; data?: { error?: string } } })?.response;
+      setAlert({
+        title: resp?.status === 409 ? 'Cliente ya registrado' : 'No se pudo registrar',
+        description: resp?.data?.error ?? 'No se pudo registrar el cliente. Intenta de nuevo.',
+        type: resp?.status === 409 ? 'warning' : 'error',
+      });
+    }
   };
 
   useEffect(() => {
@@ -428,7 +467,32 @@ export default function VentaCajaPage() {
                   <input placeholder="Celular" inputMode="numeric" value={cTelefono} onChange={e => setCTelefono(e.target.value.replace(/\D/g, ''))} />
                   <input placeholder="NIT / C.I." inputMode="numeric" value={cNit} onChange={e => setCNit(e.target.value.replace(/\D/g, ''))} />
                   <input placeholder="Correo (opcional)" value={cEmail} onChange={e => setCEmail(e.target.value)} />
-                  <span className="form-hint">Se registrará como cliente nuevo. Si el celular/NIT ya existe, se vinculará automáticamente.</span>
+                  {catalogoPriv.length > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <span className="form-hint" style={{ fontWeight: 600 }}>Privilegios (opcional)</span>
+                      {catalogoPriv.map(p => (
+                        <label key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--ink)', cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={privNuevo.includes(p.id)}
+                            onChange={() => setPrivNuevo(prev => prev.includes(p.id) ? prev.filter(x => x !== p.id) : [...prev, p.id])}
+                          />
+                          {p.nombre} · {p.porcentaje}% dcto
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    className="admin-btn secondary"
+                    disabled={crearCliente.isPending || !cNombre.trim()}
+                    onClick={guardarClienteNuevo}
+                  >
+                    {crearCliente.isPending ? 'Guardando...' : 'Guardar cliente (sin venta)'}
+                  </button>
+                  <span className="form-hint">
+                    &ldquo;Guardar cliente&rdquo; lo registra ya mismo, sin necesidad de cobrar nada. Si prefieres, también puedes cobrar directo y se registrará con la venta.
+                  </span>
                   <label style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--ink)' }}>
                     <input type="checkbox" checked={esFiado} onChange={e => { setEsFiado(e.target.checked); if (e.target.checked) { setEsCortesia(false); if (metodoPago === 'MIXTO') setMetodoPago('EFECTIVO'); } }} />
                     Cargar a cuenta (fiado) <span className="dim">— paga después</span>
@@ -442,7 +506,7 @@ export default function VentaCajaPage() {
                       </span>
                     </div>
                   )}
-                  <button type="button" className="admin-btn ghost" onClick={() => { setModoManual(false); setCNombre(''); setCTelefono(''); setCEmail(''); setCNit(''); }}>
+                  <button type="button" className="admin-btn ghost" onClick={() => { setModoManual(false); setPrivNuevo([]); setCNombre(''); setCTelefono(''); setCEmail(''); setCNit(''); }}>
                     ← Volver a buscar
                   </button>
                 </div>
