@@ -48,12 +48,15 @@ export async function registrarCompra(
   if (!insumo) throw new NotFoundError('Insumo no encontrado');
   if (cantidad <= 0) throw new ValidationError('La cantidad debe ser positiva');
 
-  // Costo promedio ponderado
-  const stockActual = insumo.stock_actual;
+  // Costo promedio ponderado. El stock negativo NO participa en la ponderación
+  // (estilo Odoo AVCO): ponderar contra un faltante produce costos absurdos
+  // (ej. stock -3 @ 5, compra 10 @ 8 → 9.29). El faltante es varianza a
+  // corregir con conteo físico, no valor de inventario.
+  const stockPonderable = Math.max(insumo.stock_actual, 0);
   const costoActual = insumo.costo_promedio;
   const nuevoCosto =
-    stockActual + cantidad > 0
-      ? (stockActual * costoActual + cantidad * costoUnitario) / (stockActual + cantidad)
+    stockPonderable + cantidad > 0
+      ? (stockPonderable * costoActual + cantidad * costoUnitario) / (stockPonderable + cantidad)
       : costoUnitario;
 
   const insumoActualizado = await tx.insumo.update({
