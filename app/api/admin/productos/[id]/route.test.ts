@@ -128,6 +128,41 @@ describe('PUT /api/admin/productos/[id] — stock del insumo de reventa', () => 
     expect(insumoDespues.costo_promedio).toBe(9);
     expect(insumoDespues.stock_minimo).toBe(6);
   });
+
+  it('renombrar el producto sincroniza el nombre del insumo vinculado', async () => {
+    const { access_token } = await login('benjaherediaruiz@gmail.com', 'benja122');
+    const marca = await prisma.marca.findFirstOrThrow();
+
+    const insumo = await prisma.insumo.create({
+      data: { nombre: 'Amaricano (test typo)', unidad_medida: 'UNIDAD', stock_actual: 10, stock_minimo: 0, costo_promedio: 5 },
+    });
+    createdInsumoIds.push(insumo.id);
+    const producto = await prisma.producto.create({
+      data: { nombre: 'Amaricano (test typo)', descripcion: 'x', precio: 10, tipo: 'REVENTA', estado_publicacion: 'PUBLICADO', insumo_reventa_id: insumo.id },
+    });
+    createdIds.push(producto.id);
+
+    const request = new NextRequest(`http://localhost/api/admin/productos/${producto.id}`, {
+      method: 'PUT',
+      headers: { authorization: `Bearer ${access_token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        nombre: 'Americano (test typo)',
+        descripcion: 'x',
+        precio: 10,
+        tipo: 'REVENTA',
+        estado_publicacion: 'PUBLICADO',
+        marcas: [marca.id],
+        insumo_reventa_id: insumo.id,
+        nuevo_insumo_reventa: { unidad_medida: 'UNIDAD', stock: 10, costo_unitario: 5 },
+      }),
+    });
+
+    const response = await PUT(request, { params: Promise.resolve({ id: String(producto.id) }) });
+    expect(response.status).toBe(200);
+
+    const insumoDespues = await prisma.insumo.findUniqueOrThrow({ where: { id: insumo.id } });
+    expect(insumoDespues.nombre).toBe('Americano (test typo)');
+  });
 });
 
 describe('PATCH /api/admin/productos/[id] — baja espejada del insumo de reventa', () => {
