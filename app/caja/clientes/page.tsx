@@ -3,9 +3,79 @@
 import { FormEvent, useEffect, useState } from 'react';
 import EmptyState from '@/components/ui/EmptyState';
 import {
-  useAsignarPrivilegios, useClientesDirectorio, useEditarCliente, usePrivilegiosCaja,
-  type ClienteResultado, type PrivilegioResumen,
+  useAsignarPrivilegios, useClientesDirectorio, useCrearClienteCaja, useEditarCliente, usePrivilegiosCaja,
+  type ClienteResultado, type CrearClienteCajaInput, type PrivilegioResumen,
 } from '@/hooks/caja';
+
+function NuevoClienteModal({ catalogo, onClose, onSubmit, saving, error }: {
+  catalogo: PrivilegioResumen[];
+  onClose: () => void;
+  onSubmit: (datos: CrearClienteCajaInput) => void;
+  saving: boolean;
+  error: string | null;
+}) {
+  const [nombre, setNombre] = useState('');
+  const [telefono, setTelefono] = useState('');
+  const [email, setEmail] = useState('');
+  const [nit, setNit] = useState('');
+  const [privilegios, setPrivilegios] = useState<number[]>([]);
+
+  const toggle = (id: number) =>
+    setPrivilegios(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    if (!nombre.trim()) return;
+    onSubmit({
+      nombre: nombre.trim(),
+      telefono: telefono.trim() || undefined,
+      email: email.trim() || undefined,
+      nit: nit.trim() || undefined,
+      privilegio_ids: privilegios,
+    });
+  };
+
+  return (
+    <div className="admin-modal-overlay" onMouseDown={onClose}>
+      <form className="admin-modal compact" onMouseDown={e => e.stopPropagation()} onSubmit={submit}>
+        <div className="admin-modal-header">
+          <h2>Agregar cliente</h2>
+          <button type="button" className="admin-modal-close" onClick={onClose}>&times;</button>
+        </div>
+        <div className="admin-modal-body">
+          <div className="form-grid">
+            <label className="form-group full"><span>Nombre</span><input value={nombre} onChange={e => setNombre(e.target.value)} required autoFocus /></label>
+            <label className="form-group"><span>Celular</span><input inputMode="numeric" value={telefono} onChange={e => setTelefono(e.target.value.replace(/\D/g, ''))} placeholder="Opcional" /></label>
+            <label className="form-group"><span>NIT / C.I.</span><input inputMode="numeric" value={nit} onChange={e => setNit(e.target.value.replace(/\D/g, ''))} placeholder="Opcional" /></label>
+            <label className="form-group full"><span>Correo</span><input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Opcional" /></label>
+          </div>
+          {catalogo.length > 0 && (
+            <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <span style={{ fontWeight: 600 }}>Privilegios (opcional)</span>
+              {catalogo.map(p => (
+                <label key={p.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={privilegios.includes(p.id)} onChange={() => toggle(p.id)} />
+                  <span>
+                    <strong>{p.nombre}</strong> · {p.porcentaje}% de descuento
+                    {p.descripcion ? <span className="form-hint" style={{ display: 'block' }}>{p.descripcion}</span> : null}
+                  </span>
+                </label>
+              ))}
+            </div>
+          )}
+          <span className="form-hint" style={{ display: 'block', marginTop: 10 }}>
+            El alta queda registrada en auditoría. Si el celular, email o NIT ya pertenece a otro cliente, no se creará un duplicado.
+          </span>
+          {error && <div className="gate-warning" style={{ marginTop: 10 }}>{error}</div>}
+        </div>
+        <div className="admin-modal-footer">
+          <button type="button" className="admin-btn ghost" onClick={onClose}>Cancelar</button>
+          <button type="submit" className="admin-btn primary" disabled={saving}>{saving ? 'Guardando...' : 'Agregar cliente'}</button>
+        </div>
+      </form>
+    </div>
+  );
+}
 
 function EditarClienteModal({ cliente, onClose, onSubmit, saving, error }: {
   cliente: ClienteResultado;
@@ -113,6 +183,7 @@ export default function ClientesCajaPage() {
   const [busquedaDebounced, setBusquedaDebounced] = useState('');
   const [modalCliente, setModalCliente] = useState<ClienteResultado | null>(null);
   const [editCliente, setEditCliente] = useState<ClienteResultado | null>(null);
+  const [nuevoAbierto, setNuevoAbierto] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -125,6 +196,7 @@ export default function ClientesCajaPage() {
   const privilegiosQuery = usePrivilegiosCaja();
   const asignar = useAsignarPrivilegios();
   const editar = useEditarCliente();
+  const crear = useCrearClienteCaja();
 
   const clientes = clientesQuery.data ?? [];
   const catalogo = privilegiosQuery.data ?? [];
@@ -140,6 +212,19 @@ export default function ClientesCajaPage() {
     } catch (err: unknown) {
       const e = err as { response?: { data?: { error?: string } } };
       setModalError(e?.response?.data?.error ?? 'No se pudo guardar. Intenta de nuevo.');
+    }
+  };
+
+  const guardarNuevo = async (datos: CrearClienteCajaInput) => {
+    setModalError(null);
+    try {
+      const creado = await crear.mutateAsync(datos);
+      setMsg(`Cliente ${creado.nombre} registrado.`);
+      setNuevoAbierto(false);
+      setTimeout(() => setMsg(null), 3500);
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { error?: string } } };
+      setModalError(e?.response?.data?.error ?? 'No se pudo registrar. Intenta de nuevo.');
     }
   };
 
@@ -164,6 +249,13 @@ export default function ClientesCajaPage() {
           <h1>Clientes</h1>
           <p>Directorio de clientes y asignación de privilegios publicados por el administrador.</p>
         </div>
+        <button
+          type="button"
+          className="admin-btn primary"
+          onClick={() => { setModalError(null); setNuevoAbierto(true); }}
+        >
+          + Agregar cliente
+        </button>
       </div>
 
       {msg && (
@@ -238,6 +330,16 @@ export default function ClientesCajaPage() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {nuevoAbierto && (
+        <NuevoClienteModal
+          catalogo={catalogo}
+          onClose={() => setNuevoAbierto(false)}
+          onSubmit={guardarNuevo}
+          saving={crear.isPending}
+          error={modalError}
+        />
       )}
 
       {editCliente && (
