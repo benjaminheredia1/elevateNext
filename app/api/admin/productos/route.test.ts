@@ -13,6 +13,7 @@ describe('POST /api/admin/productos', () => {
       await prisma.producto.deleteMany({ where: { id: { in: createdIds } } });
     }
     if (createdInsumoIds.length > 0) {
+      await prisma.movimientoInterno.deleteMany({ where: { insumo_id: { in: createdInsumoIds } } });
       await prisma.insumo.deleteMany({ where: { id: { in: createdInsumoIds } } });
     }
   });
@@ -46,6 +47,40 @@ describe('POST /api/admin/productos', () => {
     if (body.data.insumo_reventa_id) {
       createdInsumoIds.push(body.data.insumo_reventa_id);
     }
+  });
+
+  it('registra un movimiento INGRESO por el stock inicial del insumo de reventa', async () => {
+    const { access_token } = await login('benjaherediaruiz@gmail.com', 'benja122');
+    const marca = await prisma.marca.findFirstOrThrow();
+
+    const request = new NextRequest('http://localhost/api/admin/productos', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${access_token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        nombre: 'Producto reventa con stock inicial (test)',
+        descripcion: 'x',
+        precio: 15,
+        tipo: 'REVENTA',
+        estado_publicacion: 'PUBLICADO',
+        marcas: [marca.id],
+        nuevo_insumo_reventa: { unidad_medida: 'UNIDAD', stock: 20, costo_unitario: 7 },
+      }),
+    });
+
+    const response = await POST(request);
+    const body = await response.json();
+
+    expect(response.status).toBe(201);
+    createdIds.push(body.data.id);
+    createdInsumoIds.push(body.data.insumo_reventa_id);
+
+    const movimientos = await prisma.movimientoInterno.findMany({
+      where: { insumo_id: body.data.insumo_reventa_id },
+    });
+    expect(movimientos).toHaveLength(1);
+    expect(movimientos[0].tipo_movimiento).toBe('INGRESO');
+    expect(movimientos[0].cantidad).toBe(20);
+    expect(movimientos[0].costo_unitario).toBe(7);
   });
 
   it('crea un borrador sin descripcion', async () => {

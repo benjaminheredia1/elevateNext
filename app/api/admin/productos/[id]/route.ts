@@ -7,6 +7,7 @@ import { ProductoConFichaSchema } from '@/lib/server/dto/inventario.dto';
 import { costoFichaTecnica } from '@/lib/server/inventario/inventario.service';
 import { logAudit } from '@/lib/server/audit/audit.service';
 import { assertPublicable } from '@/lib/server/productos/publicacion';
+import { bajaInsumoExclusivoDeReventa, reactivarInsumoDeReventaSiCascada } from '@/lib/server/insumos/insumos.service';
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -69,17 +70,33 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
         const n = parsed.nuevo_insumo_reventa;
         const insumoData = {
           unidad_medida:  n.unidad_medida,
-          stock_actual:   n.stock,
           stock_minimo:   n.punto_reorden,
           punto_critico:  n.nivel_critico,
           costo_promedio: n.costo_unitario,
           proveedor:      n.proveedor ?? null,
         };
         if (insumoReventaId) {
+          // El stock NO se toca aquí: editar el producto no es un movimiento de
+          // inventario. Correcciones de stock → módulo de inventario (AJUSTE),
+          // que sí deja MovimientoInterno y no pisa ventas concurrentes.
           await tx.insumo.update({ where: { id: insumoReventaId }, data: insumoData });
         } else {
-          const insumo = await tx.insumo.create({ data: { nombre: parsed.nombre, es_mixto: false, ...insumoData } });
+          const insumo = await tx.insumo.create({
+            data: { nombre: parsed.nombre, es_mixto: false, stock_actual: n.stock, ...insumoData },
+          });
           insumoReventaId = insumo.id;
+          if (n.stock > 0) {
+            await tx.movimientoInterno.create({
+              data: {
+                insumo_id:       insumo.id,
+                tipo_movimiento: 'INGRESO',
+                cantidad:        n.stock,
+                descripcion:     `Stock inicial de "${parsed.nombre}" (alta de insumo de reventa)`,
+                costo_unitario:  n.costo_unitario,
+                responsable:     String(session.id),
+              },
+            });
+          }
         }
       }
 
@@ -187,29 +204,44 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
       return NextResponse.json({ error: 'El motivo de la baja es obligatorio' }, { status: 400 });
     }
 
-    const prod = await prisma.producto.update({
-      where: { id: productoId },
-      data: {
-        estado_publicacion,
-        disponible: estado_publicacion === 'PUBLICADO',
-        motivo_baja: estado_publicacion === 'BAJA' ? motivo : null,
-        fecha_baja: estado_publicacion === 'BAJA' ? new Date() : null,
-        // Dar de baja el producto es una de las salidas del flujo de revisión
-        ...(estado_publicacion === 'BAJA'
-          ? { en_revision: false, revision_desde: null, motivo_revision: null, insumo_causa_revision_id: null }
-          : {}),
-      },
+    const { prod, insumoBajado, insumoReactivado } = await prisma.$transaction(async (tx) => {
+      const prod = await tx.producto.update({
+        where: { id: productoId },
+        data: {
+          estado_publicacion,
+          disponible: estado_publicacion === 'PUBLICADO',
+          motivo_baja: estado_publicacion === 'BAJA' ? motivo : null,
+          fecha_baja: estado_publicacion === 'BAJA' ? new Date() : null,
+          // Dar de baja el producto es una de las salidas del flujo de revisión
+          ...(estado_publicacion === 'BAJA'
+            ? { en_revision: false, revision_desde: null, motivo_revision: null, insumo_causa_revision_id: null }
+            : {}),
+        },
+      });
+
+      // Baja/restauración espejada del insumo de reventa de uso exclusivo
+      let insumoBajado = false;
+      let insumoReactivado = false;
+      if (actual.tipo === 'REVENTA') {
+        if (estado_publicacion === 'BAJA' && actual.estado_publicacion !== 'BAJA') {
+          insumoBajado = await bajaInsumoExclusivoDeReventa(tx, actual, motivo!);
+        } else if (actual.estado_publicacion === 'BAJA' && estado_publicacion !== 'BAJA') {
+          insumoReactivado = await reactivarInsumoDeReventaSiCascada(tx, actual.insumo_reventa_id);
+        }
+      }
+
+      await logAudit({
+        usuarioId: session.id, rol: session.rol, accion: 'MODIFICO',
+        entidad: 'Producto', entidadId: productoId,
+        detalle: estado_publicacion === 'BAJA'
+          ? `Producto "${prod.nombre}" dado de baja. Motivo: ${motivo}${insumoBajado ? ' (insumo de reventa dado de baja en cascada)' : ''}`
+          : `Producto "${prod.nombre}" → ${estado_publicacion}${insumoReactivado ? ' (insumo de reventa reactivado)' : ''}`,
+      }, tx);
+
+      return { prod, insumoBajado, insumoReactivado };
     });
 
-    await logAudit({
-      usuarioId: session.id, rol: session.rol, accion: 'MODIFICO',
-      entidad: 'Producto', entidadId: productoId,
-      detalle: estado_publicacion === 'BAJA'
-        ? `Producto "${prod.nombre}" dado de baja. Motivo: ${motivo}`
-        : `Producto "${prod.nombre}" → ${estado_publicacion}`,
-    });
-
-    return NextResponse.json({ data: prod });
+    return NextResponse.json({ data: prod, insumo_reventa: { dado_de_baja: insumoBajado, reactivado: insumoReactivado } });
   } catch (error) {
     return handleApiError(error);
   }
