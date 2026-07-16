@@ -209,62 +209,94 @@ export async function getTurnoDetalle(session: Session, turnoId: number) {
 /**
  * Aplica un abono FIFO (deuda más antigua primero) a los fiados abiertos de un
  * cliente: actualiza cuentas por cobrar, genera un MovimientoCaja "Cobro fiado"
- * por cada deuda tocada y suma el ingreso a la cuenta financiera del método.
+ * por cada (deuda, método) tocado, deja cada pago en el ledger
+ * (CuentaCorrientePago) y suma el ingreso a la cuenta financiera del método.
+ * Acepta varios métodos en un mismo cobro (pago mixto) y, opcionalmente,
+ * limitarse a deudas concretas (`cuenta_ids`) para pagar solo ciertas cosas.
  */
 async function aplicarAbonoDeudaFifo(tx: Prisma.TransactionClient, args: {
   sucursal_id: number;
   turno_id: number;
   cliente_id: number;
-  monto: number;
-  metodo_pago: TipoCuenta;
+  pagos: { metodo_pago: TipoCuenta; monto: number }[];
+  cuenta_ids?: number[];
   creado_por_id: number;
   venta_id?: number;
 }) {
   const deudas = await tx.cuentaCorriente.findMany({
-    where: { tipo: 'POR_COBRAR', cliente_id: args.cliente_id, estado: { not: 'PAGADA' } },
+    where: {
+      tipo: 'POR_COBRAR', cliente_id: args.cliente_id, estado: { not: 'PAGADA' },
+      ...(args.cuenta_ids?.length ? { id: { in: args.cuenta_ids } } : {}),
+    },
     orderBy: { created_at: 'asc' },
   });
+  if (args.cuenta_ids?.length && deudas.length !== new Set(args.cuenta_ids).size) {
+    throw new ValidationError('Alguna deuda seleccionada no existe, no es de este cliente o ya está pagada');
+  }
+  const montoAbono = Number(args.pagos.reduce((s, p) => s + p.monto, 0).toFixed(2));
+  if (montoAbono <= 0) throw new ValidationError('El monto a cobrar debe ser mayor a 0');
   const saldoTotal = Number(deudas.reduce((s, d) => s + Number(d.monto) - Number(d.monto_pagado), 0).toFixed(2));
   if (saldoTotal <= 0) throw new ValidationError('El cliente no tiene deudas pendientes');
-  if (args.monto > saldoTotal) {
-    throw new ValidationError(`El abono (Bs ${args.monto.toFixed(2)}) supera la deuda del cliente (Bs ${saldoTotal.toFixed(2)})`);
+  if (montoAbono > saldoTotal) {
+    throw new ValidationError(`El abono (Bs ${montoAbono.toFixed(2)}) supera la deuda seleccionada (Bs ${saldoTotal.toFixed(2)})`);
   }
 
-  const cuentaFin = await getCuenta(tx, args.sucursal_id, args.metodo_pago);
-  let restante = args.monto;
-  for (const deuda of deudas) {
-    if (restante <= 0) break;
-    const saldo = Number((Number(deuda.monto) - Number(deuda.monto_pagado)).toFixed(2));
-    if (saldo <= 0) continue;
-    const aplicar = Math.min(saldo, restante);
-    const nuevoPagado = Number((Number(deuda.monto_pagado) + aplicar).toFixed(2));
-    await tx.cuentaCorriente.update({
-      where: { id: deuda.id },
-      data: { monto_pagado: nuevoPagado, estado: nuevoPagado >= Number(deuda.monto.toFixed(2)) ? 'PAGADA' : 'PARCIAL' },
-    });
-    await tx.movimientoCaja.create({
-      data: {
-        turno_id: args.turno_id, cuenta_id: cuentaFin.id, tipo: 'INGRESO_EXTRA',
-        metodo_pago: args.metodo_pago, monto: aplicar,
-        concepto: `Cobro fiado — ${deuda.contraparte}: ${deuda.concepto}${args.venta_id ? ` (junto a venta #${args.venta_id})` : ''}`,
-        categoria: 'Cobro fiado',
-        transaccion_id: deuda.transaccion_id, creado_por_id: args.creado_por_id,
-      },
-    });
-    restante = Number((restante - aplicar).toFixed(2));
+  // Cada método se reparte FIFO sobre las deudas; los saldos se van consumiendo
+  const saldos = new Map(deudas.map(d => [d.id, Number((Number(d.monto) - Number(d.monto_pagado)).toFixed(2))]));
+  const pagadoAcum = new Map(deudas.map(d => [d.id, Number(d.monto_pagado.toFixed(2))]));
+  for (const pago of args.pagos) {
+    const cuentaFin = await getCuenta(tx, args.sucursal_id, pago.metodo_pago);
+    let restante = pago.monto;
+    for (const deuda of deudas) {
+      if (restante <= 0) break;
+      const saldo = saldos.get(deuda.id)!;
+      if (saldo <= 0) continue;
+      const aplicar = Math.min(saldo, restante);
+      const nuevoPagado = Number((pagadoAcum.get(deuda.id)! + aplicar).toFixed(2));
+      const quedaPagada = nuevoPagado >= Number(deuda.monto.toFixed(2));
+      await tx.cuentaCorriente.update({
+        where: { id: deuda.id },
+        data: { monto_pagado: nuevoPagado, estado: quedaPagada ? 'PAGADA' : 'PARCIAL' },
+      });
+      // Deuda saldada: la venta fiada que la originó deja de estar "pago pendiente"
+      if (quedaPagada && deuda.transaccion_id != null) {
+        await tx.transaccion.update({ where: { id: deuda.transaccion_id }, data: { payment_status: 'PAGADO' } });
+      }
+      const mov = await tx.movimientoCaja.create({
+        data: {
+          turno_id: args.turno_id, cuenta_id: cuentaFin.id, tipo: 'INGRESO_EXTRA',
+          metodo_pago: pago.metodo_pago, monto: aplicar,
+          concepto: `Cobro fiado — ${deuda.contraparte}: ${deuda.concepto}${args.venta_id ? ` (junto a venta #${args.venta_id})` : ''}`,
+          categoria: 'Cobro fiado',
+          transaccion_id: deuda.transaccion_id, creado_por_id: args.creado_por_id,
+        },
+      });
+      // Ledger: cada aplicación queda como pago individual de esa deuda
+      await tx.cuentaCorrientePago.create({
+        data: {
+          cuenta_id: deuda.id, monto: aplicar, metodo_pago: pago.metodo_pago,
+          movimiento_caja_id: mov.id, creado_por_id: args.creado_por_id,
+        },
+      });
+      saldos.set(deuda.id, Number((saldo - aplicar).toFixed(2)));
+      pagadoAcum.set(deuda.id, nuevoPagado);
+      restante = Number((restante - aplicar).toFixed(2));
+    }
+    await tx.cuentaFinanciera.update({ where: { id: cuentaFin.id }, data: { saldo: { increment: pago.monto } } });
   }
-  await tx.cuentaFinanciera.update({ where: { id: cuentaFin.id }, data: { saldo: { increment: args.monto } } });
-  return { saldo_anterior: saldoTotal, saldo_restante: Number((saldoTotal - args.monto).toFixed(2)) };
+  return { saldo_anterior: saldoTotal, saldo_restante: Number((saldoTotal - montoAbono).toFixed(2)) };
 }
 
 /**
  * Cobro de deuda SIN compra (el cliente viene solo a pagar): mismo FIFO y los
  * mismos movimientos de caja que el abono junto a una venta, con auditoría.
+ * Soporta pago mixto (varios métodos) y cobrar solo deudas concretas
+ * (`cuenta_ids`); lo no seleccionado queda como deuda pendiente.
  */
 export async function abonarDeudaClienteCaja(
   session: Session,
   clienteId: number,
-  dto: { monto: number; metodo_pago: 'EFECTIVO' | 'QR' | 'TARJETA' },
+  dto: { pagos: PagoDeudaItem[]; cuenta_ids?: number[] },
   meta: Meta = {},
 ) {
   const sucursal_id = sucursalDe(session);
@@ -280,18 +312,22 @@ export async function abonarDeudaClienteCaja(
 
     const resultado = await aplicarAbonoDeudaFifo(tx, {
       sucursal_id, turno_id: turno.id, cliente_id: clienteId,
-      monto: dto.monto, metodo_pago: dto.metodo_pago as TipoCuenta,
+      pagos: dto.pagos.map(p => ({ metodo_pago: p.metodo_pago as TipoCuenta, monto: p.monto })),
+      cuenta_ids: dto.cuenta_ids,
       creado_por_id: session.id,
     });
 
+    const abonado = Number(dto.pagos.reduce((s, p) => s + p.monto, 0).toFixed(2));
+    const desglose = dto.pagos.map(p => `${p.metodo_pago} Bs ${p.monto.toFixed(2)}`).join(' + ');
+    const alcance = dto.cuenta_ids?.length ? ` sobre ${dto.cuenta_ids.length} deuda(s) seleccionada(s)` : '';
     await logAudit({
       usuarioId: session.id, rol: session.rol, accion: 'MODIFICO',
       entidad: 'CuentaCorriente', entidadId: clienteId,
-      detalle: `Cobro de deuda: Bs ${dto.monto.toFixed(2)} (${dto.metodo_pago}) — cliente "${cliente.nombre}" (#${clienteId}). Saldo restante: Bs ${resultado.saldo_restante.toFixed(2)}`,
-      monto: dto.monto, ip: meta.ip, userAgent: meta.userAgent,
+      detalle: `Cobro de deuda: Bs ${abonado.toFixed(2)} (${desglose})${alcance} — cliente "${cliente.nombre}" (#${clienteId}). Saldo restante: Bs ${resultado.saldo_restante.toFixed(2)}`,
+      monto: abonado, ip: meta.ip, userAgent: meta.userAgent,
     }, tx);
 
-    return { cliente_id: clienteId, abonado: dto.monto, ...resultado };
+    return { cliente_id: clienteId, abonado, ...resultado };
   }, { maxWait: 10000, timeout: 20000 });
 }
 
@@ -352,20 +388,24 @@ export async function registrarVentaFisica(session: Session, dto: VentaFisicaInp
       throw new ValidationError('El abono a deuda requiere un cliente registrado');
     }
 
-    // Descuento por privilegio del cliente: se aplica el de mayor porcentaje activo.
+    // Descuento por privilegio elegido por el cajero para ESTA venta (uno solo).
     // Impacta el total cobrado, por lo que también reduce el monto del fiado.
     let codigoDescuento: string | null = null;
-    if (clienteId && !esAnonimo) {
-      const mejor = await tx.clientePrivilegio.findFirst({
-        where: { cliente_id: clienteId, privilegio: { activo: true } },
-        orderBy: { privilegio: { porcentaje: 'desc' } },
-        include: { privilegio: true },
+    if (dto.privilegio_id) {
+      if (!clienteId || esAnonimo) {
+        throw new ValidationError('El privilegio requiere un cliente registrado');
+      }
+      const privilegio = await tx.privilegio.findFirst({
+        where: { id: dto.privilegio_id, activo: true },
       });
-      const pct = mejor ? Number(mejor.privilegio.porcentaje) : 0;
+      if (!privilegio) {
+        throw new ValidationError('El privilegio no existe o no está activo');
+      }
+      const pct = Number(privilegio.porcentaje);
       if (pct > 0) {
         total = total.times(100 - pct).dividedBy(100);
         total = new Prisma.Decimal(total.toFixed(2));
-        codigoDescuento = `Privilegio: ${mejor!.privilegio.nombre} (-${pct}%)`;
+        codigoDescuento = `Privilegio: ${privilegio.nombre} (-${pct}%)`;
       }
     }
 
@@ -452,7 +492,7 @@ export async function registrarVentaFisica(session: Session, dto: VentaFisicaInp
     if (abono > 0) {
       await aplicarAbonoDeudaFifo(tx, {
         sucursal_id, turno_id: turno.id, cliente_id: clienteId!,
-        monto: abono, metodo_pago: dto.metodo_pago as TipoCuenta,
+        pagos: [{ metodo_pago: dto.metodo_pago as TipoCuenta, monto: abono }],
         creado_por_id: session.id, venta_id: venta.id,
       });
     }
@@ -625,7 +665,23 @@ export async function entregarPedido(
 export async function listarDeudoresCaja() {
   const rows = await prisma.cuentaCorriente.findMany({
     where: { tipo: 'POR_COBRAR', estado: { not: 'PAGADA' } },
-    include: { cliente: { select: { id: true, nombre: true, telefono: true } } },
+    include: {
+      cliente: { select: { id: true, nombre: true, telefono: true } },
+      transaccion: {
+        select: {
+          id: true,
+          created_at: true,
+          transaccionesDetalles_id: { select: { cantidad: true, precio_unitario: true, producto: { select: { nombre: true } } } },
+        },
+      },
+      pagos: {
+        orderBy: { created_at: 'asc' },
+        select: {
+          id: true, monto: true, metodo_pago: true, created_at: true,
+          creado_por: { select: { nombre: true, apellido_paterno: true } },
+        },
+      },
+    },
     orderBy: [{ vencimiento: 'asc' }, { created_at: 'desc' }],
   });
   const ahora = new Date();
@@ -641,8 +697,30 @@ export async function listarDeudoresCaja() {
       monto_pagado: pagado,
       saldo: Number((monto - pagado).toFixed(2)),
       estado: r.estado,
+      fecha_fiado: r.created_at,
       vencimiento: r.vencimiento,
       vencido: r.vencimiento != null && r.vencimiento < ahora,
+      // De qué venta nació la deuda (null si el fiado se creó a mano desde admin)
+      origen: r.transaccion
+        ? {
+            venta_id: r.transaccion.id,
+            fecha: r.transaccion.created_at,
+            items: r.transaccion.transaccionesDetalles_id.map(d => ({
+              nombre: d.producto?.nombre ?? 'Producto',
+              cantidad: d.cantidad,
+              precio_unitario: Number(d.precio_unitario.toFixed(2)),
+              subtotal: Number((Number(d.precio_unitario) * d.cantidad).toFixed(2)),
+            })),
+          }
+        : null,
+      // Historial de pagos ya realizados sobre esta deuda
+      pagos: r.pagos.map(p => ({
+        id: p.id,
+        monto: Number(p.monto.toFixed(2)),
+        metodo_pago: p.metodo_pago,
+        fecha: p.created_at,
+        cobrado_por: `${p.creado_por.nombre} ${p.creado_por.apellido_paterno}`.trim(),
+      })),
     };
   });
   return {
@@ -655,15 +733,19 @@ export async function listarDeudoresCaja() {
   };
 }
 
+export type PagoDeudaItem = { metodo_pago: 'EFECTIVO' | 'QR' | 'TARJETA'; monto: number };
+
 /**
  * Cobro de una deuda (fiado) desde caja: registra el pago sobre la cuenta por
  * cobrar y, como sí entra dinero real, lo asienta como ingreso en el turno abierto
- * para que impacte el cuadre.
+ * para que impacte el cuadre. Acepta varios métodos en un mismo cobro (pago
+ * mixto): cada parte genera su propio movimiento de caja y su fila en el
+ * historial de pagos (CuentaCorrientePago).
  */
 export async function cobrarDeudaCaja(
   session: Session,
   cuentaId: number,
-  dto: { monto: number; metodo_pago: 'EFECTIVO' | 'QR' },
+  dto: { pagos: PagoDeudaItem[] },
   meta: Meta = {},
 ) {
   const sucursal_id = sucursalDe(session);
@@ -674,9 +756,12 @@ export async function cobrarDeudaCaja(
     const cuenta = await tx.cuentaCorriente.findUnique({ where: { id: cuentaId } });
     if (!cuenta || cuenta.tipo !== 'POR_COBRAR') throw new NotFoundError('Deuda no encontrada');
 
+    const montoCobro = Number(dto.pagos.reduce((s, p) => s + p.monto, 0).toFixed(2));
+    if (montoCobro <= 0) throw new ValidationError('El monto a cobrar debe ser mayor a 0');
+
     const montoTotal = Number(cuenta.monto.toFixed(2));
     const pagadoActual = Number(cuenta.monto_pagado.toFixed(2));
-    const nuevoPagado = Number((pagadoActual + dto.monto).toFixed(2));
+    const nuevoPagado = Number((pagadoActual + montoCobro).toFixed(2));
     if (nuevoPagado > montoTotal) {
       throw new ValidationError(`El pago (${nuevoPagado}) supera el saldo pendiente`);
     }
@@ -687,23 +772,37 @@ export async function cobrarDeudaCaja(
       data: { monto_pagado: nuevoPagado, estado },
     });
 
-    // Entra dinero real → ingreso al turno (impacta cuadre)
-    const cuentaFin = await getCuenta(tx, sucursal_id, dto.metodo_pago as TipoCuenta);
-    await tx.movimientoCaja.create({
-      data: {
-        turno_id: turno.id, cuenta_id: cuentaFin.id, tipo: 'INGRESO_EXTRA',
-        metodo_pago: dto.metodo_pago as TipoCuenta, monto: dto.monto,
-        concepto: `Cobro fiado — ${cuenta.contraparte}: ${cuenta.concepto}`, categoria: 'Cobro fiado',
-        transaccion_id: cuenta.transaccion_id, creado_por_id: session.id,
-      },
-    });
-    await tx.cuentaFinanciera.update({ where: { id: cuentaFin.id }, data: { saldo: { increment: dto.monto } } });
+    // Deuda saldada: la venta fiada que la originó deja de estar "pago pendiente"
+    if (estado === 'PAGADA' && cuenta.transaccion_id != null) {
+      await tx.transaccion.update({ where: { id: cuenta.transaccion_id }, data: { payment_status: 'PAGADO' } });
+    }
 
+    // Entra dinero real → un ingreso al turno por cada método (impacta cuadre)
+    for (const pago of dto.pagos) {
+      const cuentaFin = await getCuenta(tx, sucursal_id, pago.metodo_pago as TipoCuenta);
+      const mov = await tx.movimientoCaja.create({
+        data: {
+          turno_id: turno.id, cuenta_id: cuentaFin.id, tipo: 'INGRESO_EXTRA',
+          metodo_pago: pago.metodo_pago as TipoCuenta, monto: pago.monto,
+          concepto: `Cobro fiado — ${cuenta.contraparte}: ${cuenta.concepto}`, categoria: 'Cobro fiado',
+          transaccion_id: cuenta.transaccion_id, creado_por_id: session.id,
+        },
+      });
+      await tx.cuentaFinanciera.update({ where: { id: cuentaFin.id }, data: { saldo: { increment: pago.monto } } });
+      await tx.cuentaCorrientePago.create({
+        data: {
+          cuenta_id: cuentaId, monto: pago.monto, metodo_pago: pago.metodo_pago as TipoCuenta,
+          movimiento_caja_id: mov.id, creado_por_id: session.id,
+        },
+      });
+    }
+
+    const desglose = dto.pagos.map(p => `${p.metodo_pago} Bs ${p.monto.toFixed(2)}`).join(' + ');
     await logAudit({
       usuarioId: session.id, rol: session.rol, accion: 'MODIFICO',
       entidad: 'CuentaCorriente', entidadId: cuentaId,
-      detalle: `Cobro fiado ${cuenta.contraparte}: Bs ${dto.monto} (${dto.metodo_pago}) — ${estado}`,
-      monto: dto.monto, ip: meta.ip, userAgent: meta.userAgent,
+      detalle: `Cobro fiado ${cuenta.contraparte}: Bs ${montoCobro.toFixed(2)} (${desglose}) — ${estado}`,
+      monto: montoCobro, ip: meta.ip, userAgent: meta.userAgent,
     }, tx);
 
     return { id: cuentaActualizada.id, estado, monto_pagado: nuevoPagado, saldo: Number((montoTotal - nuevoPagado).toFixed(2)) };
