@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { guard, ADMIN } from '@/lib/server/auth/guard';
+import { guard, ADMIN, STAFF } from '@/lib/server/auth/guard';
 
+// Lectura de recetas: también el cajero (vista solo lectura en /caja/insumos)
 export async function GET(req: NextRequest) {
-  const auth = await guard(req, ADMIN);
+  const auth = await guard(req, STAFF);
   if (auth instanceof NextResponse) return auth;
 
   try {
