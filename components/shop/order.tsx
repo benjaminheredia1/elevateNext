@@ -1008,7 +1008,7 @@ function OrderTracker({ onClose, pedidoId, tipoEntrega }: { onClose: () => void;
     let pollingInterval: NodeJS.Timeout;
     const fetchStatus = async () => {
       try {
-        const res = await fetch(`/api/pedidos/${pedidoId}`);
+        const res = await fetch(`/api/pedidos/${pedidoId}/tracking`);
         const data = await res.json();
         if (data.data) {
           const { estado, driver_lat, driver_lng, tipo_entrega, codigo: cod } = data.data;

@@ -1,8 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { descontarStockPorTransaccion } from '@/lib/server/inventario/descuento-stock.service';
+import { isRateLimited } from '@/lib/server/rate-limit';
+
+// El repartidor legítimo consulta/actualiza cada pocos segundos; este límite
+// solo frena la enumeración de tokens por fuerza bruta.
+const LIMITE = { ventanaMs: 60000, max: 60 };
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
+  if (isRateLimited(req, LIMITE.ventanaMs, LIMITE.max)) {
+    return NextResponse.json({ error: 'Demasiadas consultas. Intenta en un minuto.' }, { status: 429 });
+  }
   try {
     const { token } = await params;
     const pedido = await prisma.transaccion.findUnique({
@@ -26,6 +34,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ toke
 }
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
+  if (isRateLimited(req, LIMITE.ventanaMs, LIMITE.max)) {
+    return NextResponse.json({ error: 'Demasiadas consultas. Intenta en un minuto.' }, { status: 429 });
+  }
   try {
     const { token } = await params;
     const body = await req.json();
@@ -58,6 +69,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
 }
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
+  if (isRateLimited(req, LIMITE.ventanaMs, LIMITE.max)) {
+    return NextResponse.json({ error: 'Demasiadas consultas. Intenta en un minuto.' }, { status: 429 });
+  }
   try {
     const { token } = await params;
     const body = await req.json();

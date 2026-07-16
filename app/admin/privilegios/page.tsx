@@ -91,7 +91,7 @@ export default function PrivilegiosPage() {
         <div>
           <span className="admin-badge">Gestión</span>
           <h1>Privilegios</h1>
-          <p>Descuentos que puedes asignar a clientes desde su ficha en Clientes.</p>
+          <p>Descuentos que el cajero puede aplicar a una venta desde el punto de venta (uno por venta).</p>
         </div>
         <button className="admin-btn primary" onClick={() => setModal({ open: true, inicial: null })}>+ Nuevo privilegio</button>
       </div>
@@ -113,7 +113,6 @@ export default function PrivilegiosPage() {
               </div>
             )},
             { key: 'porcentaje', header: 'Descuento', className: 'num', render: (row: Privilegio) => <strong>{row.porcentaje}%</strong> },
-            { key: 'clientes', header: 'Clientes', className: 'num', render: (row: Privilegio) => row.clientes_count ?? 0 },
             { key: 'estado', header: 'Estado', render: (row: Privilegio) => <StatusBadge status={row.activo ? 'abierto' : 'cerrado'} label={row.activo ? 'Activo' : 'Inactivo'} /> },
             { key: 'acciones', header: '', render: (row: Privilegio) => (
               <div className="admin-actions">
