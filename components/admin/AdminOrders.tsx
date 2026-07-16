@@ -335,6 +335,7 @@ export default function AdminOrders({ readOnly = false }: { readOnly?: boolean }
   const [updatingId, setUpdatingId] = useState<number | null>(null);
   const [fiadoPedido, setFiadoPedido] = useState<Pedido | null>(null);
   const [fiadoError, setFiadoError] = useState('');
+  const [actionError, setActionError] = useState('');
   const crearFiado = useCrearFiado();
 
   const fetchPedidos = useCallback(async () => {
@@ -372,14 +373,23 @@ export default function AdminOrders({ readOnly = false }: { readOnly?: boolean }
     return estadoOk && searchOk;
   });
 
+  // Muestra el motivo real que devuelve el backend (ej. fiado con deuda → 409)
+  const mostrarErrorAccion = (err: unknown, fallback: string) => {
+    const e = err as { response?: { data?: { error?: string; message?: string } } };
+    setActionError(e?.response?.data?.error ?? e?.response?.data?.message ?? fallback);
+    window.setTimeout(() => setActionError(''), 8000);
+  };
+
   const handleEstadoChange = async (id: number, estado: EstadoPedido) => {
     setUpdatingId(id);
+    setActionError('');
     try {
       const res = await apiClient.put(`/api/pedidos/${id}`, { estado });
       const updated = res.data?.data;
       setPedidos(prev => prev.map(pedido => pedido.id === id ? { ...pedido, ...(updated ?? {}), estado } : pedido));
     } catch (err) {
       console.error(err);
+      mostrarErrorAccion(err, 'No se pudo cambiar el estado del pedido.');
     } finally {
       setUpdatingId(null);
     }
@@ -387,12 +397,14 @@ export default function AdminOrders({ readOnly = false }: { readOnly?: boolean }
 
   const handlePagoChange = async (id: number, payment: string) => {
     setUpdatingId(id);
+    setActionError('');
     try {
       const res = await apiClient.put(`/api/pedidos/${id}`, { payment_status: payment });
       const updated = res.data?.data;
       setPedidos(prev => prev.map(pedido => pedido.id === id ? { ...pedido, ...(updated ?? {}), payment_status: payment } : pedido));
     } catch (err) {
       console.error(err);
+      mostrarErrorAccion(err, 'No se pudo cambiar el estado de pago.');
     } finally {
       setUpdatingId(null);
     }
@@ -443,6 +455,16 @@ export default function AdminOrders({ readOnly = false }: { readOnly?: boolean }
           {loading ? 'Actualizando...' : 'Actualizar'}
         </button>
       </div>
+
+      {actionError && (
+        <div role="alert" style={{
+          marginBottom: 12, padding: '10px 14px', borderRadius: 10,
+          background: 'rgba(220, 53, 69, 0.08)', border: '1px solid var(--danger, #dc3545)',
+          color: 'var(--danger, #dc3545)', fontWeight: 600, fontSize: '0.9rem',
+        }}>
+          {actionError}
+        </div>
+      )}
 
       <div className="admin-filters">
         <div className="admin-search">

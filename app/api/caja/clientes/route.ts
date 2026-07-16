@@ -32,10 +32,6 @@ export async function GET(req: NextRequest) {
       },
       select: {
         id: true, nombre: true, telefono: true, nit: true, email: true,
-        privilegios: {
-          where: { privilegio: { activo: true } },
-          select: { privilegio: { select: { id: true, nombre: true, porcentaje: true } } },
-        },
         cuentas_corrientes: {
           where: { tipo: 'POR_COBRAR', estado: { not: 'PAGADA' } },
           select: { monto: true, monto_pagado: true },
@@ -46,13 +42,6 @@ export async function GET(req: NextRequest) {
     });
 
     const data = clientes.map(c => {
-      const privilegios = c.privilegios.map(p => ({
-        id: p.privilegio.id,
-        nombre: p.privilegio.nombre,
-        porcentaje: Number(p.privilegio.porcentaje),
-      }));
-      const mejor = privilegios.reduce<{ nombre: string; pct: number } | null>((best, p) =>
-        !best || p.porcentaje > best.pct ? { nombre: p.nombre, pct: p.porcentaje } : best, null);
       const deudaSaldo = Number(c.cuentas_corrientes
         .reduce((s, d) => s + Number(d.monto) - Number(d.monto_pagado), 0)
         .toFixed(2));
@@ -62,10 +51,7 @@ export async function GET(req: NextRequest) {
         telefono: c.telefono,
         nit: c.nit,
         email: c.email,
-        privilegios,
         deuda_saldo: deudaSaldo,
-        descuento_pct: mejor?.pct ?? 0,
-        descuento_nombre: mejor?.nombre ?? null,
       };
     });
     return NextResponse.json({ data });
@@ -75,7 +61,7 @@ export async function GET(req: NextRequest) {
 /**
  * Alta de cliente desde caja (directorio o POS), sin necesidad de una venta.
  * Duplicado por celular/email/NIT → 409 (usar el existente). Los privilegios
- * asignados en el alta deben ser activos; todo queda en auditoría.
+ * ya no se asignan al cliente: se eligen por venta en el POS.
  */
 export async function POST(req: NextRequest) {
   try {
@@ -83,21 +69,16 @@ export async function POST(req: NextRequest) {
     requireRole(session, ['CAJERO', 'DUENO', 'ADMIN']);
     const input = crearClienteCajaSchema.parse(await req.json());
 
-    const { cliente, privilegios } = await crearClienteDesdeCaja(input);
+    const { cliente } = await crearClienteDesdeCaja(input);
 
-    const detallePriv = privilegios.length > 0
-      ? ` con privilegios: ${privilegios.map(p => `${p.nombre} (${p.porcentaje}%)`).join(', ')}`
-      : '';
     await logAudit({
       usuarioId: session.id, rol: session.rol, accion: 'CREO',
       entidad: 'Cliente', entidadId: cliente.id,
-      detalle: `Registró cliente "${cliente.nombre}" (#${cliente.id}) desde caja${detallePriv}`,
+      detalle: `Registró cliente "${cliente.nombre}" (#${cliente.id}) desde caja`,
       ip: getClientIp(req), userAgent: req.headers.get('user-agent'),
     });
 
     // Misma forma que el GET (ClienteResultado) para poder seleccionarlo en el POS.
-    const mejor = privilegios.reduce<{ nombre: string; pct: number } | null>((best, p) =>
-      !best || p.porcentaje > best.pct ? { nombre: p.nombre, pct: p.porcentaje } : best, null);
     return NextResponse.json({
       data: {
         id: cliente.id,
@@ -105,10 +86,7 @@ export async function POST(req: NextRequest) {
         telefono: cliente.telefono,
         nit: cliente.nit,
         email: cliente.email,
-        privilegios,
         deuda_saldo: 0,
-        descuento_pct: mejor?.pct ?? 0,
-        descuento_nombre: mejor?.nombre ?? null,
       },
     }, { status: 201 });
   } catch (e) { return handleApiError(e); }

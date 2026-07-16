@@ -19,6 +19,7 @@ export const fiadoSchema = z.object({
 
 export const pagoSchema = z.object({
   monto: z.coerce.number().positive(),
+  metodo_pago: z.enum(['EFECTIVO', 'QR', 'TARJETA', 'BANCO']).optional(),
 });
 
 export const idSchema = z.object({

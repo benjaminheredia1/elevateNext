@@ -153,6 +153,7 @@ describe('POST /api/caja/venta — pago mixto', () => {
       update: {},
       create: { nombre: 'Cliente Abono E2E', telefono: '79999002' },
     });
+    await prisma.cuentaCorrientePago.deleteMany({ where: { cuenta: { cliente_id: cliente.id } } });
     await prisma.cuentaCorriente.deleteMany({ where: { cliente_id: cliente.id } });
     const deuda1 = await prisma.cuentaCorriente.create({
       data: { tipo: 'POR_COBRAR', contraparte: cliente.nombre, concepto: 'Fiado E2E 1', monto: 10, creado_por_id: cajeroUserId, cliente_id: cliente.id, created_at: new Date('2026-01-01') },
@@ -227,6 +228,7 @@ describe('POST /api/caja/venta — pago mixto', () => {
       update: {},
       create: { nombre: 'Cliente Solo Deuda E2E', telefono: '79999005' },
     });
+    await prisma.cuentaCorrientePago.deleteMany({ where: { cuenta: { cliente_id: cliente.id } } });
     await prisma.cuentaCorriente.deleteMany({ where: { cliente_id: cliente.id } });
     await prisma.cuentaCorriente.create({
       data: { tipo: 'POR_COBRAR', contraparte: cliente.nombre, concepto: 'Fiado solo deuda E2E', monto: 10, creado_por_id: cajeroUserId, cliente_id: cliente.id },
@@ -311,5 +313,90 @@ describe('POST /api/caja/venta — pago mixto', () => {
     expect(movimientos).toHaveLength(1);
     expect(movimientos[0].metodo_pago).toBe('EFECTIVO');
     expect(Number(movimientos[0].monto)).toBe(PRECIO);
+  });
+
+  describe('privilegio elegido por venta (descuento)', () => {
+    let privActivoId: number;
+    let privInactivoId: number;
+    let clientePrivId: number;
+
+    beforeAll(async () => {
+      const admin = await prisma.usuario.findUniqueOrThrow({ where: { email: 'benjaherediaruiz@gmail.com' } });
+      let activo = await prisma.privilegio.findFirst({ where: { nombre: 'Privilegio Venta E2E Activo' } });
+      if (!activo) activo = await prisma.privilegio.create({ data: { nombre: 'Privilegio Venta E2E Activo', porcentaje: 10, activo: true, creado_por_id: admin.id } });
+      else await prisma.privilegio.update({ where: { id: activo.id }, data: { activo: true, porcentaje: 10 } });
+      privActivoId = activo.id;
+
+      let inactivo = await prisma.privilegio.findFirst({ where: { nombre: 'Privilegio Venta E2E Inactivo' } });
+      if (!inactivo) inactivo = await prisma.privilegio.create({ data: { nombre: 'Privilegio Venta E2E Inactivo', porcentaje: 50, activo: false, creado_por_id: admin.id } });
+      else await prisma.privilegio.update({ where: { id: inactivo.id }, data: { activo: false } });
+      privInactivoId = inactivo.id;
+
+      const cliente = await prisma.cliente.upsert({
+        where: { telefono: '79999102' },
+        update: {},
+        create: { nombre: 'Cliente Privilegio Venta E2E', telefono: '79999102' },
+      });
+      clientePrivId = cliente.id;
+    });
+
+    it('sin cliente registrado → 422', async () => {
+      const res = await POST(req({
+        items: [{ producto_id: productoId, cantidad: 1 }],
+        metodo_pago: 'EFECTIVO',
+        privilegio_id: privActivoId,
+      }, token));
+      expect(res.status).toBe(422);
+      const body = await res.json();
+      expect(body.error).toContain('cliente registrado');
+    });
+
+    it('privilegio inactivo → 422', async () => {
+      const res = await POST(req({
+        items: [{ producto_id: productoId, cantidad: 1 }],
+        metodo_pago: 'EFECTIVO',
+        cliente_id: clientePrivId,
+        privilegio_id: privInactivoId,
+      }, token));
+      expect(res.status).toBe(422);
+      const body = await res.json();
+      expect(body.error).toContain('activo');
+    });
+
+    it('aplica el descuento del privilegio elegido al total (server-side)', async () => {
+      const res = await POST(req({
+        items: [{ producto_id: productoId, cantidad: 2 }], // subtotal 40
+        metodo_pago: 'EFECTIVO',
+        cliente_id: clientePrivId,
+        privilegio_id: privActivoId, // -10% → 36
+      }, token));
+      expect(res.status).toBe(201);
+      const venta = await res.json();
+      expect(Number(venta.total)).toBe(36);
+      expect(venta.codigo_descuento).toContain('Privilegio Venta E2E Activo');
+      expect(venta.codigo_descuento).toContain('-10%');
+
+      const mov = await prisma.movimientoCaja.findFirst({ where: { transaccion_id: venta.id } });
+      expect(Number(mov?.monto)).toBe(36);
+    });
+
+    it('el cliente NO recibe descuento automático por asignaciones viejas', async () => {
+      // Vínculo legado en ClientePrivilegio: ya no debe aplicar nada por sí solo
+      await prisma.clientePrivilegio.createMany({
+        data: [{ cliente_id: clientePrivId, privilegio_id: privActivoId }],
+        skipDuplicates: true,
+      });
+
+      const res = await POST(req({
+        items: [{ producto_id: productoId, cantidad: 1 }], // 20
+        metodo_pago: 'EFECTIVO',
+        cliente_id: clientePrivId,
+        // sin privilegio_id
+      }, token));
+      expect(res.status).toBe(201);
+      const venta = await res.json();
+      expect(Number(venta.total)).toBe(PRECIO); // sin descuento
+      expect(venta.codigo_descuento).toBeNull();
+    });
   });
 });
