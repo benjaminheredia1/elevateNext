@@ -207,6 +207,9 @@ model Transaccion {
   es_cortesia Boolean     @default(false)
   turno_id    Int?
   turno       CajaTurno?  @relation(fields: [turno_id], references: [id])
+  // Numeración visible por turno: #1..#n desde cada apertura de caja (el id
+  // global sigue siendo el correlativo histórico). Null en pedidos sin turno.
+  numero_turno Int?
   cajero_id   Int?
   cajero      Usuario?    @relation("CajeroTransacciones", fields: [cajero_id], references: [id])
 
@@ -222,6 +225,9 @@ model Transaccion {
   cuenta_corriente         CuentaCorriente?
   created_at               DateTime                @default(now())
   update_at                DateTime                @updatedAt
+
+  // Un mismo turno no puede repetir número de pedido (los NULL no chocan)
+  @@unique([turno_id, numero_turno])
 }
 
 model Categoria {
@@ -577,6 +583,10 @@ model CuentaCorriente {
   concepto       String
   monto          Decimal         @db.Decimal(12, 2)
   monto_pagado   Decimal         @default(0) @db.Decimal(12, 2)
+  // Descuento aplicado después de crear la deuda (ej. se olvidó al vender):
+  // `monto` ya lo tiene restado; aquí queda cuánto y por qué, para el historial.
+  descuento        Decimal       @default(0) @db.Decimal(12, 2)
+  motivo_descuento String?
   vencimiento    DateTime?
   estado         EstadoCuenta    @default(PENDIENTE)
   creado_por_id  Int

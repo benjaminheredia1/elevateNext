@@ -146,10 +146,23 @@ export function useBuscarClientes(q: string, browse = false) {
   });
 }
 
-export function useDeudores() {
+export function useDeudores(enabled = true) {
   return useQuery({
     queryKey: ['caja', 'deudores'],
     queryFn: async () => (await apiClient.get('/api/caja/deudores')).data,
+    enabled,
+  });
+}
+
+export function useAplicarDescuentoDeuda() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, privilegio_id }: { id: number; privilegio_id: number }) =>
+      (await apiClient.post(`/api/caja/deudores/${id}/descuento`, { privilegio_id })).data,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['caja', 'deudores'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'cuentas-corrientes'] });
+    },
   });
 }
 
