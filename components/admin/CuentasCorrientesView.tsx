@@ -13,7 +13,10 @@ import {
   useEnviarAlertaDeudas,
 } from '@/hooks/cuentas-corrientes';
 import { useAdminClientes } from '@/hooks/admin-clientes';
+import { useDeudores } from '@/hooks/caja';
+import CuentaDeudorModal, { agruparDeudores, type Deuda } from '@/components/caja/CuentaDeudorModal';
 import KpiCard from '@/components/ui/KpiCard';
+import '@/app/caja/caja.css';
 import MoneyText from '@/components/ui/MoneyText';
 import DataTable from '@/components/ui/DataTable';
 import EmptyState from '@/components/ui/EmptyState';
@@ -205,6 +208,8 @@ export default function CuentasCorrientesView({ tipo }: { tipo: TipoCuenta }) {
   const [filtro, setFiltro] = useState<EstadoCuenta>('TODAS');
   const [nuevaOpen, setNuevaOpen] = useState(false);
   const [pagando, setPagando] = useState<{ id: number; contraparte: string; saldo: number } | null>(null);
+  const [cuentaAbierta, setCuentaAbierta] = useState<string | null>(null);
+  const [mensaje, setMensaje] = useState<string | null>(null);
 
   const cuentas = useCuentas(tipo, filtro);
   const crear = useCrearCuenta();
@@ -216,6 +221,18 @@ export default function CuentasCorrientesView({ tipo }: { tipo: TipoCuenta }) {
   const resumen = cuentas.data?.resumen;
   const esCobrar = tipo === 'POR_COBRAR';
   const cantVencidas: number = resumen?.vencidas ?? 0;
+
+  // Detalle de deudores (misma fuente que caja/deudores): venta origen, items,
+  // pagos y descuentos, para el modal "Ver cuenta"
+  const deudoresQuery = useDeudores(esCobrar);
+  const deudores = agruparDeudores((deudoresQuery.data?.items ?? []) as Deuda[]);
+  const deudorAbierto = deudores.find(d => d.key === cuentaAbierta) ?? null;
+
+  const onCuentaDone = (msg: string) => {
+    setMensaje(msg);
+    setCuentaAbierta(null);
+    window.setTimeout(() => setMensaje(null), 5000);
+  };
 
   return (
     <AdminPanel>
@@ -238,6 +255,8 @@ export default function CuentasCorrientesView({ tipo }: { tipo: TipoCuenta }) {
           <button className="admin-btn primary" onClick={() => setNuevaOpen(true)}>Nueva cuenta</button>
         </div>
       </div>
+
+      {mensaje && <div className="caja-alert ok">{mensaje}</div>}
 
       {cuentas.isLoading ? (
         <EmptyState title="Cargando..." />
@@ -325,6 +344,14 @@ export default function CuentasCorrientesView({ tipo }: { tipo: TipoCuenta }) {
                 header: '',
                 render: (row: any) => (
                   <div className="admin-actions">
+                    {esCobrar && row.estado !== 'PAGADA' && (
+                      <button
+                        className="admin-btn primary"
+                        onClick={() => setCuentaAbierta(row.cliente ? `c${row.cliente.id}` : `m${row.id}`)}
+                      >
+                        Ver cuenta
+                      </button>
+                    )}
                     <button
                       className="admin-btn ghost"
                       disabled={row.estado === 'PAGADA' || pago.isPending}
@@ -346,6 +373,16 @@ export default function CuentasCorrientesView({ tipo }: { tipo: TipoCuenta }) {
           onClose={() => setNuevaOpen(false)}
           onSubmit={payload => crear.mutate(payload, { onSuccess: () => setNuevaOpen(false) })}
           saving={crear.isPending}
+        />
+      )}
+
+      {deudorAbierto && (
+        <CuentaDeudorModal
+          key={deudorAbierto.key}
+          deudor={deudorAbierto}
+          onClose={() => setCuentaAbierta(null)}
+          onDone={onCuentaDone}
+          permitirCobro={false}
         />
       )}
 

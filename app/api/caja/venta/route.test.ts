@@ -399,4 +399,71 @@ describe('POST /api/caja/venta — pago mixto', () => {
       expect(venta.codigo_descuento).toBeNull();
     });
   });
+
+  describe('numeración de pedidos por turno (#1..#n por apertura)', () => {
+    const CODIGO_ONLINE = 'NUMTE';
+    let turnoNuevoId: number;
+
+    beforeAll(async () => {
+      await prisma.transaccion.deleteMany({ where: { codigo: CODIGO_ONLINE } });
+      // Turno fresco: la numeración debe arrancar en #1
+      await prisma.cajaTurno.updateMany({
+        where: { sucursal_id: sucursalId, estado: 'ABIERTO' },
+        data: { estado: 'CERRADO', fecha_cierre: new Date() },
+      });
+      const turno = await prisma.cajaTurno.create({
+        data: { sucursal_id: sucursalId, cajero_id: cajeroUserId, apertura_efectivo: 0, apertura_qr: 0 },
+      });
+      turnoNuevoId = turno.id;
+    });
+
+    afterAll(async () => {
+      await prisma.transaccion.deleteMany({ where: { codigo: CODIGO_ONLINE } });
+      await prisma.cajaTurno.updateMany({
+        where: { id: turnoNuevoId, estado: 'ABIERTO' },
+        data: { estado: 'CERRADO', fecha_cierre: new Date() },
+      });
+    });
+
+    it('cada apertura arranca en #1 y numera consecutivo', async () => {
+      const res1 = await POST(req({ items: [{ producto_id: productoId, cantidad: 1 }], metodo_pago: 'EFECTIVO' }, token));
+      expect(res1.status).toBe(201);
+      const v1 = await res1.json();
+      expect(v1.turno_id).toBe(turnoNuevoId);
+      expect(v1.numero_turno).toBe(1);
+
+      const res2 = await POST(req({ items: [{ producto_id: productoId, cantidad: 1 }], metodo_pago: 'EFECTIVO' }, token));
+      expect(res2.status).toBe(201);
+      const v2 = await res2.json();
+      expect(v2.numero_turno).toBe(2);
+    });
+
+    it('un pedido online entra a la numeración cuando el cajero lo opera', async () => {
+      // Pedido web ya pagado (QR), listo para recoger: no cobra nada en mostrador
+      await prisma.transaccion.create({
+        data: {
+          codigo: CODIGO_ONLINE, canal: 'PICKUP', tipo_entrega: 'RECOJO',
+          metodo_pago: 'QR', payment_status: 'PAGADO', estado: 'LISTO',
+          total: 10, cliente_nombre: 'Cliente Online NumTurno E2E',
+        },
+      });
+      const { POST: entregarPost } = await import('@/app/api/caja/entregar/route');
+      const res = await entregarPost(new NextRequest('http://localhost/api/caja/entregar', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({ codigo: CODIGO_ONLINE }),
+      }));
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      // Se cuelga del turno abierto y toma el siguiente número (#3 tras las 2 ventas)
+      expect(body.data.turno_id).toBe(turnoNuevoId);
+      expect(body.data.numero_turno).toBe(3);
+      expect(body.data.estado).toBe('ENTREGADO');
+    });
+
+    it('los pedidos viejos sin turno no llevan número (queda null)', async () => {
+      const viejo = await prisma.transaccion.findFirst({ where: { turno_id: null } });
+      if (viejo) expect(viejo.numero_turno).toBeNull();
+    });
+  });
 });
