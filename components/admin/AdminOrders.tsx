@@ -191,6 +191,8 @@ function PedidoCard({
     <div className={`order-card ${expanded ? 'expanded' : ''}`}>
       <button className="order-card-main" onClick={onToggle} type="button">
         <div className="order-card-left">
+          {/* Aquí se listan pedidos de todos los turnos: manda el número global.
+              El #N del turno vive en /caja/movimientos, que sí es solo del turno. */}
           <span className="order-id">#{pedido.id}</span>
           <span className="order-time">{time(pedido.created_at)}</span>
         </div>

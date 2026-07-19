@@ -219,13 +219,15 @@ export default function VentaCajaPage() {
       setAnonimo(false);
       setMixtoEfectivo(0);
       limpiarCliente();
+      // Nº del turno como identificador principal; el global queda de referencia
+      const numVenta = venta.numero_turno != null ? `#${venta.numero_turno} (global #${venta.id})` : `#${venta.id}`;
       setAlert({
         title: esFiado ? 'Fiado registrado' : 'Venta registrada',
         description: esFiado
-          ? `Venta #${venta.id} cargada a la cuenta del cliente.`
+          ? `Venta ${numVenta} cargada a la cuenta del cliente.`
           : venta.abono_deuda
-            ? `Venta #${venta.id} creada. Incluye abono a deuda de Bs ${Number(venta.abono_deuda).toFixed(2)}.`
-            : `Venta #${venta.id} creada correctamente.`,
+            ? `Venta ${numVenta} creada. Incluye abono a deuda de Bs ${Number(venta.abono_deuda).toFixed(2)}.`
+            : `Venta ${numVenta} creada correctamente.`,
         type: 'success',
       });
     } catch (error: unknown) {

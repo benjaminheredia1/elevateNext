@@ -52,6 +52,19 @@ export async function abrirTurno(session: Session, dto: AperturaCajaInput, meta:
   }, { maxWait: 10000, timeout: 20000 });
 }
 
+/**
+ * Siguiente número de pedido del turno (#1..#n desde la apertura). El índice
+ * único (turno_id, numero_turno) garantiza que no se repita ni con dos cajeros
+ * vendiendo a la vez: ante colisión la transacción falla y se reintenta.
+ */
+async function siguienteNumeroTurno(tx: Prisma.TransactionClient, turnoId: number) {
+  const max = await tx.transaccion.aggregate({
+    _max: { numero_turno: true },
+    where: { turno_id: turnoId },
+  });
+  return (max._max.numero_turno ?? 0) + 1;
+}
+
 async function getCuenta(tx: Prisma.TransactionClient, sucursal_id: number, tipo: TipoCuenta) {
   const cuenta = await tx.cuentaFinanciera.findUnique({
     where: { sucursal_id_tipo: { sucursal_id, tipo } },
@@ -107,6 +120,8 @@ export async function getMovimientos(session: Session) {
   const movimientos = await prisma.movimientoCaja.findMany({
     where: { turno_id: turno.id },
     orderBy: { created_at: 'desc' },
+    // Para mostrar el #N del pedido dentro del turno junto al global
+    include: { transaccion: { select: { id: true, numero_turno: true } } },
   });
   return { turno, movimientos };
 }
@@ -435,6 +450,7 @@ export async function registrarVentaFisica(session: Session, dto: VentaFisicaInp
         estado: dto.es_fiado ? 'ENTREGADO' : 'PAGADO',
         payment_status: dto.es_fiado ? 'PENDIENTE' : 'PAGADO',
         turno_id: turno.id,
+        numero_turno: await siguienteNumeroTurno(tx, turno.id),
         cajero_id: session.id,
         cliente_id: clienteId,
         cliente_nombre: nombreCliente,
@@ -633,6 +649,16 @@ export async function entregarPedido(
       await tx.cajaTurno.update({ where: { id: turno.id }, data: { ventas_efectivo: { increment: cobroEfectivo } } });
     }
 
+    // Pedido online sin cobro en mostrador (ya pagado): igual se cuelga del
+    // turno abierto, si lo hay, para que entre a la numeración del turno.
+    if (turnoId == null) {
+      const turnoAbierto = await tx.cajaTurno.findFirst({ where: { sucursal_id, estado: 'ABIERTO' } });
+      turnoId = turnoAbierto?.id ?? null;
+    }
+    const numeroTurno = pedido.numero_turno == null && turnoId != null
+      ? await siguienteNumeroTurno(tx, turnoId)
+      : undefined;
+
     // Asegurar descuento de stock (idempotente) por si no se descontó antes
     await descontarStockPorTransaccion(tx, pedido.id);
 
@@ -643,6 +669,7 @@ export async function entregarPedido(
         payment_status: nuevoPago,
         cajero_id: session.id,
         turno_id: turnoId,
+        ...(numeroTurno != null ? { numero_turno: numeroTurno } : {}),
         ...(esDelivery ? { driver_nombre: dto.driver_nombre?.trim() } : {}),
       },
       include: { transaccionesDetalles_id: { include: { producto: { select: { nombre: true } } } } },
@@ -697,6 +724,8 @@ export async function listarDeudoresCaja() {
       monto_pagado: pagado,
       saldo: Number((monto - pagado).toFixed(2)),
       estado: r.estado,
+      descuento: Number(r.descuento.toFixed(2)),
+      motivo_descuento: r.motivo_descuento,
       fecha_fiado: r.created_at,
       vencimiento: r.vencimiento,
       vencido: r.vencimiento != null && r.vencimiento < ahora,
@@ -807,4 +836,80 @@ export async function cobrarDeudaCaja(
 
     return { id: cuentaActualizada.id, estado, monto_pagado: nuevoPagado, saldo: Number((montoTotal - nuevoPagado).toFixed(2)) };
   }, { maxWait: 10000, timeout: 20000 });
+}
+
+/**
+ * Privilegio posterior sobre una deuda (fiado): para cuando al vender se olvidó
+ * aplicarlo. El servidor calcula el descuento con el % del privilegio (mismo
+ * cálculo que en venta), reduce el monto total de la deuda — no registra pago
+ * ni toca la caja — y deja registrado qué privilegio se aplicó. Si el nuevo
+ * total queda igual a lo ya cobrado, la deuda se salda.
+ */
+export async function aplicarDescuentoDeuda(
+  session: Session,
+  cuentaId: number,
+  dto: { privilegio_id: number },
+  meta: Meta = {},
+) {
+  return prisma.$transaction(async (tx) => {
+    const cuenta = await tx.cuentaCorriente.findUnique({ where: { id: cuentaId } });
+    if (!cuenta || cuenta.tipo !== 'POR_COBRAR') throw new NotFoundError('Deuda no encontrada');
+    if (cuenta.estado === 'PAGADA') throw new ConflictError('La deuda ya está pagada; no admite descuento');
+    if (cuenta.cliente_id == null) {
+      throw new ValidationError('El privilegio requiere un cliente registrado');
+    }
+    // Igual que en venta: un solo privilegio por deuda
+    if (Number(cuenta.descuento) > 0) {
+      throw new ConflictError('La deuda ya tiene un privilegio aplicado');
+    }
+
+    const privilegio = await tx.privilegio.findFirst({ where: { id: dto.privilegio_id, activo: true } });
+    if (!privilegio) throw new ValidationError('El privilegio no existe o no está activo');
+    const pct = Number(privilegio.porcentaje);
+    if (pct <= 0) throw new ValidationError('El privilegio no genera descuento');
+
+    const montoActual = Number(cuenta.monto.toFixed(2));
+    const pagado = Number(cuenta.monto_pagado.toFixed(2));
+    // Mismo cálculo que en venta: el % se aplica sobre el total de la deuda
+    const descuento = Number((montoActual * pct / 100).toFixed(2));
+    const nuevoMonto = Number((montoActual - descuento).toFixed(2));
+    if (nuevoMonto < pagado) {
+      throw new ValidationError(
+        `El descuento deja el total (Bs ${nuevoMonto.toFixed(2)}) por debajo de lo ya cobrado (Bs ${pagado.toFixed(2)})`,
+      );
+    }
+
+    const estado = nuevoMonto <= pagado ? 'PAGADA' : pagado > 0 ? 'PARCIAL' : 'PENDIENTE';
+    const motivo = `Privilegio: ${privilegio.nombre} (-${pct}%)`;
+    const actualizada = await tx.cuentaCorriente.update({
+      where: { id: cuentaId },
+      data: {
+        monto: nuevoMonto,
+        descuento,
+        motivo_descuento: motivo,
+        estado,
+      },
+    });
+
+    // Si el descuento salda la deuda, la venta fiada deja de estar "pago pendiente"
+    if (estado === 'PAGADA' && cuenta.transaccion_id != null) {
+      await tx.transaccion.update({ where: { id: cuenta.transaccion_id }, data: { payment_status: 'PAGADO' } });
+    }
+
+    await logAudit({
+      usuarioId: session.id, rol: session.rol, accion: 'MODIFICO',
+      entidad: 'CuentaCorriente', entidadId: cuentaId,
+      detalle: `Privilegio sobre fiado ${cuenta.contraparte}: ${privilegio.nombre} (-${pct}%) = Bs ${descuento.toFixed(2)} (total Bs ${montoActual.toFixed(2)} → Bs ${nuevoMonto.toFixed(2)})`,
+      monto: descuento, ip: meta.ip, userAgent: meta.userAgent,
+    }, tx);
+
+    return {
+      id: actualizada.id,
+      estado,
+      monto: nuevoMonto,
+      monto_pagado: pagado,
+      descuento: Number(actualizada.descuento.toFixed(2)),
+      saldo: Number((nuevoMonto - pagado).toFixed(2)),
+    };
+  });
 }

@@ -13,7 +13,20 @@ type Movimiento = {
   metodo_pago: 'EFECTIVO' | 'QR' | 'TARJETA';
   monto: string | number;
   created_at: string;
+  transaccion?: { id: number; numero_turno: number | null } | null;
 };
+
+/**
+ * En el libro del turno manda el #N del turno: "Venta #86" se muestra como
+ * "Venta #3 (global #86)". Movimientos sin venta asociada quedan igual.
+ */
+function conceptoConNumeroTurno(m: Movimiento) {
+  if (m.transaccion?.numero_turno == null) return m.concepto;
+  return m.concepto.replaceAll(
+    `#${m.transaccion.id}`,
+    `#${m.transaccion.numero_turno} (global #${m.transaccion.id})`,
+  );
+}
 
 type Filtro = 'TODOS' | 'INGRESOS' | 'EGRESOS' | 'EFECTIVO' | 'QR';
 
@@ -71,7 +84,7 @@ export default function MovimientosCajaPage() {
             <tbody>
               {movimientos.map(m => (
                 <tr key={m.id}>
-                  <td>{m.concepto}</td>
+                  <td>{conceptoConNumeroTurno(m)}</td>
                   <td>{m.tipo.replaceAll('_', ' ')}</td>
                   <td><MethodPill metodo={m.metodo_pago} /></td>
                   <td className="num"><MoneyText value={m.monto} signed /></td>
