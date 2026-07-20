@@ -7,7 +7,7 @@ import AlertPopup from '@/components/AlertPopup';
 import MethodPill from '@/components/ui/MethodPill';
 import MoneyText from '@/components/ui/MoneyText';
 import EmptyState from '@/components/ui/EmptyState';
-import { useAbonarDeuda, useBuscarClientes, useRegistrarVenta, type ClienteResultado } from '@/hooks/caja';
+import { useAbonarDeuda, useBuscarClientes, useCrearClienteCaja, usePrivilegiosCaja, useRegistrarVenta, type ClienteResultado } from '@/hooks/caja';
 
 type Metodo = 'EFECTIVO' | 'QR' | 'TARJETA' | 'MIXTO';
 
@@ -43,9 +43,14 @@ export default function VentaCajaPage() {
   const [cEmail, setCEmail] = useState('');
   const [cNit, setCNit] = useState('');
   const [clienteSeleccionado, setClienteSeleccionado] = useState<ClienteResultado | null>(null);
-  const [modoManual, setModoManual] = useState(false);
+  // Modal de alta de cliente desde el POS
+  const [modalCliente, setModalCliente] = useState(false);
+  // Privilegio (descuento) elegido por el cajero para ESTA venta: uno solo
+  const [privVentaId, setPrivVentaId] = useState<number | null>(null);
   const [busquedaCliente, setBusquedaCliente] = useState('');
   const [busquedaClienteDebounced, setBusquedaClienteDebounced] = useState('');
+  // El desplegable se abre al enfocar el buscador (sin texto lista todos)
+  const [listaClientesAbierta, setListaClientesAbierta] = useState(false);
   const [esFiado, setEsFiado] = useState(false);
   const [fiadoVencimiento, setFiadoVencimiento] = useState('');
   // Abono a la deuda del cliente cobrado junto con la venta
@@ -58,8 +63,11 @@ export default function VentaCajaPage() {
     return () => clearTimeout(t);
   }, [busquedaCliente]);
 
-  const clientesQuery = useBuscarClientes(busquedaClienteDebounced);
+  const clientesQuery = useBuscarClientes(busquedaClienteDebounced, listaClientesAbierta);
   const resultadosClientes = clientesQuery.data ?? [];
+  const crearCliente = useCrearClienteCaja();
+  const privilegiosQuery = usePrivilegiosCaja();
+  const catalogoPriv = privilegiosQuery.data ?? [];
 
   const seleccionarCliente = (c: ClienteResultado) => {
     setClienteSeleccionado(c);
@@ -68,16 +76,55 @@ export default function VentaCajaPage() {
     setCEmail(c.email ?? '');
     setCNit(c.nit ?? '');
     setBusquedaCliente('');
+    setListaClientesAbierta(false);
   };
 
   const limpiarCliente = () => {
     setClienteSeleccionado(null);
-    setModoManual(false);
+    setModalCliente(false);
     setBusquedaCliente('');
+    setListaClientesAbierta(false);
     setEsFiado(false);
     setFiadoVencimiento('');
     setAbonoDeuda('');
+    setPrivVentaId(null);
     setCNombre(''); setCTelefono(''); setCEmail(''); setCNit('');
+  };
+
+  const cerrarModalCliente = () => {
+    setModalCliente(false);
+    setCNombre(''); setCTelefono(''); setCEmail(''); setCNit('');
+  };
+
+  // Alta del cliente sin necesidad de cobrar una venta: queda registrado
+  // (con sus privilegios) y seleccionado por si se quiere vender igual.
+  const guardarClienteNuevo = async () => {
+    if (!cNombre.trim()) {
+      setAlert({ title: 'Nombre requerido', description: 'Ingresa al menos el nombre del cliente.', type: 'warning' });
+      return;
+    }
+    try {
+      const creado = await crearCliente.mutateAsync({
+        nombre: cNombre.trim(),
+        telefono: cTelefono.trim() || undefined,
+        email: cEmail.trim() || undefined,
+        nit: cNit.trim() || undefined,
+      });
+      seleccionarCliente(creado);
+      setModalCliente(false);
+      setAlert({
+        title: 'Cliente registrado',
+        description: `${creado.nombre} quedó registrado y seleccionado. Puedes cobrar una venta o continuar sin vender.`,
+        type: 'success',
+      });
+    } catch (error: unknown) {
+      const resp = (error as { response?: { status?: number; data?: { error?: string } } })?.response;
+      setAlert({
+        title: resp?.status === 409 ? 'Cliente ya registrado' : 'No se pudo registrar',
+        description: resp?.data?.error ?? 'No se pudo registrar el cliente. Intenta de nuevo.',
+        type: resp?.status === 409 ? 'warning' : 'error',
+      });
+    }
   };
 
   useEffect(() => {
@@ -100,7 +147,10 @@ export default function VentaCajaPage() {
     (filterCat === null || (p.categoria_id ?? []).some(c => c.categoria.id === filterCat))
   );
   const subtotal = useMemo(() => cart.reduce((sum, item) => sum + item.precio * item.cantidad, 0), [cart]);
-  const descuentoPct = (!anonimo && clienteSeleccionado?.descuento_pct) ? clienteSeleccionado.descuento_pct : 0;
+  const privVenta = (!anonimo && clienteSeleccionado && privVentaId)
+    ? catalogoPriv.find(p => p.id === privVentaId) ?? null
+    : null;
+  const descuentoPct = privVenta?.porcentaje ?? 0;
   const descuentoMonto = Number((subtotal * (descuentoPct / 100)).toFixed(2));
   const total = Number((subtotal - descuentoMonto).toFixed(2));
   const mixtoQr = Number((total - mixtoEfectivo).toFixed(2));
@@ -134,8 +184,7 @@ export default function VentaCajaPage() {
       if (soloDeuda && clienteSeleccionado) {
         const r = await abonarDeuda.mutateAsync({
           clienteId: clienteSeleccionado.id,
-          monto: abonoNum,
-          metodo_pago: metodoPago as 'EFECTIVO' | 'QR' | 'TARJETA',
+          pagos: [{ metodo_pago: metodoPago as 'EFECTIVO' | 'QR' | 'TARJETA', monto: abonoNum }],
         });
         setConfirmOpen(false);
         setAbonoDeuda('');
@@ -148,16 +197,6 @@ export default function VentaCajaPage() {
         return;
       }
 
-      // Validar que si es fiado en modo manual, haya al menos un identificador
-      if (esFiado && modoManual && !cTelefono.trim() && !cEmail.trim() && !cNit.trim()) {
-        setAlert({
-          title: 'Dato requerido',
-          description: 'Para cargar a cuenta (fiado), ingresa al menos el celular, email o NIT del cliente.',
-          type: 'warning',
-        });
-        return;
-      }
-
       const venta = await registrarVenta.mutateAsync({
         items: cart.map(item => ({ producto_id: item.id, cantidad: item.cantidad })),
         metodo_pago: metodoPago,
@@ -166,6 +205,7 @@ export default function VentaCajaPage() {
         es_cortesia: esCortesia,
         es_fiado: esFiado,
         fiado_vencimiento: esFiado && fiadoVencimiento ? fiadoVencimiento : undefined,
+        privilegio_id: privVenta?.id,
         cliente_id: clienteSeleccionado?.id,
         cliente_anonimo: anonimo,
         cliente_nombre: anonimo ? undefined : (cNombre.trim() || undefined),
@@ -179,13 +219,15 @@ export default function VentaCajaPage() {
       setAnonimo(false);
       setMixtoEfectivo(0);
       limpiarCliente();
+      // Nº del turno como identificador principal; el global queda de referencia
+      const numVenta = venta.numero_turno != null ? `#${venta.numero_turno} (global #${venta.id})` : `#${venta.id}`;
       setAlert({
         title: esFiado ? 'Fiado registrado' : 'Venta registrada',
         description: esFiado
-          ? `Venta #${venta.id} cargada a la cuenta del cliente.`
+          ? `Venta ${numVenta} cargada a la cuenta del cliente.`
           : venta.abono_deuda
-            ? `Venta #${venta.id} creada. Incluye abono a deuda de Bs ${Number(venta.abono_deuda).toFixed(2)}.`
-            : `Venta #${venta.id} creada correctamente.`,
+            ? `Venta ${numVenta} creada. Incluye abono a deuda de Bs ${Number(venta.abono_deuda).toFixed(2)}.`
+            : `Venta ${numVenta} creada correctamente.`,
         type: 'success',
       });
     } catch (error: unknown) {
@@ -220,6 +262,48 @@ export default function VentaCajaPage() {
         isLoading={registrarVenta.isPending || abonarDeuda.isPending}
         variant="confirm"
       />
+
+      {modalCliente && (
+        <div className="admin-modal-overlay" onClick={cerrarModalCliente}>
+          <form
+            className="admin-modal compact"
+            onClick={e => e.stopPropagation()}
+            onSubmit={e => { e.preventDefault(); guardarClienteNuevo(); }}
+          >
+            <div className="admin-modal-header">
+              <h2>Agregar cliente</h2>
+              <button type="button" className="admin-modal-close" onClick={cerrarModalCliente}>&times;</button>
+            </div>
+            <div className="admin-modal-body">
+              <div className="form-group">
+                <label>Nombre o razón social *</label>
+                <input value={cNombre} onChange={e => setCNombre(e.target.value)} autoFocus required placeholder="Ej. Juan Pérez" />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <div className="form-group">
+                  <label>Celular</label>
+                  <input inputMode="numeric" value={cTelefono} onChange={e => setCTelefono(e.target.value.replace(/\D/g, ''))} placeholder="Ej. 79999999" />
+                </div>
+                <div className="form-group">
+                  <label>NIT / C.I.</label>
+                  <input inputMode="numeric" value={cNit} onChange={e => setCNit(e.target.value.replace(/\D/g, ''))} placeholder="Ej. 1234567" />
+                </div>
+              </div>
+              <div className="form-group">
+                <label>Correo (opcional)</label>
+                <input type="email" value={cEmail} onChange={e => setCEmail(e.target.value)} placeholder="cliente@correo.com" />
+              </div>
+              <span className="form-hint">Al agregarlo quedará registrado y seleccionado para esta venta.</span>
+            </div>
+            <div className="admin-modal-footer">
+              <button type="button" className="admin-btn ghost" onClick={cerrarModalCliente}>Cancelar</button>
+              <button type="submit" className="admin-btn primary" disabled={crearCliente.isPending || !cNombre.trim()}>
+                {crearCliente.isPending ? 'Agregando...' : 'Agregar cliente'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       <div className="admin-page-header">
         <div>
@@ -290,7 +374,7 @@ export default function VentaCajaPage() {
                   <span className="dim">Subtotal</span><MoneyText value={subtotal} />
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--fresh)' }}>
-                  <span>{clienteSeleccionado?.descuento_nombre ?? 'Privilegio'} (-{descuentoPct}%)</span>
+                  <span>{privVenta?.nombre ?? 'Privilegio'} (-{descuentoPct}%)</span>
                   <MoneyText value={-descuentoMonto} signed />
                 </div>
               </div>
@@ -365,14 +449,23 @@ export default function VentaCajaPage() {
                       <div className="form-hint">
                         {clienteSeleccionado.telefono ?? 'Sin celular'} · {clienteSeleccionado.nit ?? 'Sin CI/NIT'}
                       </div>
-                      {descuentoPct > 0 && (
-                        <span className="historial-pill" style={{ marginTop: 6 }}>
-                          {clienteSeleccionado.descuento_nombre} · {descuentoPct}% dcto
-                        </span>
-                      )}
                     </div>
                     <button type="button" className="admin-btn ghost" onClick={limpiarCliente}>Cambiar</button>
                   </div>
+                  {catalogoPriv.length > 0 && (
+                    <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      <span className="form-hint" style={{ fontWeight: 600 }}>Privilegio para esta venta (opcional)</span>
+                      <select
+                        value={privVentaId ?? ''}
+                        onChange={e => setPrivVentaId(e.target.value ? Number(e.target.value) : null)}
+                      >
+                        <option value="">Sin privilegio</option>
+                        {catalogoPriv.map(p => (
+                          <option key={p.id} value={p.id}>{p.nombre} — {p.porcentaje}% dcto</option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
                   {deudaCliente > 0 && (
                     <div style={{ border: '1px solid var(--amber)', borderRadius: 10, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
                       <span style={{ color: 'var(--amber)', fontWeight: 700 }}>
@@ -422,57 +515,40 @@ export default function VentaCajaPage() {
                     </div>
                   )}
                 </div>
-              ) : modoManual ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <input placeholder="Nombre o razón social" value={cNombre} onChange={e => setCNombre(e.target.value)} />
-                  <input placeholder="Celular" inputMode="numeric" value={cTelefono} onChange={e => setCTelefono(e.target.value.replace(/\D/g, ''))} />
-                  <input placeholder="NIT / C.I." inputMode="numeric" value={cNit} onChange={e => setCNit(e.target.value.replace(/\D/g, ''))} />
-                  <input placeholder="Correo (opcional)" value={cEmail} onChange={e => setCEmail(e.target.value)} />
-                  <span className="form-hint">Se registrará como cliente nuevo. Si el celular/NIT ya existe, se vinculará automáticamente.</span>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--ink)' }}>
-                    <input type="checkbox" checked={esFiado} onChange={e => { setEsFiado(e.target.checked); if (e.target.checked) { setEsCortesia(false); if (metodoPago === 'MIXTO') setMetodoPago('EFECTIVO'); } }} />
-                    Cargar a cuenta (fiado) <span className="dim">— paga después</span>
-                  </label>
-                  {esFiado && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      <span className="form-hint">Vencimiento (opcional):</span>
-                      <input type="date" value={fiadoVencimiento} onChange={e => setFiadoVencimiento(e.target.value)} />
-                      <span className="form-hint" style={{ color: 'var(--amber)' }}>
-                        No entra dinero a caja ahora. Queda como deuda por cobrar del cliente.
-                      </span>
-                    </div>
-                  )}
-                  <button type="button" className="admin-btn ghost" onClick={() => { setModoManual(false); setCNombre(''); setCTelefono(''); setCEmail(''); setCNit(''); }}>
-                    ← Volver a buscar
-                  </button>
-                </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <input
-                    placeholder="Buscar cliente por nombre o celular..."
-                    value={busquedaCliente}
-                    onChange={e => setBusquedaCliente(e.target.value)}
-                  />
-                  {busquedaClienteDebounced.trim().length >= 2 && (
-                    <div className="cliente-search-results">
+                  <div className="admin-search" style={{ width: '100%' }}>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
+                    <input
+                      placeholder="Buscar cliente..."
+                      value={busquedaCliente}
+                      onChange={e => setBusquedaCliente(e.target.value)}
+                      onFocus={() => setListaClientesAbierta(true)}
+                      onBlur={() => window.setTimeout(() => setListaClientesAbierta(false), 180)}
+                    />
+                  </div>
+                  {listaClientesAbierta && (
+                    <div className="cliente-search-results" style={{ maxHeight: 260, overflowY: 'auto' }}>
                       {clientesQuery.isLoading ? (
                         <div className="form-hint" style={{ padding: '8px 10px' }}>Buscando...</div>
                       ) : resultadosClientes.length > 0 ? (
                         resultadosClientes.map(c => (
-                          <button key={c.id} type="button" className="cliente-result-row" onClick={() => seleccionarCliente(c)}>
+                          <button key={c.id} type="button" className="cliente-result-row" onMouseDown={e => e.preventDefault()} onClick={() => seleccionarCliente(c)}>
                             <strong>{c.nombre}</strong>
                             <span className="form-hint">{c.telefono ?? 'Sin celular'} · {c.nit ?? 'Sin CI/NIT'}</span>
                           </button>
                         ))
                       ) : (
-                        <div className="form-hint" style={{ padding: '8px 10px' }}>No se encontró ningún cliente.</div>
+                        <div className="form-hint" style={{ padding: '8px 10px' }}>
+                          {busquedaClienteDebounced.trim().length >= 2 ? 'No se encontró ningún cliente.' : 'Sin clientes registrados aún.'}
+                        </div>
                       )}
                     </div>
                   )}
                   <button
                     type="button"
                     className="admin-btn ghost"
-                    onClick={() => { setModoManual(true); setCNombre(busquedaCliente); setBusquedaCliente(''); }}
+                    onClick={() => { setCNombre(busquedaCliente.trim()); setBusquedaCliente(''); setListaClientesAbierta(false); setModalCliente(true); }}
                   >
                     + Agregar cliente
                   </button>
@@ -489,7 +565,6 @@ export default function VentaCajaPage() {
                 || abonarDeuda.isPending
                 || !mixtoValido
                 || !abonoValido
-                || (esFiado && modoManual && !cTelefono.trim() && !cEmail.trim() && !cNit.trim())
               }
               onClick={() => setConfirmOpen(true)}
             >

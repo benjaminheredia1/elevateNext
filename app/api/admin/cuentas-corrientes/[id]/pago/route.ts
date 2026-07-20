@@ -11,7 +11,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     requireRole(session, ['DUENO', 'ADMIN']);
     const { id } = await params;
     const input = pagoSchema.parse(await req.json());
-    const data = await registrarPago(Number(id), input);
+    const data = await registrarPago(Number(id), input, session.id);
     await logAudit({
       usuarioId: session.id,
       rol: session.rol,

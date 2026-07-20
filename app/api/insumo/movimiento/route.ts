@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { guard, ADMIN } from '@/lib/server/auth/guard';
+import { guard, ADMIN, STAFF } from '@/lib/server/auth/guard';
 
 export async function POST(req: NextRequest) {
   const auth = await guard(req, ADMIN);
@@ -12,6 +12,9 @@ export async function POST(req: NextRequest) {
 
     if (!insumo_id || !tipo_movimiento || !cantidad) {
       return NextResponse.json({ error: 'Campos requeridos: insumo_id, tipo_movimiento, cantidad' }, { status: 400 });
+    }
+    if (!Number.isInteger(Number(insumo_id))) {
+      return NextResponse.json({ error: 'insumo_id inválido' }, { status: 400 });
     }
 
     const insumo = await prisma.insumo.findUnique({ where: { id: parseInt(insumo_id) } });
@@ -48,13 +51,17 @@ export async function POST(req: NextRequest) {
   }
 }
 
+// Lectura de movimientos: también el cajero (vista solo lectura en /caja/insumos)
 export async function GET(req: NextRequest) {
-  const auth = await guard(req, ADMIN);
+  const auth = await guard(req, STAFF);
   if (auth instanceof NextResponse) return auth;
 
   try {
     const { searchParams } = new URL(req.url);
     const insumoId = searchParams.get('insumo_id');
+    if (insumoId && !Number.isInteger(Number(insumoId))) {
+      return NextResponse.json({ error: 'insumo_id inválido' }, { status: 400 });
+    }
     const movimientos = await prisma.movimientoInterno.findMany({
       where: insumoId ? { insumo_id: parseInt(insumoId) } : {},
       include: { insumo: true },

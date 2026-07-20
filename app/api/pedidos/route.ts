@@ -72,7 +72,9 @@ export async function GET(req: NextRequest) {
         usuario: { select: { nombre: true, email: true } },
       },
       orderBy: { created_at: 'desc' },
-      ...(limit ? { take: parseInt(limit) } : {}),
+      ...(limit && Number.isInteger(Number(limit)) && Number(limit) > 0
+        ? { take: Math.min(Number(limit), 500) }
+        : {}),
     });
 
     return NextResponse.json({ data: pedidos, total: pedidos.length });
@@ -126,8 +128,8 @@ export async function POST(req: NextRequest) {
       const prod = await prisma.producto.findFirst({
         where: { nombre: { equals: item.nombre, mode: 'insensitive' } },
         include: {
-          recetaProducto_id: { include: { insumo: { select: { stock_actual: true } } } },
-          insumo_reventa: { select: { stock_actual: true } },
+          recetaProducto_id: { include: { insumo: { select: { stock_actual: true, activo: true } } } },
+          insumo_reventa: { select: { stock_actual: true, activo: true } },
         },
       });
       if (!prod) continue; // producto no rastreado en inventario

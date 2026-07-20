@@ -14,6 +14,9 @@ export async function GET(
 
     const { id } = await params;
     const clienteId = parseInt(id);
+    if (!Number.isInteger(clienteId)) {
+      return NextResponse.json({ error: 'Id de cliente inválido' }, { status: 400 });
+    }
 
     const cliente = await prisma.cliente.findUnique({
       where: { id: clienteId },

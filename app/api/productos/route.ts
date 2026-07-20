@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
       include: {
         categoria_id: { include: { categoria: true } },
         recetaProducto_id: { include: { insumo: true } },
-        insumo_reventa: { select: { stock_actual: true } },
+        insumo_reventa: { select: { stock_actual: true, activo: true } },
         promocionProducto_id: {
           include: {
             promocionDescuentos: {
@@ -38,8 +38,13 @@ export async function GET(req: NextRequest) {
 
       const { rinde, agotado } = calcularRinde(p);
 
+      // La receta, los insumos (costos, stock, proveedor) y la configuración de
+      // promociones solo se cargan para calcular precio/rinde en el servidor:
+      // NUNCA salen al público (la tienda ya recibe el precio final calculado).
+      const { recetaProducto_id: _receta, insumo_reventa: _reventa, promocionProducto_id: _promos, ...publico } = p;
+
       return {
-        ...p,
+        ...publico,
         precio_original: p.precio,
         precio: precioFinal,
         descuentoAplicado: descuentoMonto > 0 ? descuentoMonto : undefined,

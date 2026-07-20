@@ -39,6 +39,9 @@ export const VentaFisicaDTO = z.object({
   // Abono a la deuda (fiados) del cliente cobrado junto con la venta.
   // Requiere cliente registrado; el servidor valida contra el saldo real.
   abono_deuda: montoBs.optional(),
+  // Privilegio (descuento) elegido por el cajero para ESTA venta: uno solo,
+  // debe estar activo y requiere cliente registrado. Ya no se asignan a clientes.
+  privilegio_id: z.coerce.number().int().positive().optional(),
   es_cortesia: z.boolean().optional().default(false),
   es_fiado: z.boolean().optional().default(false),
   fiado_vencimiento: z.coerce.date().optional().nullable(),

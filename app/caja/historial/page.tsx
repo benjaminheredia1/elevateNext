@@ -29,6 +29,7 @@ interface Detalle {
 
 interface Pedido {
   id: number;
+  numero_turno?: number | null;
   created_at: string;
   total: number;
   metodo_pago?: string | null;
@@ -160,7 +161,10 @@ function DetalleTurno({ turnoId, onClose }: { turnoId: number; onClose: () => vo
                     ) : pedidos.map(pedido => (
                       <div className="historial-pedido-row" key={pedido.id}>
                         <div className="historial-pedido-main">
-                          <span>#{pedido.id} · {fmtTime(pedido.created_at)} · {nombreCajero(pedido.cajero)}</span>
+                          <span>
+                            {pedido.numero_turno != null ? `#${pedido.numero_turno} (global #${pedido.id})` : `#${pedido.id}`}
+                            {' · '}{fmtTime(pedido.created_at)} · {nombreCajero(pedido.cajero)}
+                          </span>
                           {pedido.es_cortesia ? (
                             <span className="historial-pill cortesia">Cortesía</span>
                           ) : pedido.cuenta_corriente ? (

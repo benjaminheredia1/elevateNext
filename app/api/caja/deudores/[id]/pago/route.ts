@@ -4,10 +4,20 @@ import { requireAuth, requireRole, getClientIp } from '@/lib/server/auth/session
 import { handleApiError, ValidationError } from '@/lib/server/errors';
 import { cobrarDeudaCaja } from '@/lib/server/caja/caja.service';
 
-const cobroSchema = z.object({
-  monto: z.coerce.number().positive(),
-  metodo_pago: z.enum(['EFECTIVO', 'QR']),
+const pagoItemSchema = z.object({
+  metodo_pago: z.enum(['EFECTIVO', 'QR', 'TARJETA']),
+  monto: z.coerce.number().positive().multipleOf(0.01),
 });
+
+// Formato nuevo: desglose por método (soporta pago mixto). Se mantiene el
+// formato viejo { monto, metodo_pago } para clientes con la UI anterior abierta.
+const cobroSchema = z.union([
+  z.object({ pagos: z.array(pagoItemSchema).min(1).max(3) }),
+  z.object({
+    monto: z.coerce.number().positive(),
+    metodo_pago: z.enum(['EFECTIVO', 'QR', 'TARJETA']),
+  }).transform(v => ({ pagos: [{ metodo_pago: v.metodo_pago, monto: v.monto }] })),
+]);
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {

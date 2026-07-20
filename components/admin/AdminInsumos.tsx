@@ -288,7 +288,7 @@ function errorMsg(err: unknown): string {
   return e?.response?.data?.error ?? e?.response?.data?.message ?? 'Ocurrió un error. Intenta de nuevo.';
 }
 
-export default function AdminInsumos() {
+export default function AdminInsumos({ readOnly = false }: { readOnly?: boolean }) {
   const [tab, setTab] = useState<Tab>('insumos');
   const [insumos, setInsumos] = useState<Insumo[]>([]);
   const [movimientos, setMovimientos] = useState<Movimiento[]>([]);
@@ -684,11 +684,11 @@ export default function AdminInsumos() {
       <div className="admin-page-header">
         <div>
           <h1>Inventario</h1>
-          <p>Stock, movimientos y fichas técnicas</p>
+          <p>Stock, movimientos y fichas técnicas{readOnly ? ' · solo lectura (lo gestiona el administrador)' : ''}</p>
         </div>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
           <button className="admin-btn secondary" onClick={load} type="button">Actualizar</button>
-          <button className="admin-btn primary" onClick={() => openModal('crear')} type="button">+ Insumo</button>
+          {!readOnly && <button className="admin-btn primary" onClick={() => openModal('crear')} type="button">+ Insumo</button>}
         </div>
       </div>
 
@@ -716,7 +716,8 @@ export default function AdminInsumos() {
           ['insumos', 'Insumos'],
           ['movimientos', 'Movimientos'],
           ['recetas', 'Recetas'],
-          ['unidades', 'Unidades'],
+          // Unidades es solo una pantalla de administración (crear/editar unidades)
+          ...(readOnly ? [] : [['unidades', 'Unidades']]),
         ].map(([key, label]) => (
           <button key={key} className={`inv-tab ${tab === key ? 'active' : ''}`} onClick={() => setTab(key as Tab)} type="button">
             {label}
@@ -806,7 +807,7 @@ export default function AdminInsumos() {
             <div className="empty-state">
               <h4>Sin insumos</h4>
               <p>{insumos.length === 0 ? 'Crea el primer insumo para controlar el stock.' : 'Ajusta los filtros o la búsqueda.'}</p>
-              {insumos.length === 0 && <button className="admin-btn primary" onClick={() => openModal('crear')} type="button">+ Insumo</button>}
+              {insumos.length === 0 && !readOnly && <button className="admin-btn primary" onClick={() => openModal('crear')} type="button">+ Insumo</button>}
             </div>
           ) : (
             <div className="admin-table-wrap">
@@ -823,7 +824,7 @@ export default function AdminInsumos() {
                     <th className="num">Costo unit.</th>
                     <th className="num">Valor</th>
                     <th>Proveedor</th>
-                    <th>Acciones</th>
+                    {!readOnly && <th>Acciones</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -857,7 +858,7 @@ export default function AdminInsumos() {
                         <td className="num">{money(insumo.costo_promedio)}</td>
                         <td className="num">{money(value)}</td>
                         <td>{insumo.proveedor || '—'}</td>
-                        <td>
+                        {!readOnly && <td>
                           <div className="action-btns">
                             {insumo.activo ? (
                               <>
@@ -874,7 +875,7 @@ export default function AdminInsumos() {
                               </>
                             )}
                           </div>
-                        </td>
+                        </td>}
                       </tr>
                     );
                   })}
@@ -1126,7 +1127,15 @@ export default function AdminInsumos() {
                     <label className="form-group"><span>Cantidad{selected ? ` (${selSufijo})` : ''}</span><input type="number" min="0" step="0.01" value={form.cantidad} onChange={event => setForm(prev => ({ ...prev, cantidad: event.target.value }))} required /></label>
                   )}
                   {modalAction === 'compra' && !usarEnvases && (
-                    <label className="form-group"><span>Costo unitario{selected ? ` (Bs por ${selSufijo})` : ''}</span><input type="number" min="0" step="0.000001" value={form.costo_unitario} onChange={event => setForm(prev => ({ ...prev, costo_unitario: event.target.value }))} required /></label>
+                    <>
+                      <label className="form-group"><span>Costo unitario{selected ? ` (Bs por ${selSufijo})` : ''}</span><input type="number" min="0" step="0.000001" value={form.costo_unitario} onChange={event => setForm(prev => ({ ...prev, costo_unitario: event.target.value }))} required /></label>
+                      {selected && (
+                        <CostoAyuda
+                          unidadBase={selected.unidad_medida}
+                          onCalculado={costo => setForm(prev => ({ ...prev, costo_unitario: costo }))}
+                        />
+                      )}
+                    </>
                   )}
                   <label className="form-group full"><span>Nota</span><textarea rows={3} value={form.descripcion} onChange={event => setForm(prev => ({ ...prev, descripcion: event.target.value }))} /></label>
                 </div>

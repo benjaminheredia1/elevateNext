@@ -16,3 +16,16 @@ export const editarClienteSchema = z.object({
 });
 
 export type EditarClienteInput = z.infer<typeof editarClienteSchema>;
+
+/**
+ * Alta de cliente desde caja (directorio o POS), sin necesidad de una venta.
+ * Los privilegios no se asignan al cliente: se eligen por venta en el POS.
+ */
+export const crearClienteCajaSchema = z.object({
+  nombre: z.string().trim().min(2, 'El nombre es obligatorio').max(120),
+  telefono: textoOpcional(30),
+  email: textoOpcional(120),
+  nit: textoOpcional(30),
+});
+
+export type CrearClienteCajaInput = z.infer<typeof crearClienteCajaSchema>;

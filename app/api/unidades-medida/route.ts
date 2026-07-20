@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { guard, ADMIN } from '@/lib/server/auth/guard';
+import { guard, ADMIN, STAFF } from '@/lib/server/auth/guard';
 
+// Lectura con sesión de staff: antes este GET estaba sin autenticación.
 export async function GET(request: NextRequest) {
+  const auth = await guard(request, STAFF);
+  if (auth instanceof NextResponse) return auth;
+
   try {
     const { searchParams } = new URL(request.url);
     const soloActivas = searchParams.get('activo') === 'true';

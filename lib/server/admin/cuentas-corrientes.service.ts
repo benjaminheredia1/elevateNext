@@ -99,26 +99,41 @@ export async function crearFiado(input: FiadoInput, usuarioId: number) {
   return decorate(row);
 }
 
-export async function registrarPago(id: number, input: PagoInput) {
-  const cuenta = await prisma.cuentaCorriente.findUnique({ where: { id } });
-  if (!cuenta) throw new NotFoundError('Cuenta no encontrada');
+export async function registrarPago(id: number, input: PagoInput, usuarioId: number) {
+  return prisma.$transaction(async (tx) => {
+    const cuenta = await tx.cuentaCorriente.findUnique({ where: { id } });
+    if (!cuenta) throw new NotFoundError('Cuenta no encontrada');
 
-  const montoTotal = toNum(cuenta.monto);
-  const pagadoActual = toNum(cuenta.monto_pagado);
-  const nuevoPagado = Number((pagadoActual + input.monto).toFixed(2));
+    const montoTotal = toNum(cuenta.monto);
+    const pagadoActual = toNum(cuenta.monto_pagado);
+    const nuevoPagado = Number((pagadoActual + input.monto).toFixed(2));
 
-  if (nuevoPagado > montoTotal) {
-    throw new AppError(422, `El pago (${nuevoPagado}) supera el monto total (${montoTotal})`);
-  }
+    if (nuevoPagado > montoTotal) {
+      throw new AppError(422, `El pago (${nuevoPagado}) supera el monto total (${montoTotal})`);
+    }
 
-  const estado = nuevoPagado >= montoTotal ? 'PAGADA' : nuevoPagado > 0 ? 'PARCIAL' : 'PENDIENTE';
+    const estado = nuevoPagado >= montoTotal ? 'PAGADA' : nuevoPagado > 0 ? 'PARCIAL' : 'PENDIENTE';
 
-  const row = await prisma.cuentaCorriente.update({
-    where: { id },
-    data: { monto_pagado: nuevoPagado, estado },
-    include: { cliente: clienteSelect },
+    const row = await tx.cuentaCorriente.update({
+      where: { id },
+      data: { monto_pagado: nuevoPagado, estado },
+      include: { cliente: clienteSelect },
+    });
+    // Fiado saldado: la venta que lo originó deja de estar "pago pendiente"
+    if (estado === 'PAGADA' && cuenta.tipo === 'POR_COBRAR' && cuenta.transaccion_id != null) {
+      await tx.transaccion.update({ where: { id: cuenta.transaccion_id }, data: { payment_status: 'PAGADO' } });
+    }
+    // Ledger: el pago queda registrado con método y responsable (sin movimiento
+    // de caja: los pagos desde admin no pasan por ningún turno)
+    await tx.cuentaCorrientePago.create({
+      data: {
+        cuenta_id: id, monto: input.monto,
+        metodo_pago: input.metodo_pago ?? null,
+        creado_por_id: usuarioId,
+      },
+    });
+    return decorate(row);
   });
-  return decorate(row);
 }
 
 export async function listarDeudasVencidas() {

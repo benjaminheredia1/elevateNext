@@ -31,9 +31,13 @@
 /* ===== LAYOUT ===== */
 /* Estilos de fondo/color/fuente scoped al admin (NO al body global), para no
    filtrarse a la landing — admin.css se bundlea globalmente. */
+/* App-shell: el layout mide exactamente la pantalla y solo el contenido
+   (.admin-main) scrollea. Así el sidebar queda siempre completo a la vista,
+   sin depender del largo de la página. */
 .admin-layout {
   display: flex;
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
   width: 100vw;
   overflow: hidden;
   background-color: var(--canvas);
@@ -51,6 +55,8 @@
   flex-shrink: 0;
   z-index: 50;
   transition: transform 0.3s ease;
+  /* Alto completo del shell; si el menú no cabe, scrollea el nav interno */
+  height: 100%;
 }
 
 .admin-sidebar-header {
@@ -139,7 +145,28 @@
   flex-direction: column;
   min-width: 0;
   background: var(--canvas);
+  /* Único scroll de la página: el sidebar no se estira con el contenido */
+  overflow-y: auto;
+  /* Firefox */
+  scrollbar-width: thin;
+  scrollbar-color: var(--orange) var(--line);
 }
+
+/* Barra de scroll del contenido, bien visible (Chrome/Edge/Safari) */
+.admin-main::-webkit-scrollbar { width: 12px; }
+.admin-main::-webkit-scrollbar-track { background: var(--line); }
+.admin-main::-webkit-scrollbar-thumb {
+  background: var(--orange);
+  border-radius: 8px;
+  border: 2px solid var(--line);
+}
+.admin-main::-webkit-scrollbar-thumb:hover { background: #e04d10; }
+
+/* La del nav del sidebar, discreta sobre el fondo verde */
+.admin-nav { scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, .35) transparent; }
+.admin-nav::-webkit-scrollbar { width: 8px; }
+.admin-nav::-webkit-scrollbar-track { background: transparent; }
+.admin-nav::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, .35); border-radius: 8px; }
 
 .admin-topbar {
   height: 64px;

@@ -153,6 +153,7 @@ describe('POST /api/caja/venta — pago mixto', () => {
       update: {},
       create: { nombre: 'Cliente Abono E2E', telefono: '79999002' },
     });
+    await prisma.cuentaCorrientePago.deleteMany({ where: { cuenta: { cliente_id: cliente.id } } });
     await prisma.cuentaCorriente.deleteMany({ where: { cliente_id: cliente.id } });
     const deuda1 = await prisma.cuentaCorriente.create({
       data: { tipo: 'POR_COBRAR', contraparte: cliente.nombre, concepto: 'Fiado E2E 1', monto: 10, creado_por_id: cajeroUserId, cliente_id: cliente.id, created_at: new Date('2026-01-01') },
@@ -227,6 +228,7 @@ describe('POST /api/caja/venta — pago mixto', () => {
       update: {},
       create: { nombre: 'Cliente Solo Deuda E2E', telefono: '79999005' },
     });
+    await prisma.cuentaCorrientePago.deleteMany({ where: { cuenta: { cliente_id: cliente.id } } });
     await prisma.cuentaCorriente.deleteMany({ where: { cliente_id: cliente.id } });
     await prisma.cuentaCorriente.create({
       data: { tipo: 'POR_COBRAR', contraparte: cliente.nombre, concepto: 'Fiado solo deuda E2E', monto: 10, creado_por_id: cajeroUserId, cliente_id: cliente.id },
@@ -265,6 +267,41 @@ describe('POST /api/caja/venta — pago mixto', () => {
     expect(audit?.detalle).toContain('Cliente Solo Deuda E2E');
   });
 
+  it('la caja vende aunque el stock del insumo esté en negativo (no bloquea por stock)', async () => {
+    // Fixture idempotente: reventa con insumo en stock negativo
+    const NOMBRE = 'Producto Reventa Stock Negativo E2E';
+    let insumo = await prisma.insumo.findFirst({ where: { nombre: NOMBRE } });
+    if (!insumo) {
+      insumo = await prisma.insumo.create({
+        data: { nombre: NOMBRE, unidad_medida: 'UNIDAD', stock_actual: -2, stock_minimo: 0 },
+      });
+    } else {
+      await prisma.insumo.update({ where: { id: insumo.id }, data: { stock_actual: -2, activo: true } });
+    }
+    let prod = await prisma.producto.findFirst({ where: { nombre: NOMBRE } });
+    if (!prod) {
+      prod = await prisma.producto.create({
+        data: { nombre: NOMBRE, descripcion: 'Fixture stock negativo', precio: 10, tipo: 'REVENTA', disponible: true, insumo_reventa_id: insumo.id },
+      });
+    }
+
+    const res = await POST(req({
+      items: [{ producto_id: prod.id, cantidad: 1 }],
+      metodo_pago: 'EFECTIVO',
+    }, token));
+    expect(res.status).toBe(201);
+    const venta = await res.json();
+
+    // El stock siguió bajando (queda -3) y la venta dejó su MovimientoInterno
+    const insumoDespues = await prisma.insumo.findUniqueOrThrow({ where: { id: insumo.id } });
+    expect(insumoDespues.stock_actual).toBe(-3);
+    const movVenta = await prisma.movimientoInterno.findFirst({
+      where: { transaccion_id: venta.id, tipo_movimiento: 'VENTA', insumo_id: insumo.id },
+    });
+    expect(movVenta).not.toBeNull();
+    expect(movVenta?.cantidad).toBe(-1);
+  });
+
   it('venta simple sigue funcionando (regresión): un solo movimiento', async () => {
     const res = await POST(req({
       items: [{ producto_id: productoId, cantidad: 1 }],
@@ -276,5 +313,157 @@ describe('POST /api/caja/venta — pago mixto', () => {
     expect(movimientos).toHaveLength(1);
     expect(movimientos[0].metodo_pago).toBe('EFECTIVO');
     expect(Number(movimientos[0].monto)).toBe(PRECIO);
+  });
+
+  describe('privilegio elegido por venta (descuento)', () => {
+    let privActivoId: number;
+    let privInactivoId: number;
+    let clientePrivId: number;
+
+    beforeAll(async () => {
+      const admin = await prisma.usuario.findUniqueOrThrow({ where: { email: 'benjaherediaruiz@gmail.com' } });
+      let activo = await prisma.privilegio.findFirst({ where: { nombre: 'Privilegio Venta E2E Activo' } });
+      if (!activo) activo = await prisma.privilegio.create({ data: { nombre: 'Privilegio Venta E2E Activo', porcentaje: 10, activo: true, creado_por_id: admin.id } });
+      else await prisma.privilegio.update({ where: { id: activo.id }, data: { activo: true, porcentaje: 10 } });
+      privActivoId = activo.id;
+
+      let inactivo = await prisma.privilegio.findFirst({ where: { nombre: 'Privilegio Venta E2E Inactivo' } });
+      if (!inactivo) inactivo = await prisma.privilegio.create({ data: { nombre: 'Privilegio Venta E2E Inactivo', porcentaje: 50, activo: false, creado_por_id: admin.id } });
+      else await prisma.privilegio.update({ where: { id: inactivo.id }, data: { activo: false } });
+      privInactivoId = inactivo.id;
+
+      const cliente = await prisma.cliente.upsert({
+        where: { telefono: '79999102' },
+        update: {},
+        create: { nombre: 'Cliente Privilegio Venta E2E', telefono: '79999102' },
+      });
+      clientePrivId = cliente.id;
+    });
+
+    it('sin cliente registrado → 422', async () => {
+      const res = await POST(req({
+        items: [{ producto_id: productoId, cantidad: 1 }],
+        metodo_pago: 'EFECTIVO',
+        privilegio_id: privActivoId,
+      }, token));
+      expect(res.status).toBe(422);
+      const body = await res.json();
+      expect(body.error).toContain('cliente registrado');
+    });
+
+    it('privilegio inactivo → 422', async () => {
+      const res = await POST(req({
+        items: [{ producto_id: productoId, cantidad: 1 }],
+        metodo_pago: 'EFECTIVO',
+        cliente_id: clientePrivId,
+        privilegio_id: privInactivoId,
+      }, token));
+      expect(res.status).toBe(422);
+      const body = await res.json();
+      expect(body.error).toContain('activo');
+    });
+
+    it('aplica el descuento del privilegio elegido al total (server-side)', async () => {
+      const res = await POST(req({
+        items: [{ producto_id: productoId, cantidad: 2 }], // subtotal 40
+        metodo_pago: 'EFECTIVO',
+        cliente_id: clientePrivId,
+        privilegio_id: privActivoId, // -10% → 36
+      }, token));
+      expect(res.status).toBe(201);
+      const venta = await res.json();
+      expect(Number(venta.total)).toBe(36);
+      expect(venta.codigo_descuento).toContain('Privilegio Venta E2E Activo');
+      expect(venta.codigo_descuento).toContain('-10%');
+
+      const mov = await prisma.movimientoCaja.findFirst({ where: { transaccion_id: venta.id } });
+      expect(Number(mov?.monto)).toBe(36);
+    });
+
+    it('el cliente NO recibe descuento automático por asignaciones viejas', async () => {
+      // Vínculo legado en ClientePrivilegio: ya no debe aplicar nada por sí solo
+      await prisma.clientePrivilegio.createMany({
+        data: [{ cliente_id: clientePrivId, privilegio_id: privActivoId }],
+        skipDuplicates: true,
+      });
+
+      const res = await POST(req({
+        items: [{ producto_id: productoId, cantidad: 1 }], // 20
+        metodo_pago: 'EFECTIVO',
+        cliente_id: clientePrivId,
+        // sin privilegio_id
+      }, token));
+      expect(res.status).toBe(201);
+      const venta = await res.json();
+      expect(Number(venta.total)).toBe(PRECIO); // sin descuento
+      expect(venta.codigo_descuento).toBeNull();
+    });
+  });
+
+  describe('numeración de pedidos por turno (#1..#n por apertura)', () => {
+    const CODIGO_ONLINE = 'NUMTE';
+    let turnoNuevoId: number;
+
+    beforeAll(async () => {
+      await prisma.transaccion.deleteMany({ where: { codigo: CODIGO_ONLINE } });
+      // Turno fresco: la numeración debe arrancar en #1
+      await prisma.cajaTurno.updateMany({
+        where: { sucursal_id: sucursalId, estado: 'ABIERTO' },
+        data: { estado: 'CERRADO', fecha_cierre: new Date() },
+      });
+      const turno = await prisma.cajaTurno.create({
+        data: { sucursal_id: sucursalId, cajero_id: cajeroUserId, apertura_efectivo: 0, apertura_qr: 0 },
+      });
+      turnoNuevoId = turno.id;
+    });
+
+    afterAll(async () => {
+      await prisma.transaccion.deleteMany({ where: { codigo: CODIGO_ONLINE } });
+      await prisma.cajaTurno.updateMany({
+        where: { id: turnoNuevoId, estado: 'ABIERTO' },
+        data: { estado: 'CERRADO', fecha_cierre: new Date() },
+      });
+    });
+
+    it('cada apertura arranca en #1 y numera consecutivo', async () => {
+      const res1 = await POST(req({ items: [{ producto_id: productoId, cantidad: 1 }], metodo_pago: 'EFECTIVO' }, token));
+      expect(res1.status).toBe(201);
+      const v1 = await res1.json();
+      expect(v1.turno_id).toBe(turnoNuevoId);
+      expect(v1.numero_turno).toBe(1);
+
+      const res2 = await POST(req({ items: [{ producto_id: productoId, cantidad: 1 }], metodo_pago: 'EFECTIVO' }, token));
+      expect(res2.status).toBe(201);
+      const v2 = await res2.json();
+      expect(v2.numero_turno).toBe(2);
+    });
+
+    it('un pedido online entra a la numeración cuando el cajero lo opera', async () => {
+      // Pedido web ya pagado (QR), listo para recoger: no cobra nada en mostrador
+      await prisma.transaccion.create({
+        data: {
+          codigo: CODIGO_ONLINE, canal: 'PICKUP', tipo_entrega: 'RECOJO',
+          metodo_pago: 'QR', payment_status: 'PAGADO', estado: 'LISTO',
+          total: 10, cliente_nombre: 'Cliente Online NumTurno E2E',
+        },
+      });
+      const { POST: entregarPost } = await import('@/app/api/caja/entregar/route');
+      const res = await entregarPost(new NextRequest('http://localhost/api/caja/entregar', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({ codigo: CODIGO_ONLINE }),
+      }));
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      // Se cuelga del turno abierto y toma el siguiente número (#3 tras las 2 ventas)
+      expect(body.data.turno_id).toBe(turnoNuevoId);
+      expect(body.data.numero_turno).toBe(3);
+      expect(body.data.estado).toBe('ENTREGADO');
+    });
+
+    it('los pedidos viejos sin turno no llevan número (queda null)', async () => {
+      const viejo = await prisma.transaccion.findFirst({ where: { turno_id: null } });
+      if (viejo) expect(viejo.numero_turno).toBeNull();
+    });
   });
 });

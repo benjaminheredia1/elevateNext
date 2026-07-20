@@ -5,7 +5,8 @@
  * en un único registro para minimizar clientes duplicados.
  */
 import prisma from '@/lib/prisma';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { ConflictError } from '@/lib/server/errors';
 
 type Db = Prisma.TransactionClient | typeof prisma;
 
@@ -79,6 +80,50 @@ export async function resolverCliente(input: ClienteInput, db: Db = prisma): Pro
       if (again) return again.id;
     }
     return null;
+  }
+}
+
+export interface CrearClienteCajaData {
+  nombre: string;
+  telefono?: string | null;
+  email?: string | null;
+  nit?: string | null;
+}
+
+/**
+ * Alta explícita de cliente desde caja (sin venta de por medio). A diferencia de
+ * `resolverCliente` (checkout), aquí un duplicado por celular/email/NIT es un
+ * conflicto (409): el cajero debe buscar y usar el cliente existente, no crear otro.
+ * Los privilegios no se asignan al cliente: se eligen por venta en el POS.
+ */
+export async function crearClienteDesdeCaja(input: CrearClienteCajaData) {
+  const tel = normTelefono(input.telefono);
+  const email = normEmail(input.email);
+  const nit = normNit(input.nit);
+  const nombre = input.nombre.trim();
+
+  const or: Prisma.ClienteWhereInput[] = [];
+  if (tel) or.push({ telefono: tel });
+  if (email) or.push({ email });
+  if (nit && nit.length >= 6) or.push({ nit });
+  if (or.length > 0) {
+    const existente = await prisma.cliente.findFirst({ where: { OR: or }, select: { nombre: true } });
+    if (existente) {
+      throw new ConflictError(`Ya existe un cliente con ese celular, email o NIT: ${existente.nombre}. Búscalo y selecciónalo en lugar de crearlo de nuevo.`);
+    }
+  }
+
+  try {
+    const cliente = await prisma.cliente.create({
+      data: { nombre, telefono: tel, email, nit },
+    });
+    return { cliente };
+  } catch (e) {
+    // Carrera: otro request registró el mismo celular entre el chequeo y el create.
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+      throw new ConflictError('Ese celular ya pertenece a otro cliente');
+    }
+    throw e;
   }
 }
 

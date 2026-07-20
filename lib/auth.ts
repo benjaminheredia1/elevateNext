@@ -39,10 +39,10 @@ export async function login(identifier: string, password: string) {
   const user = await prisma.usuario.findFirst({
     where: { OR: [{ email: id }, { username: id }] },
   });
-  if (!user) throw new Error('Usuario no encontrado');
-  if (!user.activo) throw new Error('Usuario inactivo');
+  // Mensaje único: no revelar si el usuario existe, está inactivo o falló la clave
+  if (!user || !user.activo) throw new Error('Credenciales inválidas');
   const password_valid = await bcrypt.compare(password, user.password);
-  if (!password_valid) throw new Error('Contraseña incorrecta');
+  if (!password_valid) throw new Error('Credenciales inválidas');
 
   const access_token = signToken(user);
   await prisma.usuario.update({

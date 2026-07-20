@@ -7,7 +7,6 @@ export interface Privilegio {
   descripcion?: string | null;
   porcentaje: number;
   activo: boolean;
-  clientes_count?: number;
 }
 
 export interface PrivilegioPayload {
@@ -53,22 +52,3 @@ export function useCrearCliente() {
   });
 }
 
-export function useClientePrivilegios(clienteId: number | null) {
-  return useQuery({
-    queryKey: ['admin', 'cliente-privilegios', clienteId],
-    queryFn: async () => (await apiClient.get(`/api/admin/clientes/${clienteId}/privilegios`)).data as Privilegio[],
-    enabled: clienteId != null,
-  });
-}
-
-export function useGuardarClientePrivilegios() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async ({ clienteId, privilegio_ids }: { clienteId: number; privilegio_ids: number[] }) =>
-      (await apiClient.put(`/api/admin/clientes/${clienteId}/privilegios`, { privilegio_ids })).data,
-    onSuccess: (_d, v) => {
-      qc.invalidateQueries({ queryKey: ['admin', 'cliente-privilegios', v.clienteId] });
-      qc.invalidateQueries({ queryKey: ['admin', 'clientes'] });
-    },
-  });
-}

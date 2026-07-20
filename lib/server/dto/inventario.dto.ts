@@ -74,6 +74,17 @@ export const ProductoConFichaSchema = z.object({
   categorias:         z.array(z.number().int().positive()).optional().default([]),
   marcas:             z.array(z.number().int().positive()).optional().default([]),
   receta:             z.array(ItemRecetaSchema).optional().default([]),
+}).superRefine((data, ctx) => {
+  // Exclusión de tipos: REVENTA descuenta 1:1 de su insumo vinculado; si
+  // además tuviera receta, el descuento de stock usaría la receta e ignoraría
+  // el insumo de reventa (comportamiento ambiguo).
+  if (data.tipo === 'REVENTA' && data.receta.length > 0) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['receta'],
+      message: 'Un producto de REVENTA no lleva receta: su inventario es el insumo vinculado 1:1.',
+    });
+  }
 });
 export type ProductoConFichaInput = z.infer<typeof ProductoConFichaSchema>;
 

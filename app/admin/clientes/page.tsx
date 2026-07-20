@@ -4,12 +4,7 @@ import { FormEvent, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import AdminPanel from '@/components/admin/AdminPanel';
 import { useAdminClientes } from '@/hooks/admin-clientes';
-import {
-  useClientePrivilegios,
-  useCrearCliente,
-  useGuardarClientePrivilegios,
-  usePrivilegios,
-} from '@/hooks/privilegios';
+import { useCrearCliente } from '@/hooks/privilegios';
 import apiClient from '@/hooks/api';
 import KpiCard from '@/components/ui/KpiCard';
 import MoneyText from '@/components/ui/MoneyText';
@@ -165,27 +160,6 @@ function NuevoClienteModal({ onClose, onCreated }: { onClose: () => void; onCrea
 }
 
 function ClienteDetalleModal({ cliente, onClose }: { cliente: any; onClose: () => void }) {
-  const catalogo = usePrivilegios(false);
-  const asignados = useClientePrivilegios(cliente.id);
-  const guardar = useGuardarClientePrivilegios();
-  const [seleccion, setSeleccion] = useState<Set<number> | null>(null);
-
-  const asignadosIds = new Set((asignados.data ?? []).map(p => p.id));
-  const current = seleccion ?? asignadosIds;
-
-  const toggle = (id: number) => {
-    const next = new Set(current);
-    if (next.has(id)) next.delete(id); else next.add(id);
-    setSeleccion(next);
-  };
-
-  const save = () => {
-    guardar.mutate(
-      { clienteId: cliente.id, privilegio_ids: Array.from(current) },
-      { onSuccess: onClose },
-    );
-  };
-
   return (
     <div className="admin-modal-overlay" onClick={onClose}>
       <div className="admin-modal" onClick={e => e.stopPropagation()}>
@@ -197,28 +171,18 @@ function ClienteDetalleModal({ cliente, onClose }: { cliente: any; onClose: () =
           <button type="button" className="admin-modal-close" onClick={onClose}>&times;</button>
         </div>
         <div className="admin-modal-body">
-          <h3 style={{ margin: '0 0 10px' }}>Privilegios asignados</h3>
-          {catalogo.isLoading || asignados.isLoading ? (
-            <EmptyState title="Cargando..." />
-          ) : (catalogo.data ?? []).length === 0 ? (
-            <p className="form-hint">No hay privilegios creados. Créalos en la sección Privilegios.</p>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {(catalogo.data ?? []).map(p => (
-                <label key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', border: '1px solid var(--line)', borderRadius: 8 }}>
-                  <input type="checkbox" checked={current.has(p.id)} onChange={() => toggle(p.id)} />
-                  <div style={{ flex: 1 }}>
-                    <strong>{p.nombre}</strong> <span className="dim">· {p.porcentaje}%</span>
-                    {p.descripcion && <div className="admin-cell-sub">{p.descripcion}</div>}
-                  </div>
-                </label>
-              ))}
-            </div>
-          )}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div><span className="dim">Celular:</span> {cliente.telefono ?? '—'}</div>
+            <div><span className="dim">Correo:</span> {cliente.email ?? '—'}</div>
+            <div><span className="dim">NIT / C.I.:</span> {cliente.nit ?? '—'}</div>
+            <div><span className="dim">Dirección:</span> {cliente.direccion ?? '—'}</div>
+          </div>
+          <p className="form-hint" style={{ marginTop: 12 }}>
+            Los privilegios (descuentos) ya no se asignan al cliente: el cajero elige uno por venta en el punto de venta.
+          </p>
         </div>
         <div className="admin-modal-footer">
           <button type="button" className="admin-btn ghost" onClick={onClose}>Cerrar</button>
-          <button type="button" className="admin-btn primary" disabled={guardar.isPending} onClick={save}>{guardar.isPending ? 'Guardando...' : 'Guardar privilegios'}</button>
         </div>
       </div>
     </div>

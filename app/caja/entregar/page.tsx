@@ -41,7 +41,9 @@ export default function CajaEntregarPage() {
     try {
       const res = await apiClient.post('/api/caja/entregar', { codigo: pedido.codigo, driver_nombre: driver || undefined });
       const tipo = res.data?.data?.tipo_entrega;
-      setOk(tipo === 'DELIVERY' ? '✓ Salida registrada. Pedido EN CAMINO.' : '✓ Pedido entregado.');
+      const num = res.data?.data?.numero_turno;
+      const etiqueta = num != null ? ` Nº ${num} del turno.` : '';
+      setOk(tipo === 'DELIVERY' ? `✓ Salida registrada. Pedido EN CAMINO.${etiqueta}` : `✓ Pedido entregado.${etiqueta}`);
       setPedido(null); setCodigo(''); setDriver('');
     } catch (e: any) {
       setError(e?.response?.data?.message ?? e?.response?.data?.error ?? 'No se pudo registrar la entrega');
@@ -86,7 +88,7 @@ export default function CajaEntregarPage() {
       {pedido && (
         <div className="dash-card span-12" style={{ marginTop: 16, padding: 18 }}>
           <div className="dash-card-header">
-            <h3>Pedido #{pedido.id} · {isDelivery ? '🛵 Delivery' : '🏪 Recoger en local'}</h3>
+            <h3>Pedido {pedido.numero_turno != null ? `#${pedido.numero_turno} (global #${pedido.id})` : `#${pedido.id}`} · {isDelivery ? '🛵 Delivery' : '🏪 Recoger en local'}</h3>
             <span className="dash-card-sub">{money(pedido.total)}</span>
           </div>
 

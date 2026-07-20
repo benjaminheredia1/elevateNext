@@ -23,6 +23,8 @@ export interface VentaFisicaInput {
   pago_mixto?: { efectivo: number; qr: number };
   /** Abono a la deuda del cliente cobrado junto con la venta (Bs). */
   abono_deuda?: number;
+  /** Privilegio (descuento) elegido por el cajero para esta venta: uno solo. */
+  privilegio_id?: number;
   es_cortesia?: boolean;
   es_fiado?: boolean;
   fiado_vencimiento?: string | null;
@@ -53,11 +55,8 @@ export interface ClienteResultado {
   telefono: string | null;
   nit: string | null;
   email: string | null;
-  privilegios?: PrivilegioResumen[];
   /** Saldo total de fiados pendientes (Bs). */
   deuda_saldo?: number;
-  descuento_pct?: number;
-  descuento_nombre?: string | null;
 }
 
 /** Directorio de clientes para la página Clientes de caja (navega sin búsqueda). */
@@ -71,7 +70,7 @@ export function useClientesDirectorio(q: string) {
   });
 }
 
-/** Privilegios activos (los únicos asignables desde caja). */
+/** Privilegios activos: catálogo para aplicar descuento por venta en el POS. */
 export function usePrivilegiosCaja() {
   return useQuery({
     queryKey: ['caja', 'privilegios'],
@@ -98,23 +97,19 @@ export function useEditarCliente() {
   });
 }
 
-/** Cobro de deuda sin compra (FIFO sobre los fiados del cliente). */
-export function useAbonarDeuda() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async ({ clienteId, monto, metodo_pago }: { clienteId: number; monto: number; metodo_pago: 'EFECTIVO' | 'QR' | 'TARJETA' }) =>
-      (await apiClient.post(`/api/caja/clientes/${clienteId}/abono`, { monto, metodo_pago })).data,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['caja'] });
-    },
-  });
+export interface CrearClienteCajaInput {
+  nombre: string;
+  telefono?: string;
+  email?: string;
+  nit?: string;
 }
 
-export function useAsignarPrivilegios() {
+/** Alta de cliente desde caja (sin venta). */
+export function useCrearClienteCaja() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ clienteId, privilegioIds }: { clienteId: number; privilegioIds: number[] }) =>
-      (await apiClient.put(`/api/caja/clientes/${clienteId}/privilegios`, { privilegio_ids: privilegioIds })).data,
+    mutationFn: async (datos: CrearClienteCajaInput) =>
+      (await apiClient.post('/api/caja/clientes', datos)).data.data as ClienteResultado,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['caja', 'clientes-directorio'] });
       qc.invalidateQueries({ queryKey: ['caja', 'clientes'] });
@@ -122,29 +117,60 @@ export function useAsignarPrivilegios() {
   });
 }
 
-export function useBuscarClientes(q: string) {
-  return useQuery({
-    queryKey: ['caja', 'clientes', q],
-    queryFn: async () => {
-      const res = await apiClient.get(`/api/caja/clientes?q=${encodeURIComponent(q)}`);
-      return res.data.data as ClienteResultado[];
+/** Cobro de deuda sin compra (FIFO sobre los fiados del cliente). */
+export function useAbonarDeuda() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ clienteId, pagos, cuenta_ids }: {
+      clienteId: number;
+      pagos: { metodo_pago: 'EFECTIVO' | 'QR' | 'TARJETA'; monto: number }[];
+      cuenta_ids?: number[];
+    }) =>
+      (await apiClient.post(`/api/caja/clientes/${clienteId}/abono`, { pagos, cuenta_ids })).data,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['caja'] });
     },
-    enabled: q.trim().length >= 2,
   });
 }
 
-export function useDeudores() {
+export function useBuscarClientes(q: string, browse = false) {
+  const conQuery = q.trim().length >= 2;
+  return useQuery({
+    queryKey: ['caja', 'clientes', conQuery ? q : (browse ? '*' : '')],
+    queryFn: async () => {
+      const params = conQuery ? `q=${encodeURIComponent(q)}` : 'browse=1';
+      const res = await apiClient.get(`/api/caja/clientes?${params}`);
+      return res.data.data as ClienteResultado[];
+    },
+    enabled: conQuery || browse,
+  });
+}
+
+export function useDeudores(enabled = true) {
   return useQuery({
     queryKey: ['caja', 'deudores'],
     queryFn: async () => (await apiClient.get('/api/caja/deudores')).data,
+    enabled,
+  });
+}
+
+export function useAplicarDescuentoDeuda() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, privilegio_id }: { id: number; privilegio_id: number }) =>
+      (await apiClient.post(`/api/caja/deudores/${id}/descuento`, { privilegio_id })).data,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['caja', 'deudores'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'cuentas-corrientes'] });
+    },
   });
 }
 
 export function useCobrarDeuda() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, monto, metodo_pago }: { id: number; monto: number; metodo_pago: 'EFECTIVO' | 'QR' }) =>
-      (await apiClient.post(`/api/caja/deudores/${id}/pago`, { monto, metodo_pago })).data,
+    mutationFn: async ({ id, pagos }: { id: number; pagos: { metodo_pago: 'EFECTIVO' | 'QR' | 'TARJETA'; monto: number }[] }) =>
+      (await apiClient.post(`/api/caja/deudores/${id}/pago`, { pagos })).data,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['caja', 'deudores'] });
       qc.invalidateQueries({ queryKey: ['caja', 'turno-activo'] });

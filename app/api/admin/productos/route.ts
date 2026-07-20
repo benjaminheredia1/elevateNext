@@ -78,6 +78,19 @@ export async function POST(req: NextRequest) {
           },
         });
         insumoReventaId = insumo.id;
+        // El stock inicial queda auditado como movimiento de inventario
+        if (n.stock > 0) {
+          await tx.movimientoInterno.create({
+            data: {
+              insumo_id:       insumo.id,
+              tipo_movimiento: 'INGRESO',
+              cantidad:        n.stock,
+              descripcion:     `Stock inicial de "${parsed.nombre}" (alta de insumo de reventa)`,
+              costo_unitario:  n.costo_unitario,
+              responsable:     String(session.id),
+            },
+          });
+        }
       }
 
       // 1. Crear el producto base
