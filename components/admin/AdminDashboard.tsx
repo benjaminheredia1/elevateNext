@@ -17,20 +17,27 @@ import { foodCostColor } from './inventoryData';
 
 type Period = 'hoy' | '7d' | '30d';
 
-interface DashboardDay {
+interface DashboardData {
+  rango: string;
   kpis: {
-    ganancia_hoy: number;
     ventas: number;
     pedidos: number;
+    cancelados: number;
     ticket_promedio: number;
+    utilidad: number;
+    margen_bruto_pct: number;
+    food_cost_pct: number;
+    por_cobrar: number;
     pedidos_pendientes: number;
   };
-  contabilidad_hoy: {
+  contabilidad: {
     ingresos: number;
     cmv: number;
-    otros_gastos: number;
+    gastos_operativos: number;
+    gastos_fijos_prorrateados: number;
     utilidad: number;
   };
+  serie: { fecha: string; ventas: number; pedidos: number }[];
   mas_vendidos: { producto_id: number; nombre: string; cantidad: number; total: number }[];
   alertas_inventario: InsumoAlerta[];
   turno_activo: {
@@ -40,7 +47,6 @@ interface DashboardDay {
     cajero?: { nombre: string | null; email: string };
     sucursal?: { nombre: string };
   } | null;
-  pedidos_por_hora: { hora: string; pedidos: number }[];
   pedidos_recientes: PedidoReciente[];
 }
 
@@ -63,23 +69,10 @@ interface InsumoAlerta {
   porcentaje: number;
 }
 
-interface TrendPoint {
-  day: string;
-  date: string;
-  revenue: number;
-  orders: number;
-}
-
 const PERIOD_LABELS: Record<Period, string> = {
   hoy: 'Hoy',
   '7d': 'Semana',
   '30d': 'Mes',
-};
-
-const PERIOD_DAYS: Record<Period, number> = {
-  hoy: 1,
-  '7d': 7,
-  '30d': 30,
 };
 
 const STATUS_META: Record<string, { label: string; color: string; bg: string; activity: string }> = {
@@ -90,24 +83,6 @@ const STATUS_META: Record<string, { label: string; color: string; bg: string; ac
   PAGADO: { label: 'Pagado', color: 'var(--fresh)', bg: 'rgba(31,169,113,.14)', activity: 'done' },
   CANCELADO: { label: 'Cancelado', color: 'var(--danger)', bg: 'rgba(229,72,77,.14)', activity: 'alert' },
 };
-
-function isoDate(date: Date) {
-  // Fecha local del navegador (no UTC): pasada la 8pm en Bolivia,
-  // toISOString() ya devuelve el día siguiente.
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
-}
-
-function dateRange(days: number) {
-  const today = new Date();
-  return Array.from({ length: days }, (_, index) => {
-    const date = new Date(today);
-    date.setDate(today.getDate() - (days - 1 - index));
-    return date;
-  });
-}
 
 function money(value: number) {
   return `Bs ${new Intl.NumberFormat('es-BO', {
@@ -126,34 +101,9 @@ function compactTime(value: string) {
   }).format(new Date(value));
 }
 
-function buildEmptyDay(): DashboardDay {
-  return {
-    kpis: { ganancia_hoy: 0, ventas: 0, pedidos: 0, ticket_promedio: 0, pedidos_pendientes: 0 },
-    contabilidad_hoy: { ingresos: 0, cmv: 0, otros_gastos: 0, utilidad: 0 },
-    mas_vendidos: [],
-    alertas_inventario: [],
-    turno_activo: null,
-    pedidos_por_hora: [],
-    pedidos_recientes: [],
-  };
-}
-
-function aggregateTopProducts(days: DashboardDay[]) {
-  const map = new Map<number, { producto_id: number; nombre: string; cantidad: number; total: number }>();
-  for (const day of days) {
-    for (const item of day.mas_vendidos ?? []) {
-      const current = map.get(item.producto_id) ?? {
-        producto_id: item.producto_id,
-        nombre: item.nombre,
-        cantidad: 0,
-        total: 0,
-      };
-      current.cantidad += Number(item.cantidad || 0);
-      current.total += Number(item.total || 0);
-      map.set(item.producto_id, current);
-    }
-  }
-  return Array.from(map.values()).sort((a, b) => b.cantidad - a.cantidad).slice(0, 5);
+function dayLabel(fechaISO: string) {
+  // 'YYYY-MM-DD' → etiqueta corta del día (sin correr el día por UTC)
+  return new Date(`${fechaISO}T12:00:00`).toLocaleDateString('es-BO', { weekday: 'short' });
 }
 
 function EmptyMini({ children }: { children: React.ReactNode }) {
@@ -163,8 +113,7 @@ function EmptyMini({ children }: { children: React.ReactNode }) {
 export default function AdminDashboard() {
   const [period, setPeriod] = useState<Period>('hoy');
   const [liveTime, setLiveTime] = useState(new Date());
-  const [days, setDays] = useState<DashboardDay[]>([]);
-  const [trend, setTrend] = useState<TrendPoint[]>([]);
+  const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -177,29 +126,16 @@ export default function AdminDashboard() {
     let cancelled = false;
 
     async function fetchPeriod() {
-      setLoading(true);
       setError(null);
 
       try {
-        const dates = dateRange(PERIOD_DAYS[period]);
-        const responses = await Promise.all(
-          dates.map(date => apiClient.get<DashboardDay>(`/api/admin/dashboard?fecha=${isoDate(date)}`))
-        );
+        const res = await apiClient.get<DashboardData>(`/api/admin/dashboard?rango=${period}`);
         if (cancelled) return;
-
-        const loadedDays = responses.map(res => res.data ?? buildEmptyDay());
-        setDays(loadedDays);
-        setTrend(loadedDays.map((day, index) => ({
-          day: dates[index].toLocaleDateString('es-BO', { weekday: 'short' }),
-          date: isoDate(dates[index]),
-          revenue: Number(day.kpis?.ventas ?? 0),
-          orders: Number(day.kpis?.pedidos ?? 0),
-        })));
+        setData(res.data ?? null);
       } catch (err) {
         console.error(err);
         if (!cancelled) {
-          setDays([]);
-          setTrend([]);
+          setData(null);
           setError('No se pudo cargar el dashboard.');
         }
       } finally {
@@ -207,6 +143,7 @@ export default function AdminDashboard() {
       }
     }
 
+    setLoading(true);
     fetchPeriod();
     const interval = window.setInterval(fetchPeriod, period === 'hoy' ? 30000 : 120000);
     return () => {
@@ -215,39 +152,25 @@ export default function AdminDashboard() {
     };
   }, [period]);
 
-  const summary = useMemo(() => {
-    const today = days[days.length - 1] ?? buildEmptyDay();
-    const ingresos = days.reduce((sum, day) => sum + Number(day.contabilidad_hoy?.ingresos ?? day.kpis?.ventas ?? 0), 0);
-    const cmv = days.reduce((sum, day) => sum + Number(day.contabilidad_hoy?.cmv ?? 0), 0);
-    const otrosGastos = days.reduce((sum, day) => sum + Number(day.contabilidad_hoy?.otros_gastos ?? 0), 0);
-    const utilidad = ingresos - cmv - otrosGastos;
-    const pedidos = days.reduce((sum, day) => sum + Number(day.kpis?.pedidos ?? 0), 0);
-    const ticket = pedidos ? ingresos / pedidos : 0;
-    const foodCostPct = ingresos ? (cmv / ingresos) * 100 : 0;
-    const grossMarginPct = ingresos ? ((ingresos - cmv) / ingresos) * 100 : 0;
-    const alertas = today.alertas_inventario ?? [];
-    const topProducts = aggregateTopProducts(days);
-    const recentOrders = today.pedidos_recientes ?? [];
+  const trend = useMemo(
+    () => (data?.serie ?? []).map(punto => ({
+      day: dayLabel(punto.fecha),
+      date: punto.fecha,
+      revenue: punto.ventas,
+      orders: punto.pedidos,
+    })),
+    [data],
+  );
 
-    return {
-      today,
-      ingresos,
-      cmv,
-      utilidad,
-      pedidos,
-      ticket,
-      foodCostPct,
-      grossMarginPct,
-      alertas,
-      topProducts,
-      recentOrders,
-    };
-  }, [days]);
+  const kpis = data?.kpis;
+  const alertas = data?.alertas_inventario ?? [];
+  const topProducts = data?.mas_vendidos ?? [];
+  const recentOrders = data?.pedidos_recientes ?? [];
 
-  const maxTopSales = Math.max(...summary.topProducts.map(item => item.cantidad), 1);
+  const maxTopSales = Math.max(...topProducts.map(item => item.cantidad), 1);
   const hasTrend = trend.some(point => point.revenue > 0 || point.orders > 0);
   const activity = [
-    ...summary.recentOrders.slice(0, 4).map(order => {
+    ...recentOrders.slice(0, 4).map(order => {
       const meta = STATUS_META[order.estado] ?? STATUS_META.PENDIENTE;
       return {
         key: `order-${order.id}`,
@@ -256,7 +179,7 @@ export default function AdminDashboard() {
         time: compactTime(order.created_at),
       };
     }),
-    ...summary.alertas.slice(0, 1).map(alerta => ({
+    ...alertas.slice(0, 1).map(alerta => ({
       key: `alert-${alerta.id}`,
       type: 'alert',
       text: `Stock bajo: ${alerta.nombre}`,
@@ -298,7 +221,7 @@ export default function AdminDashboard() {
         </div>
       )}
 
-      {loading ? (
+      {loading || !kpis ? (
         <div className="empty-state">
           <motion.div
             animate={{ rotate: 360 }}
@@ -322,7 +245,7 @@ export default function AdminDashboard() {
               <div className="kpi-header">
                 <span className="kpi-label">Ventas {PERIOD_LABELS[period].toLowerCase()}</span>
               </div>
-              <div className="kpi-value" style={{ color: 'var(--orange)' }}>{money(summary.ingresos)}</div>
+              <div className="kpi-value" style={{ color: 'var(--orange)' }}>{money(kpis.ventas)}</div>
               <div className="kpi-spark">
                 <ResponsiveContainer width="100%" height={36}>
                   <AreaChart data={trend} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
@@ -340,44 +263,44 @@ export default function AdminDashboard() {
 
             <div className="kpi-card">
               <div className="kpi-header">
-                <span className="kpi-label">Pedidos {PERIOD_LABELS[period].toLowerCase()}</span>
+                <span className="kpi-label">Ganancia {PERIOD_LABELS[period].toLowerCase()}</span>
               </div>
-              <div className="kpi-value" style={{ color: 'var(--info)' }}>{summary.pedidos}</div>
-              <div className="kpi-bar"><div className="kpi-bar-fill" style={{ width: `${Math.min(100, summary.pedidos * 6)}%`, background: 'var(--info)' }} /></div>
+              <div className="kpi-value" style={{ color: kpis.utilidad >= 0 ? 'var(--fresh)' : 'var(--danger)' }}>{money(kpis.utilidad)}</div>
+              <div className="kpi-bar"><div className="kpi-bar-fill" style={{ width: kpis.ventas > 0 ? `${Math.min(100, Math.max(0, (kpis.utilidad / kpis.ventas) * 100))}%` : '0%', background: 'var(--fresh)' }} /></div>
+            </div>
+
+            <div className="kpi-card">
+              <div className="kpi-header">
+                <span className="kpi-label">Pedidos {PERIOD_LABELS[period].toLowerCase()}</span>
+                {kpis.cancelados > 0 && <span className="kpi-change down">{kpis.cancelados} cancelados</span>}
+              </div>
+              <div className="kpi-value" style={{ color: 'var(--info)' }}>{kpis.pedidos}</div>
+              <div className="kpi-bar"><div className="kpi-bar-fill" style={{ width: `${Math.min(100, kpis.pedidos * 6)}%`, background: 'var(--info)' }} /></div>
             </div>
 
             <div className="kpi-card">
               <div className="kpi-header">
                 <span className="kpi-label">Ticket promedio</span>
               </div>
-              <div className="kpi-value" style={{ color: 'var(--kale)' }}>{money(summary.ticket)}</div>
-              <div className="kpi-bar"><div className="kpi-bar-fill" style={{ width: summary.ticket > 0 ? '68%' : '0%', background: 'var(--kale)' }} /></div>
-            </div>
-
-            <div className="kpi-card">
-              <div className="kpi-header">
-                <span className="kpi-label">Margen bruto</span>
-                <span className={`kpi-change ${summary.grossMarginPct >= 60 ? 'up' : 'down'}`}>{summary.grossMarginPct >= 60 ? '▲' : '▼'}</span>
-              </div>
-              <div className="kpi-value" style={{ color: 'var(--fresh)' }}>{percent(summary.grossMarginPct)}</div>
-              <div className="kpi-bar"><div className="kpi-bar-fill" style={{ width: `${Math.min(100, summary.grossMarginPct)}%`, background: 'var(--fresh)' }} /></div>
+              <div className="kpi-value" style={{ color: 'var(--kale)' }}>{money(kpis.ticket_promedio)}</div>
+              <div className="kpi-bar"><div className="kpi-bar-fill" style={{ width: kpis.ticket_promedio > 0 ? '68%' : '0%', background: 'var(--kale)' }} /></div>
             </div>
 
             <div className="kpi-card">
               <div className="kpi-header">
                 <span className="kpi-label">Food Cost</span>
               </div>
-              <div className="kpi-value" style={{ color: foodCostColor(summary.foodCostPct) }}>{percent(summary.foodCostPct)}</div>
-              <div className="kpi-bar"><div className="kpi-bar-fill" style={{ width: `${Math.min(100, summary.foodCostPct)}%`, background: foodCostColor(summary.foodCostPct) }} /></div>
+              <div className="kpi-value" style={{ color: foodCostColor(kpis.food_cost_pct) }}>{percent(kpis.food_cost_pct)}</div>
+              <div className="kpi-bar"><div className="kpi-bar-fill" style={{ width: `${Math.min(100, kpis.food_cost_pct)}%`, background: foodCostColor(kpis.food_cost_pct) }} /></div>
             </div>
 
             <div className="kpi-card">
               <div className="kpi-header">
                 <span className="kpi-label">Insumos críticos</span>
-                {summary.alertas.length > 0 && <span className="kpi-change down">{summary.alertas.length}</span>}
+                {alertas.length > 0 && <span className="kpi-change down">{alertas.length}</span>}
               </div>
-              <div className="kpi-value" style={{ color: summary.alertas.length ? 'var(--danger)' : 'var(--fresh)' }}>{summary.alertas.length}</div>
-              <div className="kpi-bar"><div className="kpi-bar-fill" style={{ width: `${Math.min(100, summary.alertas.length * 20)}%`, background: summary.alertas.length ? 'var(--danger)' : 'var(--fresh)' }} /></div>
+              <div className="kpi-value" style={{ color: alertas.length ? 'var(--danger)' : 'var(--fresh)' }}>{alertas.length}</div>
+              <div className="kpi-bar"><div className="kpi-bar-fill" style={{ width: `${Math.min(100, alertas.length * 20)}%`, background: alertas.length ? 'var(--danger)' : 'var(--fresh)' }} /></div>
             </div>
           </div>
 
@@ -385,7 +308,7 @@ export default function AdminDashboard() {
             <div className="dash-card span-8">
               <div className="dash-card-header">
                 <h3>Ventas — tendencia</h3>
-                <span className="dash-card-sub">{period === 'hoy' ? 'Hoy' : `Últimos ${PERIOD_DAYS[period]} días`}</span>
+                <span className="dash-card-sub">{period === 'hoy' ? 'Hoy' : period === '7d' ? 'Últimos 7 días' : 'Últimos 30 días'}</span>
               </div>
               {hasTrend ? (
                 <ResponsiveContainer width="100%" height={240}>
@@ -427,11 +350,11 @@ export default function AdminDashboard() {
                 <h3>Alertas de inventario</h3>
                 <Link className="dash-card-link" href="/admin/insumos">Ver →</Link>
               </div>
-              {summary.alertas.length === 0 ? (
+              {alertas.length === 0 ? (
                 <EmptyMini>Sin alertas. Todo en stock.</EmptyMini>
               ) : (
                 <div className="alert-card-list">
-                  {summary.alertas.slice(0, 5).map(insumo => (
+                  {alertas.slice(0, 5).map(insumo => (
                     <div key={insumo.id} className="alert-row">
                       <span
                         className="alert-row-dot"
@@ -450,11 +373,11 @@ export default function AdminDashboard() {
                 <h3>Más vendidos</h3>
                 <span className="dash-card-sub">por unidades</span>
               </div>
-              {summary.topProducts.length === 0 ? (
+              {topProducts.length === 0 ? (
                 <EmptyMini>Aún no hay ventas registradas.</EmptyMini>
               ) : (
                 <div className="top-products">
-                  {summary.topProducts.map((item, index) => (
+                  {topProducts.map((item, index) => (
                     <div key={item.producto_id} className="top-product-row">
                       <span className="top-rank">#{index + 1}</span>
                       <div className="top-product-info">
@@ -498,7 +421,7 @@ export default function AdminDashboard() {
                 <h3>Pedidos recientes</h3>
                 <Link href="/admin/orders" className="dash-card-link">Ver todos →</Link>
               </div>
-              {summary.recentOrders.length === 0 ? (
+              {recentOrders.length === 0 ? (
                 <EmptyMini>Sin pedidos recientes.</EmptyMini>
               ) : (
                 <div className="recent-orders-table">
@@ -508,7 +431,7 @@ export default function AdminDashboard() {
                     <span>Total</span>
                     <span>Estado</span>
                   </div>
-                  {summary.recentOrders.map(order => {
+                  {recentOrders.map(order => {
                     const meta = STATUS_META[order.estado] ?? {
                       label: order.estado,
                       color: 'var(--slate)',

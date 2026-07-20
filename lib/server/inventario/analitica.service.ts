@@ -1,40 +1,61 @@
 /**
  * analitica.service.ts
- * KPIs de ventas e inventario: ventas por día, food cost,
- * ingeniería de menú, heatmap, mix por categoría y marca.
+ * KPIs de ventas e inventario del período seleccionado: ventas por día,
+ * food cost, ingeniería de menú, heatmap y mix por categoría/marca.
+ * Todas las agrupaciones de día/hora usan la zona horaria del negocio
+ * (Bolivia) — nunca la del servidor.
  */
 import prisma from '@/lib/prisma';
 import { costoFichaTecnica } from './inventario.service';
+import { hoyISO, rangoDiaNegocio } from '@/lib/server/fechas';
+import { diaNegocioDe, ESTADOS_VENTA } from '@/lib/server/finanzas/metricas.service';
 import type { Rango } from '@/lib/server/dto/inventario.dto';
 
+const TZ = 'America/La_Paz';
+const formatoHora = new Intl.DateTimeFormat('en-GB', { timeZone: TZ, hour: 'numeric', hour12: false });
+const formatoDiaSemana = new Intl.DateTimeFormat('en-US', { timeZone: TZ, weekday: 'short' });
+const DIA_SEMANA: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+
 // ─────────────────────────────────────────────────────────
-// Helper: fecha de inicio según rango
+// Helper: inicio del rango anclado al día de negocio
 // ─────────────────────────────────────────────────────────
 function fechaDesde(rango: Rango): Date {
-  const d = new Date();
   const dias = rango === '7d' ? 7 : rango === '30d' ? 30 : 90;
-  d.setDate(d.getDate() - dias);
-  d.setHours(0, 0, 0, 0);
-  return d;
+  const [anio, mes, dia] = hoyISO().split('-').map(Number);
+  const inicio = new Date(Date.UTC(anio, mes - 1, dia - (dias - 1)));
+  return rangoDiaNegocio(inicio.toISOString().slice(0, 10)).desde;
 }
 
 // ─────────────────────────────────────────────────────────
 // Tipos de retorno
 // ─────────────────────────────────────────────────────────
 export interface VentaDia   { fecha: string; total: number; cantidad: number }
-export interface MenuItem   { producto_id: number; nombre: string; ventas: number; margen: number; categoria: 'Estrella' | 'Caballo' | 'Puzzle' | 'Perro' }
+export interface MenuItem {
+  producto_id: number;
+  nombre: string;
+  ventas: number;
+  total_vendido: number;
+  precio: number;
+  costo: number;
+  food_cost_pct: number;
+  margen: number;
+  categoria: 'Estrella' | 'Caballo' | 'Puzzle' | 'Perro';
+}
 export interface HeatmapCell { diaSemana: number; hora: number; ventas: number }
 export interface MixItem    { nombre: string; total: number; pct: number }
 
 export interface AnaliticaResult {
   ventasPorDia:       VentaDia[];
   foodCostTotal:      number;
+  cmvTotal:           number;
+  margenBruto:        number;
   ingenieriaMeniu:    MenuItem[];
   heatmap:            HeatmapCell[];
   mixCategoria:       MixItem[];
   mixMarca:           MixItem[];
   totalVentas:        number;
   totalTransacciones: number;
+  ticketPromedio:     number;
 }
 
 // ─────────────────────────────────────────────────────────
@@ -43,11 +64,12 @@ export interface AnaliticaResult {
 export async function getAnalitica(rango: Rango): Promise<AnaliticaResult> {
   const desde = fechaDesde(rango);
 
-  // ── Cargar transacciones con detalles en el rango ─────────────
+  // ── Ventas netas del período (sin cortesías) ──────────────────
   const transacciones = await prisma.transaccion.findMany({
     where: {
       created_at: { gte: desde },
-      estado:     { in: ['ENTREGADO', 'PAGADO'] },
+      estado:     { in: [...ESTADOS_VENTA] },
+      es_cortesia: false,
     },
     include: {
       transaccionesDetalles_id: {
@@ -64,22 +86,22 @@ export async function getAnalitica(rango: Rango): Promise<AnaliticaResult> {
     orderBy: { created_at: 'asc' },
   });
 
-  // ── Ventas por día ────────────────────────────────────────────
+  // ── Ventas por día de negocio ─────────────────────────────────
   const ventasDiaMap = new Map<string, { total: number; cantidad: number }>();
   let totalVentas = 0;
 
   for (const t of transacciones) {
-    const fecha = t.created_at.toISOString().slice(0, 10);
+    const fecha = diaNegocioDe(t.created_at);
     const prev  = ventasDiaMap.get(fecha) ?? { total: 0, cantidad: 0 };
     ventasDiaMap.set(fecha, { total: prev.total + Number(t.total), cantidad: prev.cantidad + 1 });
     totalVentas += Number(t.total);
   }
 
-  const ventasPorDia: VentaDia[] = Array.from(ventasDiaMap.entries()).map(
-    ([fecha, v]) => ({ fecha, ...v }),
-  );
+  const ventasPorDia: VentaDia[] = Array.from(ventasDiaMap.entries())
+    .map(([fecha, v]) => ({ fecha, total: Number(v.total.toFixed(2)), cantidad: v.cantidad }))
+    .sort((a, b) => a.fecha.localeCompare(b.fecha));
 
-  // ── Mapa de ventas por producto ────────────────────────────────
+  // ── Ventas por producto ───────────────────────────────────────
   const productoVentas = new Map<number, { nombre: string; ventas: number; totalVentas: number; precio: number }>();
 
   for (const t of transacciones) {
@@ -99,40 +121,38 @@ export async function getAnalitica(rango: Rango): Promise<AnaliticaResult> {
     }
   }
 
-  // ── Food cost total ponderado ─────────────────────────────────
-  let foodCostNumerador = 0;
-  let foodCostDenominador = 0;
-
-  for (const [pid, data] of productoVentas.entries()) {
-    const costo = await costoFichaTecnica(pid);
-    if (data.precio > 0) {
-      const pct = (costo / data.precio) * 100;
-      foodCostNumerador   += pct * data.totalVentas;
-      foodCostDenominador += data.totalVentas;
-    }
-  }
-  const foodCostTotal = foodCostDenominador > 0 ? foodCostNumerador / foodCostDenominador : 0;
-
-  // ── Ingeniería de menú (Boston Matrix simplificada) ────────────
+  // ── Costos por receta (una sola pasada, en paralelo) ──────────
   const prodIds = Array.from(productoVentas.keys());
-
-  // Mediana de ventas y mediana de margen
-  const ventasArr   = prodIds.map(id => productoVentas.get(id)!.ventas);
-  const medVentas   = mediana(ventasArr);
-
-  const margenes    = await Promise.all(
-    prodIds.map(async (id) => {
-      const costo  = await costoFichaTecnica(id);
-      const precio = productoVentas.get(id)!.precio;
-      return { id, margen: precio > 0 ? ((precio - costo) / precio) * 100 : 0 };
-    }),
+  const costosPorProducto = new Map<number, number>(
+    await Promise.all(
+      prodIds.map(async (id): Promise<[number, number]> => [id, await costoFichaTecnica(id)]),
+    ),
   );
-  const medMargen = mediana(margenes.map(m => m.margen));
+
+  // ── CMV, food cost y margen bruto del período ─────────────────
+  let cmvTotal = 0;
+  for (const [pid, data] of productoVentas.entries()) {
+    cmvTotal += (costosPorProducto.get(pid) ?? 0) * data.ventas;
+  }
+  const foodCostTotal = totalVentas > 0 ? (cmvTotal / totalVentas) * 100 : 0;
+  const margenBruto = totalVentas > 0 ? ((totalVentas - cmvTotal) / totalVentas) * 100 : 0;
+
+  // ── Ingeniería de menú (matriz popularidad × rentabilidad) ─────
+  const ventasArr = prodIds.map(id => productoVentas.get(id)!.ventas);
+  const medVentas = mediana(ventasArr);
+
+  const margenPct = (id: number) => {
+    const precio = productoVentas.get(id)!.precio;
+    const costo = costosPorProducto.get(id) ?? 0;
+    return precio > 0 ? ((precio - costo) / precio) * 100 : 0;
+  };
+  const medMargen = mediana(prodIds.map(margenPct));
 
   const ingenieriaMeniu: MenuItem[] = prodIds.map((id) => {
     const data   = productoVentas.get(id)!;
-    const margen = margenes.find(m => m.id === id)!.margen;
-    const altaVenta  = data.ventas  >= medVentas;
+    const costo  = costosPorProducto.get(id) ?? 0;
+    const margen = margenPct(id);
+    const altaVenta  = data.ventas >= medVentas;
     const altoMargen = margen >= medMargen;
 
     let categoria: MenuItem['categoria'];
@@ -141,51 +161,57 @@ export async function getAnalitica(rango: Rango): Promise<AnaliticaResult> {
     else if (!altaVenta && altoMargen)  categoria = 'Puzzle';
     else                                categoria = 'Perro';
 
-    return { producto_id: id, nombre: data.nombre, ventas: data.ventas, margen, categoria };
+    return {
+      producto_id: id,
+      nombre: data.nombre,
+      ventas: data.ventas,
+      total_vendido: Number(data.totalVentas.toFixed(2)),
+      precio: data.precio,
+      costo: Number(costo.toFixed(2)),
+      food_cost_pct: data.precio > 0 ? Number(((costo / data.precio) * 100).toFixed(2)) : 0,
+      margen: Number(margen.toFixed(2)),
+      categoria,
+    };
   });
 
-  // ── Heatmap hora × día de semana ─────────────────────────────
+  // ── Heatmap hora × día de semana (hora de Bolivia) ────────────
   const heatmapMap = new Map<string, number>();
   for (const t of transacciones) {
-    const key = `${t.created_at.getDay()}-${t.created_at.getHours()}`;
+    const dia = DIA_SEMANA[formatoDiaSemana.format(t.created_at)] ?? 0;
+    const hora = Number(formatoHora.format(t.created_at)) % 24;
+    const key = `${dia}-${hora}`;
     heatmapMap.set(key, (heatmapMap.get(key) ?? 0) + Number(t.total));
   }
   const heatmap: HeatmapCell[] = Array.from(heatmapMap.entries()).map(([k, v]) => {
     const [dia, hora] = k.split('-').map(Number);
-    return { diaSemana: dia, hora, ventas: v };
+    return { diaSemana: dia, hora, ventas: Number(v.toFixed(2)) };
   });
 
-  // ── Mix por categoría ─────────────────────────────────────────
+  // ── Mix por categoría y por marca ─────────────────────────────
   const catMap = new Map<string, number>();
-  for (const t of transacciones) {
-    for (const d of t.transaccionesDetalles_id) {
-      const cats = d.producto.categoria_id;
-      const nombre = cats[0]?.categoria?.nombre ?? 'Sin categoría';
-      catMap.set(nombre, (catMap.get(nombre) ?? 0) + Number(d.precio_unitario) * d.cantidad);
-    }
-  }
-  const mixCategoria = toMixItems(catMap);
-
-  // ── Mix por marca ─────────────────────────────────────────────
   const marcaMap = new Map<string, number>();
   for (const t of transacciones) {
     for (const d of t.transaccionesDetalles_id) {
-      const ms = d.producto.marcas;
-      const nombre = ms[0]?.marca?.nombre ?? 'Sin marca';
-      marcaMap.set(nombre, (marcaMap.get(nombre) ?? 0) + Number(d.precio_unitario) * d.cantidad);
+      const monto = Number(d.precio_unitario) * d.cantidad;
+      const cat = d.producto.categoria_id[0]?.categoria?.nombre ?? 'Sin categoría';
+      catMap.set(cat, (catMap.get(cat) ?? 0) + monto);
+      const marca = d.producto.marcas[0]?.marca?.nombre ?? 'Sin marca';
+      marcaMap.set(marca, (marcaMap.get(marca) ?? 0) + monto);
     }
   }
-  const mixMarca = toMixItems(marcaMap);
 
   return {
     ventasPorDia,
     foodCostTotal:      Math.round(foodCostTotal * 100) / 100,
+    cmvTotal:           Math.round(cmvTotal * 100) / 100,
+    margenBruto:        Math.round(margenBruto * 100) / 100,
     ingenieriaMeniu,
     heatmap,
-    mixCategoria,
-    mixMarca,
+    mixCategoria:       toMixItems(catMap),
+    mixMarca:           toMixItems(marcaMap),
     totalVentas:        Math.round(totalVentas * 100) / 100,
     totalTransacciones: transacciones.length,
+    ticketPromedio:     transacciones.length > 0 ? Math.round((totalVentas / transacciones.length) * 100) / 100 : 0,
   };
 }
 

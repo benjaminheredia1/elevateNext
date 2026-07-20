@@ -23,14 +23,22 @@ export async function flujoCaja(rango: RangoFechas, sucursal?: number) {
   let entradas = new Prisma.Decimal(0);
   let salidas = new Prisma.Decimal(0);
   const porMetodo = new Map<string, Prisma.Decimal>();
-  const porCategoria = new Map<string, Prisma.Decimal>();
+  // Entradas y salidas por categoría se reportan separadas: el neto mezcla
+  // signos y oculta cuánto entró y cuánto se fue en cada rubro.
+  const categoriaEntradas = new Map<string, Prisma.Decimal>();
+  const categoriaSalidas = new Map<string, Prisma.Decimal>();
 
   for (const mov of movimientos) {
     const monto = mov.monto;
-    if (monto.gte(0)) entradas = entradas.plus(monto);
-    else salidas = salidas.plus(monto.abs());
+    const categoria = mov.categoria ?? mov.tipo;
+    if (monto.gte(0)) {
+      entradas = entradas.plus(monto);
+      add(categoriaEntradas, categoria, monto);
+    } else {
+      salidas = salidas.plus(monto.abs());
+      add(categoriaSalidas, categoria, monto.abs());
+    }
     add(porMetodo, mov.metodo_pago, monto);
-    add(porCategoria, mov.categoria ?? mov.tipo, monto);
   }
 
   const flujoNeto = entradas.minus(salidas);
@@ -41,7 +49,12 @@ export async function flujoCaja(rango: RangoFechas, sucursal?: number) {
     salidas: toNumber(salidas),
     flujo_neto: toNumber(flujoNeto),
     por_metodo: Array.from(porMetodo.entries()).map(([metodo, monto]) => ({ metodo, monto: toNumber(monto) })),
-    por_categoria: Array.from(porCategoria.entries()).map(([categoria, monto]) => ({ categoria, monto: toNumber(monto) })),
+    entradas_por_categoria: Array.from(categoriaEntradas.entries())
+      .map(([categoria, monto]) => ({ categoria, monto: toNumber(monto) }))
+      .sort((a, b) => b.monto - a.monto),
+    salidas_por_categoria: Array.from(categoriaSalidas.entries())
+      .map(([categoria, monto]) => ({ categoria, monto: toNumber(monto) }))
+      .sort((a, b) => b.monto - a.monto),
     movimientos: movimientos.map(m => ({
       id: m.id,
       tipo: m.tipo,
