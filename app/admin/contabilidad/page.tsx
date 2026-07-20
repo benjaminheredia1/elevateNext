@@ -41,10 +41,13 @@ export default function AdminContabilidadPage() {
     if (!er) return;
     downloadCsv('estado-resultados.csv', [
       ['Concepto', 'Monto'],
-      ['Ingresos', er.ingresos?.total ?? 0],
-      ['CMV', er.cmv ?? 0],
+      ['Ingresos (devengado)', er.ingresos?.total ?? 0],
+      ['Por cobrar (fiados del periodo)', er.ingresos?.por_cobrar ?? 0],
+      ['CMV (consumo por receta)', er.cmv ?? 0],
       ['Utilidad bruta', er.utilidad_bruta ?? 0],
       ['Gastos operativos', er.gastos_operativos ?? 0],
+      ['  - Gastos de caja', er.gastos_caja ?? 0],
+      ['  - Gastos fijos prorrateados', er.gastos_fijos_prorrateados ?? 0],
       ['Utilidad neta', er.utilidad_neta ?? 0],
     ]);
   };
@@ -58,7 +61,7 @@ export default function AdminContabilidadPage() {
         </div>
         <div className="admin-toolbar" style={{ marginBottom: 0 }}>
           <RangeFilter value={rango} onChange={setRango} />
-          <button className="admin-btn secondary" onClick={handleExport} disabled={!er}>Export Excel</button>
+          <button className="admin-btn secondary" onClick={handleExport} disabled={!er}>Exportar CSV</button>
         </div>
       </div>
 
@@ -85,9 +88,14 @@ export default function AdminContabilidadPage() {
                     <div className="finance-row"><span>Ticket promedio</span><strong><MoneyText value={er?.ingresos?.ticket_promedio ?? 0} /></strong></div>
                     <div className="finance-row"><span>Ventas</span><strong>{er?.ingresos?.ventas_count ?? 0}</strong></div>
                     <div className="finance-row"><span>Margen bruto</span><strong>{Number(er?.margen_bruto ?? 0).toFixed(2)}%</strong></div>
+                    <div className="finance-row"><span>Food cost</span><strong>{Number(er?.food_cost_pct ?? 0).toFixed(2)}%</strong></div>
+                    <div className="finance-row"><span>Cobrado en caja (efectivo / QR / tarjeta)</span><strong><MoneyText value={(er?.ingresos?.efectivo ?? 0) + (er?.ingresos?.qr ?? 0) + (er?.ingresos?.tarjeta ?? 0)} /></strong></div>
+                    <div className="finance-row"><span>Por cobrar (fiados del periodo)</span><strong><MoneyText value={er?.ingresos?.por_cobrar ?? 0} /></strong></div>
+                    <div className="finance-row"><span>Cobros de fiados anteriores</span><strong><MoneyText value={er?.ingresos?.cobrado?.cobros_fiado ?? 0} /></strong></div>
+                    <div className="finance-row"><span>Gastos fijos prorrateados</span><strong><MoneyText value={er?.gastos_fijos_prorrateados ?? 0} /></strong></div>
                   </div>
                 </div>
-                <ChartCard title="Ingresos por categoria" data={categorias} />
+                <ChartCard title="Movimientos netos por categoria" data={categorias} />
               </div>
 
               <div className="finance-panel span-12">
@@ -123,8 +131,9 @@ export default function AdminContabilidadPage() {
                   <div className="dash-card-header"><h3>Activos</h3></div>
                   <div className="finance-list">
                     <div className="finance-row"><span>Cuentas financieras</span><strong><MoneyText value={balanceData?.activos?.cuentas_financieras ?? 0} /></strong></div>
+                    <div className="finance-row"><span>Inventario valorizado</span><strong><MoneyText value={balanceData?.activos?.inventario ?? 0} /></strong></div>
+                    <div className="finance-row"><span>Cuentas por cobrar (fiados)</span><strong><MoneyText value={balanceData?.activos?.cuentas_por_cobrar ?? 0} /></strong></div>
                     <div className="finance-row"><span>Activos fijos</span><strong><MoneyText value={balanceData?.activos?.activos_fijos ?? 0} /></strong></div>
-                    <div className="finance-row"><span>Inventario</span><strong><MoneyText value={balanceData?.activos?.inventario ?? 0} /></strong></div>
                   </div>
                 </div>
                 <div className="dash-card span-6">
