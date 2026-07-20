@@ -26,8 +26,12 @@ export default function AdminFlujoCajaPage() {
     () => (data?.por_metodo ?? []).map((item: any) => ({ name: item.metodo ?? 'Sin metodo', value: Number(item.monto ?? 0) })),
     [data],
   );
-  const categorias = useMemo(
-    () => (data?.por_categoria ?? []).map((item: any) => ({ name: item.categoria ?? 'Sin categoria', value: Number(item.monto ?? 0) })),
+  const entradasCategoria = useMemo(
+    () => (data?.entradas_por_categoria ?? []).map((item: any) => ({ name: item.categoria ?? 'Sin categoria', value: Number(item.monto ?? 0) })),
+    [data],
+  );
+  const salidasCategoria = useMemo(
+    () => (data?.salidas_por_categoria ?? []).map((item: any) => ({ name: item.categoria ?? 'Sin categoria', value: Number(item.monto ?? 0) })),
     [data],
   );
 
@@ -51,8 +55,9 @@ export default function AdminFlujoCajaPage() {
           </div>
 
           <div className="finance-grid">
-            <ChartCard title="Por metodo" data={metodos} color="#10b981" />
-            <ChartCard title="Por categoria" data={categorias} color="#3b82f6" />
+            <ChartCard title="Por metodo (neto)" data={metodos} color="#3b82f6" />
+            <ChartCard title="Entradas por categoria" data={entradasCategoria} color="#10b981" />
+            <ChartCard title="Salidas por categoria" data={salidasCategoria} color="#e5484d" />
           </div>
 
           <div className="finance-panel span-12">

@@ -215,7 +215,7 @@ describe('POST /api/caja/venta — pago mixto', () => {
     const { flujoCaja } = await import('@/lib/server/finanzas/flujo.service');
     const hoy = new Date();
     const flujo = await flujoCaja({ desde: new Date(hoy.getTime() - 60 * 60 * 1000), hasta: hoy });
-    const catCobro = flujo.por_categoria.find(c => c.categoria === 'Cobro fiado');
+    const catCobro = flujo.entradas_por_categoria.find(c => c.categoria === 'Cobro fiado');
     expect(catCobro).toBeTruthy();
     const movCobro = flujo.movimientos.find(m => m.categoria === 'Cobro fiado' && m.concepto?.includes('Cliente Abono E2E'));
     expect(movCobro?.concepto).toContain('Fiado E2E');
