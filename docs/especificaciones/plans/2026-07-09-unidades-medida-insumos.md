@@ -1,6 +1,6 @@
 # Unidades de Medida Administrables Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> Plan de implementación por tareas; los pasos usan checkboxes (`- [ ]`) para seguimiento.
 
 **Goal:** Reemplazar el enum fijo `Unidad_medida` (KG/GR/UNIDAD/LT/ML) por un catálogo administrable (`UnidadMedida`) que el admin puede crear/editar/desactivar desde el módulo de Insumos, con un botón de alta rápida dentro del formulario de crear/editar insumo.
 

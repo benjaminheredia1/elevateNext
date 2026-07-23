@@ -1,6 +1,6 @@
 # Fotos Opcionales en Productos + Infraestructura Vitest Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> Plan de implementación por tareas; los pasos usan checkboxes (`- [ ]`) para seguimiento.
 
 **Goal:** Permitir publicar un producto sin foto (agregándola después), e introducir Vitest como framework de tests del proyecto, empezando por cubrir este mismo cambio.
 

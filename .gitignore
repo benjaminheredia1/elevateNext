@@ -58,3 +58,15 @@ next-env.d.ts
 
 # Backups de base de datos (datos sensibles, no versionar)
 /backups/
+
+# Documentación interna de desarrollo (no versionar)
+/CLAUDE.md
+/AGENTS.md
+/.agents/
+/.claude/
+/SECTION_SPECS.md
+/context.md
+/implementation_plan.md
+/onboarding_fase6.md
+/pendientes.md
+/actions/
