@@ -1,6 +1,6 @@
 # Horario de Trabajadores Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> Plan de implementación por tareas; los pasos usan checkboxes (`- [ ]`) para seguimiento.
 
 **Goal:** Agregar una sección de administración donde se define y edita, en formato de celdas (tipo hoja de cálculo), el horario semanal de cada usuario de staff (Lunes-Domingo: horario o "Libre"), más una lista simple de días feriados.
 

@@ -86,12 +86,13 @@ const STATUS_META: Record<string, { label: string; color: string; bg: string; ac
 
 function money(value: number) {
   return `Bs ${new Intl.NumberFormat('es-BO', {
-    maximumFractionDigits: 0,
-  }).format(Math.round(value || 0))}`;
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value || 0)}`;
 }
 
 function percent(value: number) {
-  return `${Math.round(value || 0)}%`;
+  return `${new Intl.NumberFormat('es-BO', { maximumFractionDigits: 2 }).format(value || 0)}%`;
 }
 
 function compactTime(value: string) {
