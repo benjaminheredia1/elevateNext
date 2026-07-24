@@ -344,6 +344,46 @@
 .alert-row-qty { font-variant-numeric: tabular-nums; font-size: 0.82rem; color: var(--slate); font-weight: 600; }
 .alert-empty { text-align: center; padding: 24px; color: var(--slate); font-size: 0.88rem; }
 
+/* ===== DONUT LEGEND ===== */
+.donut-legend { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.donut-legend-item { display: flex; align-items: center; gap: 10px; font-size: 0.85rem; }
+.donut-legend-dot { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+.donut-legend-name { flex: 1; color: var(--ink); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.donut-legend-value { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--slate); }
+
+/* ===== MENU ENGINEERING: RECOMMENDATIONS ===== */
+.menu-reco-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 16px; }
+.menu-reco-card { border: 1px solid var(--line, #E4EAE5); border-radius: 12px; padding: 12px 14px; background: var(--canvas, #F7F9F8); }
+.menu-reco-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.menu-reco-count { font-size: 0.78rem; color: var(--slate); font-weight: 600; }
+.menu-reco-text { margin: 0; font-size: 0.82rem; color: var(--ink); line-height: 1.4; }
+.menu-reco-items { margin: 6px 0 0; font-size: 0.76rem; color: var(--slate); }
+@media (max-width: 640px) { .menu-reco-grid { grid-template-columns: 1fr; } }
+
+/* ===== TOP PRODUCTS ===== */
+.top-prod-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.top-prod-item { display: flex; align-items: center; gap: 10px; }
+.top-prod-rank { flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%; background: var(--canvas, #F7F9F8); color: var(--slate); font-size: 0.78rem; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+.top-prod-body { flex: 1; min-width: 0; }
+.top-prod-name { font-size: 0.85rem; font-weight: 500; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.top-prod-bar-track { height: 6px; border-radius: 3px; background: var(--line, #E4EAE5); margin-top: 4px; overflow: hidden; }
+.top-prod-bar { display: block; height: 100%; border-radius: 3px; background: var(--orange, #FF5C19); }
+.top-prod-stats { flex-shrink: 0; text-align: right; display: flex; flex-direction: column; }
+.top-prod-stats strong { font-size: 0.9rem; font-variant-numeric: tabular-nums; color: var(--ink); }
+.top-prod-stats span { font-size: 0.74rem; color: var(--slate); font-variant-numeric: tabular-nums; }
+
+/* ===== FAVORITE PRODUCTS (clientes) ===== */
+.fav-prod-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.fav-prod-item { display: flex; align-items: center; gap: 10px; }
+.fav-prod-rank { flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%; background: var(--canvas, #F7F9F8); color: var(--slate); font-size: 0.78rem; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+.fav-prod-body { flex: 1; min-width: 0; }
+.fav-prod-name { font-size: 0.85rem; font-weight: 500; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fav-prod-bar-track { height: 6px; border-radius: 3px; background: var(--line, #E4EAE5); margin-top: 4px; overflow: hidden; }
+.fav-prod-bar { display: block; height: 100%; border-radius: 3px; background: var(--fresh, #1FA971); }
+.fav-prod-stats { flex-shrink: 0; text-align: right; display: flex; flex-direction: column; }
+.fav-prod-stats strong { font-size: 0.9rem; font-variant-numeric: tabular-nums; color: var(--ink); }
+.fav-prod-stats span { font-size: 0.74rem; color: var(--slate); }
+
 /* ===== FILTERS / SEARCH ===== */
 .admin-filters { display: flex; justify-content: space-between; align-items: center; margin-bottom: 22px; gap: 16px; flex-wrap: wrap; }
 .admin-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }

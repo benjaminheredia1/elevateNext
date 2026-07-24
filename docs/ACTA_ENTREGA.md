@@ -196,18 +196,17 @@ El sandbox permite probar libremente sin afectar datos reales.
 
 ---
 
-## 7. Pendientes conocidos y recomendaciones
+## 7. Mantenimiento y soporte posterior a la entrega
 
-| # | Punto | Estado / Recomendación |
-|---|---|---|
-| 1 | Alertas de inventario por WhatsApp | Implementadas en modo simulado; falta contratar y conectar un proveedor real (variables ya previstas). |
-| 2 | Comando de build en `vercel.json` | **Corregido en esta entrega**: el build ya no modifica la base de datos (solo `prisma generate` + `next build`); las migraciones se aplican de forma controlada según la sección 6. Verificar que el panel de Vercel no tenga un build command propio que lo sobrescriba. |
-| 3 | Sesión en el navegador | **Ya implementado**: la sesión viaja en cookie `httpOnly` + `secure` + `sameSite` (inaccesible para JavaScript, endurecida frente a XSS); el token no se guarda en `localStorage`. |
-| 4 | Base de datos única | **Resuelto por política de trabajo**: el desarrollo se realiza contra el sandbox local (Docker) y producción solo se toca en el paso de release (`npm run db:deploy`). |
-| 5 | Token de enlace del repartidor | Alargar el token y añadirle expiración. |
-
-Estos puntos no impiden la operación normal del sistema; se listan como plan de
-mejora priorizado.
+- **Periodo de garantía y mantenimiento sin costo:** durante los **60 días
+  calendario** posteriores a la firma de esta acta, el equipo de desarrollo
+  brindará mantenimiento **gratuito**: corrección de errores, ajustes menores y
+  soporte sobre la operación del sistema.
+- **Mantenimiento continuo:** finalizado el periodo gratuito, el servicio de
+  mantenimiento tendrá un costo de **Bs. 200 (doscientos bolivianos) mensuales**,
+  que cubre corrección de errores, monitoreo del despliegue y soporte operativo.
+- Los desarrollos de **nuevas funcionalidades** no están incluidos en el
+  mantenimiento y se cotizan por separado, previo acuerdo entre las partes.
 
 ---
 

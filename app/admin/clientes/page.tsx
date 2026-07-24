@@ -203,7 +203,9 @@ export default function ClientesAdminPage() {
   const clienteMasComprador = resumen?.cliente_mas_comprador;
   const clienteMasFrecuente = resumen?.cliente_mas_frecuente;
   const productoMasComprado = resumen?.producto_mas_comprado;
+  const topFavoritos = resumen?.top_favoritos_mes ?? [];
   const topClientes = resumen?.top_clientes_mes ?? [];
+  const maxFavClientes = topFavoritos[0]?.clientes ?? 0;
 
   return (
     <AdminPanel>
@@ -305,16 +307,33 @@ export default function ClientesAdminPage() {
             <div className="finance-panel span-4">
               <div className="finance-panel-header">
                 <div>
-                  <h3>Producto favorito</h3>
-                  <p>Preferencia global del mes</p>
+                  <h3>Productos favoritos</h3>
+                  <p>Preferidos por más clientes este mes</p>
                 </div>
               </div>
-              {productoMasComprado ? (
+              {topFavoritos.length > 0 ? (
+                <ul className="fav-prod-list">
+                  {topFavoritos.map((fav: any, i: number) => (
+                    <li key={fav.producto_id} className="fav-prod-item">
+                      <span className="fav-prod-rank">{i + 1}</span>
+                      <div className="fav-prod-body">
+                        <div className="fav-prod-name">{fav.nombre}</div>
+                        <div className="fav-prod-bar-track">
+                          <span className="fav-prod-bar" style={{ width: `${maxFavClientes > 0 ? (fav.clientes / maxFavClientes) * 100 : 0}%` }} />
+                        </div>
+                      </div>
+                      <div className="fav-prod-stats">
+                        <strong>{fav.clientes}</strong>
+                        <span>{fav.clientes === 1 ? 'cliente' : 'clientes'}</span>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              ) : productoMasComprado ? (
                 <div className="finance-list">
                   <div className="finance-row"><span>Producto</span><strong>{productoMasComprado.nombre}</strong></div>
                   <div className="finance-row"><span>Unidades</span><strong>{Number(productoMasComprado.cantidad).toFixed(0)}</strong></div>
                   <div className="finance-row"><span>Ingresos</span><strong><MoneyText value={productoMasComprado.total} /></strong></div>
-                  <div className="finance-row"><span>Ticket prom.</span><strong><MoneyText value={resumen?.ticket_promedio_mes ?? 0} /></strong></div>
                 </div>
               ) : (
                 <EmptyState title="Sin productos vendidos" />

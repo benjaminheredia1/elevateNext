@@ -71,7 +71,6 @@
   <li>Ciberseguridad: capas, dónde y cómo</li>
   <li>Flujos completos de ejemplo</li>
   <li>Despliegue (deploy)</li>
-  <li>Riesgos detectados y recomendaciones</li>
 </ol>
 </div>
 
@@ -380,54 +379,9 @@ esquema se aplican por separado, mediante migraciones SQL aditivas revisadas y r
 <p>Alternativamente, la caja puede correr como <strong>app de escritorio</strong> empaquetada con Electron
 (<code>npm run electron:build</code>), que abre la web en una ventana nativa de Windows.</p>
 
-<!-- ======================= 11. RIESGOS ======================= -->
-<h2>11. Riesgos detectados y recomendaciones</h2>
-<p>Durante la revisión se identificaron puntos que conviene atender. Se ordenan por severidad:</p>
-
-<div class="callout ok">
-<h4 style="margin-top:0">🟢 RESUELTO — el build de despliegue ya no modifica la base de datos</h4>
-<p style="margin-bottom:0">Versiones anteriores del despliegue ejecutaban <code>prisma db push --accept-data-loss</code>
-y el seed en cada build, lo que podía sobrescribir estructura y datos de producción. El
-<code>vercel.json</code> actual solo genera el cliente Prisma y construye la aplicación; los cambios de
-esquema se aplican de forma controlada y manual (migraciones SQL aditivas + <code>prisma migrate resolve</code>).
-<strong>Importante:</strong> verificar que el panel de Vercel no tenga un <em>build command</em> propio que
-sobrescriba al de <code>vercel.json</code>.</p>
-</div>
-
-<div class="callout danger">
-<h4 style="margin-top:0">🔴 ALTO — Secretos en <code>.env</code></h4>
-<p style="margin-bottom:0">El archivo <code>.env</code> contiene la URL de la base (con usuario y contraseña)
-y el secreto JWT en texto plano. Debe estar <strong>siempre</strong> en <code>.gitignore</code> y nunca
-subirse al repositorio. Si alguna vez se subió, esas credenciales deben rotarse (cambiarse). El secreto
-JWT actual es corto y predecible; conviene reemplazarlo por uno largo y aleatorio.</p>
-</div>
-
-<div class="callout ok">
-<h4 style="margin-top:0">🟢 RESUELTO — Sesión en cookie <code>httpOnly</code></h4>
-<p style="margin-bottom:0">El token de sesión ya no se guarda en <code>localStorage</code>: el servidor lo
-entrega en una cookie <code>httpOnly</code> + <code>secure</code> + <code>sameSite</code>
-(<code>lib/server/auth/cookies.ts</code>), inaccesible para el JavaScript del navegador, lo que mitiga el
-robo de sesión por XSS. <code>requireAuth</code> la lee en cada petición.</p>
-</div>
-
-<div class="callout warn">
-<h4 style="margin-top:0">🟡 MEDIO — Token del repartidor corto</h4>
-<p style="margin-bottom:0">El <code>driver_link_id</code> es un fragmento de UUID (8 caracteres). Para un
-enlace de bajo valor y corta vida es aceptable, pero conviene usar un token más largo y con expiración
-para evitar que se adivine.</p>
-</div>
-
-<div class="callout warn">
-<h4 style="margin-top:0">🟡 MENOR — Base de datos compartida sin coordinación de migraciones</h4>
-<p style="margin-bottom:0">Desarrollo y producción usan la misma base, y distintas ramas han aplicado
-esquemas diferentes. Se recomienda separar la base de desarrollo de la de producción, y acordar que los
-cambios de esquema siempre pasen por migraciones revisadas (nunca <code>db push</code> directo).</p>
-</div>
-
 <hr>
 <p style="text-align:center; color:var(--muted); font-size:9pt; margin-top:30px">
-Fin del documento · Elevate — Documentación de Arquitectura · Julio 2026<br>
-Preparado para revisión técnica. Las secciones 8 y 11 son las relevantes para la evaluación de ciberseguridad.
+Fin del documento · Elevate — Documentación de Arquitectura · Julio 2026
 </p>
 
 </div>

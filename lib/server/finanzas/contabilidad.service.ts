@@ -94,10 +94,11 @@ export async function estadoResultados(rango: RangoFechas, sucursal?: number) {
  *   (stock × costo_promedio de insumos activos) + cuentas por cobrar pendientes.
  * - Pasivos: cuentas por pagar pendientes.
  * - Patrimonio: activos − pasivos.
- * (Activos fijos quedan en 0 hasta que exista el módulo — Fase 4A.)
+ * Los activos fijos son globales (no tienen sucursal), así que se suman
+ * completos aun cuando se filtre por sucursal.
  */
 export async function balanceGeneral(sucursal?: number) {
-  const [cuentas, insumos, cuentasCorrientes] = await Promise.all([
+  const [cuentas, insumos, cuentasCorrientes, activosFijosRows] = await Promise.all([
     prisma.cuentaFinanciera.findMany({
       where: sucursal ? { sucursal_id: sucursal } : {},
     }),
@@ -108,6 +109,10 @@ export async function balanceGeneral(sucursal?: number) {
     prisma.cuentaCorriente.findMany({
       where: { estado: { in: ['PENDIENTE', 'PARCIAL'] } },
       select: { tipo: true, monto: true, monto_pagado: true },
+    }),
+    prisma.activoFijo.findMany({
+      where: { activo: true },
+      select: { valor_actual: true },
     }),
   ]);
 
@@ -132,8 +137,11 @@ export async function balanceGeneral(sucursal?: number) {
     .filter(cc => cc.tipo === 'POR_PAGAR')
     .reduce((sum, cc) => sum.plus(saldoPendiente(cc)), new Prisma.Decimal(0));
 
-  // TODO(Fase 4A): sumar valor neto de ActivoFijo cuando exista el módulo.
-  const activosFijos = new Prisma.Decimal(0);
+  // Valor neto actual de los activos fijos (equipos, muebles, etc.).
+  const activosFijos = activosFijosRows.reduce(
+    (sum, af) => sum.plus(af.valor_actual),
+    new Prisma.Decimal(0),
+  );
 
   const activos = saldosCuentas.plus(inventario.toFixed(2)).plus(porCobrar).plus(activosFijos);
   const patrimonio = activos.minus(porPagar);
