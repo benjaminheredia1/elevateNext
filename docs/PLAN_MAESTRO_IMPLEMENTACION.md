@@ -1,12 +1,12 @@
 # PLAN MAESTRO DE IMPLEMENTACIÓN — Elevate
 
-> Documento padre. Consolida el diagnóstico del sistema actual, el análisis de las
-> imágenes de referencia (`imagesExtra/*` → "Paladar Gestión"), los módulos
-> detectados, su priorización y el roadmap. Los detalles viven en documentos hijos
-> (ver §8).
+> Documento padre. Consolida el diagnóstico del sistema al inicio del proyecto, el
+> análisis de las imágenes de referencia (`imagesExtra/*` → "Paladar Gestión"), los
+> módulos detectados, su priorización y el roadmap. Los detalles viven en documentos
+> hijos (ver §8).
 >
-> **Modo de trabajo:** planning. La ejecución se delega vía `action.md` (una tanda a
-> la vez). Este plan NO implementa código; define el QUÉ y el CÓMO.
+> **Estado (julio 2026):** el plan fue ejecutado; los módulos M1–M14 están
+> implementados y en producción. Se conserva como registro del diseño del sistema.
 
 ---
 
@@ -190,10 +190,10 @@ El detalle por fase, dependencias, riesgos y criterios de aceptación está en
 
 ## 9. Criterios de aceptación globales
 
-- [ ] Un usuario `CAJERO` NO puede acceder a `/admin/*` ni a endpoints de admin.
-- [ ] Un usuario `CLIENTE` solo accede a la tienda y su flujo de pedidos.
-- [ ] Toda operación de caja queda registrada en auditoría con usuario, fecha y monto.
-- [ ] El cierre de caja calcula esperado vs real y persiste la diferencia.
-- [ ] Ningún monto se corrompe por coma flotante (tests de redondeo).
-- [ ] Las APIs validan rol en el servidor, no solo en el cliente.
-- [ ] Migraciones reproducibles; seed de roles y sucursal por defecto.
+- [x] Un usuario `CAJERO` NO puede acceder a `/admin/*` ni a endpoints de admin.
+- [x] Un usuario `CLIENTE` solo accede a la tienda y su flujo de pedidos.
+- [x] Toda operación de caja queda registrada en auditoría con usuario, fecha y monto.
+- [x] El cierre de caja calcula esperado vs real y persiste la diferencia.
+- [x] Ningún monto se corrompe por coma flotante (montos en `Decimal` + tests).
+- [x] Las APIs validan rol en el servidor, no solo en el cliente.
+- [x] Migraciones reproducibles; seed de roles y sucursal por defecto.

@@ -8,6 +8,7 @@ import {
   Cell,
   Pie,
   PieChart,
+  ReferenceLine,
   ResponsiveContainer,
   Scatter,
   ScatterChart,
@@ -71,6 +72,20 @@ function money(value: number) {
     maximumFractionDigits: 0,
   }).format(Math.round(value || 0))}`;
 }
+
+function mediana(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+}
+
+const CLASS_RECO: Record<MenuClass, string> = {
+  Estrella: 'Mantén su calidad y dales protagonismo en el menú: son tus platos populares y rentables.',
+  Caballo: 'Populares pero de bajo margen. Sube el precio con cuidado o reduce su costo de receta.',
+  Puzzle: 'Buen margen pero se venden poco. Promociónalos, mejora su nombre o su ubicación en la carta.',
+  Perro: 'Poco margen y pocas ventas. Rediséñalos, ajústales el precio/costo o considera retirarlos.',
+};
 
 function isoLocal(date: Date) {
   // Fecha local del navegador (el negocio opera en Bolivia): nunca toISOString().
@@ -140,6 +155,24 @@ export default function AnaliticaPage() {
     [analitica],
   );
 
+  // Resumen por clase para el panel de recomendaciones.
+  const claseResumen = useMemo(() => {
+    const items = analitica?.ingenieriaMeniu ?? [];
+    return (Object.keys(menuClassMeta) as MenuClass[]).map(clazz => ({
+      clazz,
+      productos: items.filter(i => i.categoria === clazz).map(i => i.nombre),
+    }));
+  }, [analitica]);
+
+  // Top productos más vendidos del periodo (por unidades).
+  const topVendidos = useMemo(
+    () => [...(analitica?.ingenieriaMeniu ?? [])]
+      .sort((a, b) => b.ventas - a.ventas || b.total_vendido - a.total_vendido)
+      .slice(0, 6),
+    [analitica],
+  );
+  const maxUnidades = topVendidos[0]?.ventas ?? 0;
+
   const matrixData = useMemo(
     () => (analitica?.ingenieriaMeniu ?? []).map(item => ({
       x: item.ventas,
@@ -150,6 +183,10 @@ export default function AnaliticaPage() {
     })),
     [analitica],
   );
+
+  // Medianas del periodo: dividen la matriz en los 4 cuadrantes (mismo criterio que el backend).
+  const medVentas = useMemo(() => mediana(matrixData.map(d => d.x)), [matrixData]);
+  const medMargen = useMemo(() => mediana(matrixData.map(d => d.y)), [matrixData]);
 
   const hasData = !!analitica && (analitica.totalVentas > 0 || analitica.ingenieriaMeniu.length > 0);
 
@@ -230,9 +267,11 @@ export default function AnaliticaPage() {
                         <ScatterChart margin={{ top: 16, right: 24, left: 0, bottom: 16 }}>
                           <CartesianGrid stroke="#E4EAE5" />
                           <XAxis type="number" dataKey="x" name="Ventas" tick={{ fill: '#5C6B63', fontSize: 11 }} axisLine={false} tickLine={false} />
-                          <YAxis type="number" dataKey="y" name="Margen %" tick={{ fill: '#5C6B63', fontSize: 11 }} axisLine={false} tickLine={false} />
+                          <YAxis type="number" dataKey="y" name="Margen %" unit="%" tick={{ fill: '#5C6B63', fontSize: 11 }} axisLine={false} tickLine={false} />
                           <ZAxis range={[100, 100]} />
-                          <Tooltip cursor={{ strokeDasharray: '3 3' }} contentStyle={{ background: '#fff', border: '1px solid #E4EAE5', borderRadius: 10, fontSize: 12 }} />
+                          <ReferenceLine x={medVentas} stroke="#9AA8A0" strokeDasharray="4 4" label={{ value: 'Ventas medianas', position: 'top', fill: '#9AA8A0', fontSize: 10 }} />
+                          <ReferenceLine y={medMargen} stroke="#9AA8A0" strokeDasharray="4 4" label={{ value: 'Margen mediano', position: 'right', fill: '#9AA8A0', fontSize: 10 }} />
+                          <Tooltip cursor={{ strokeDasharray: '3 3' }} content={<MenuTooltip />} />
                           {(Object.keys(CLASS_COLORS) as MenuClass[]).map(clazz => (
                             <Scatter key={clazz} name={clazz} data={matrixData.filter(item => item.clazz === clazz)} fill={CLASS_COLORS[clazz]} />
                           ))}
@@ -243,7 +282,46 @@ export default function AnaliticaPage() {
                           <span key={clazz} className="menu-class-badge">{menuClassMeta[clazz].icon} {clazz}</span>
                         ))}
                       </div>
+                      <div className="menu-reco-grid">
+                        {claseResumen.map(({ clazz, productos }) => (
+                          <div key={clazz} className="menu-reco-card">
+                            <div className="menu-reco-head">
+                              <span className="menu-class-badge">{menuClassMeta[clazz].icon} {clazz}</span>
+                              <span className="menu-reco-count">{productos.length} {productos.length === 1 ? 'plato' : 'platos'}</span>
+                            </div>
+                            <p className="menu-reco-text">{CLASS_RECO[clazz]}</p>
+                            {productos.length > 0 && (
+                              <p className="menu-reco-items">{productos.slice(0, 4).join(', ')}{productos.length > 4 ? `, +${productos.length - 4}` : ''}</p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
                     </>
+                  )}
+                </div>
+
+                <div className="dash-card span-4">
+                  <div className="dash-card-header"><h3>Top más vendidos</h3><span className="dash-card-sub">Por unidades</span></div>
+                  {topVendidos.length === 0 ? (
+                    <div className="alert-empty">Sin ventas en el periodo.</div>
+                  ) : (
+                    <ul className="top-prod-list">
+                      {topVendidos.map((p, i) => (
+                        <li key={p.producto_id} className="top-prod-item">
+                          <span className="top-prod-rank">{i + 1}</span>
+                          <div className="top-prod-body">
+                            <div className="top-prod-name">{p.nombre}</div>
+                            <div className="top-prod-bar-track">
+                              <span className="top-prod-bar" style={{ width: `${maxUnidades > 0 ? (p.ventas / maxUnidades) * 100 : 0}%` }} />
+                            </div>
+                          </div>
+                          <div className="top-prod-stats">
+                            <strong>{p.ventas}</strong>
+                            <span>{money(p.total_vendido)}</span>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
                   )}
                 </div>
 
@@ -281,6 +359,20 @@ export default function AnaliticaPage() {
   );
 }
 
+function MenuTooltip({ active, payload }: { active?: boolean; payload?: any[] }) {
+  if (!active || !payload || payload.length === 0) return null;
+  const p = payload[0]?.payload;
+  if (!p) return null;
+  return (
+    <div style={{ background: '#fff', border: '1px solid #E4EAE5', borderRadius: 10, fontSize: 12, padding: '8px 10px' }}>
+      <div style={{ fontWeight: 600, marginBottom: 4 }}>{p.name}</div>
+      <div>Unidades: <strong>{p.x}</strong></div>
+      <div>Margen: <strong>{Math.round(p.y)}%</strong></div>
+      <div style={{ color: p.color, fontWeight: 600, marginTop: 2 }}>{menuClassMeta[p.clazz as MenuClass].icon} {p.clazz}</div>
+    </div>
+  );
+}
+
 function DonutCard({ title, data }: { title: string; data: { name: string; value: number }[] }) {
   return (
     <div className="dash-card span-4">
@@ -288,14 +380,25 @@ function DonutCard({ title, data }: { title: string; data: { name: string; value
       {data.length === 0 ? (
         <div className="alert-empty">Sin datos del periodo.</div>
       ) : (
-        <ResponsiveContainer width="100%" height={230}>
-          <PieChart>
-            <Pie data={data} dataKey="value" nameKey="name" innerRadius="58%" outerRadius="84%" paddingAngle={2}>
-              {data.map((_, index) => <Cell key={index} fill={PALETTE[index % PALETTE.length]} />)}
-            </Pie>
-            <Tooltip contentStyle={{ background: '#fff', border: '1px solid #E4EAE5', borderRadius: 10, fontSize: 12 }} formatter={(value) => money(Number(value ?? 0))} />
-          </PieChart>
-        </ResponsiveContainer>
+        <>
+          <ResponsiveContainer width="100%" height={230}>
+            <PieChart>
+              <Pie data={data} dataKey="value" nameKey="name" innerRadius="58%" outerRadius="84%" paddingAngle={2}>
+                {data.map((_, index) => <Cell key={index} fill={PALETTE[index % PALETTE.length]} />)}
+              </Pie>
+              <Tooltip contentStyle={{ background: '#fff', border: '1px solid #E4EAE5', borderRadius: 10, fontSize: 12 }} formatter={(value) => money(Number(value ?? 0))} />
+            </PieChart>
+          </ResponsiveContainer>
+          <ul className="donut-legend">
+            {data.map((item, index) => (
+              <li key={item.name} className="donut-legend-item">
+                <span className="donut-legend-dot" style={{ background: PALETTE[index % PALETTE.length] }} />
+                <span className="donut-legend-name">{item.name}</span>
+                <span className="donut-legend-value">{money(item.value)}</span>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
     </div>
   );

@@ -87,6 +87,20 @@ export async function registrarMovimientoManual(
     const cuenta = await getCuenta(tx, sucursal_id, dto.metodo_pago as TipoCuenta);
     const signed = tipo === 'GASTO_OPERATIVO' ? -Math.abs(dto.monto) : Math.abs(dto.monto);
 
+    // El efectivo físico no puede quedar negativo: si falta plata para el gasto,
+    // primero hay que registrar de dónde salió (Ingreso extra). Otras cuentas
+    // (QR/banco/tarjeta) sí pueden ir en negativo por desfases de conciliación.
+    if (
+      tipo === 'GASTO_OPERATIVO' &&
+      dto.metodo_pago === TipoCuenta.EFECTIVO &&
+      cuenta.saldo.plus(signed).lessThan(0)
+    ) {
+      throw new ValidationError(
+        `Saldo insuficiente en EFECTIVO (Bs ${cuenta.saldo.toFixed(2)}). ` +
+          `Si recibiste dinero para este pago, regístralo primero como Ingreso extra.`,
+      );
+    }
+
     const mov = await tx.movimientoCaja.create({
       data: {
         turno_id: turno.id,

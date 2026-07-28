@@ -91,9 +91,9 @@ Una venta **fiada** entrega el producto pero deja el pago pendiente: se crea una
 
 Venta marcada como **cortesía**: se entrega el producto sin cobro y **no impacta la caja** (regalo, degustación, compensación). Descuenta stock igual que cualquier venta.
 
-### 2.8 Privilegios (descuentos por cliente)
+### 2.8 Privilegios (descuentos por venta)
 
-Un **privilegio** es un descuento porcentual asignado a un cliente (p. ej. "Socio VIP −15%"). Cuando ese cliente compra, el sistema aplica automáticamente **el privilegio activo de mayor porcentaje**. El descuento reduce el total cobrado (y, si es fiado, también reduce la deuda).
+Un **privilegio** es un descuento porcentual definido por el negocio (p. ej. "Socio VIP −15%"). El **cajero elige, como máximo, un privilegio por venta** al momento de cobrar (requiere cliente registrado); el servidor recalcula el total con ese porcentaje. Si al vender se olvidó aplicarlo, también puede aplicarse **después sobre una deuda de fiado**: reduce el saldo pendiente sin tocar la caja, una sola vez por deuda.
 
 ### 2.9 Marcas
 
@@ -271,13 +271,14 @@ Registra una venta en salón (`SALON`). El proceso:
 1. Se agregan productos; el **total se calcula en el servidor** con los precios reales (no se confía en el navegador).
 2. Se rechazan productos no disponibles y totales ≤ 0.
 3. Se identifica al **cliente**: registrado (buscándolo), con datos nuevos, o **anónimo** (venta de mostrador sin datos).
-4. **Descuento por privilegio:** si el cliente tiene privilegios activos, se aplica el de **mayor porcentaje** automáticamente, y se anota el código de descuento (p. ej. "Privilegio: Socio VIP (−15%)").
+4. **Descuento por privilegio:** el cajero puede elegir **un** privilegio activo para la venta (requiere cliente registrado). El servidor valida el privilegio, recalcula el total y anota el código de descuento (p. ej. "Privilegio: Socio VIP (−15%)").
 5. Se elige la modalidad:
-   - **Venta normal:** entra el dinero a la caja (efectivo o QR), queda `PAGADO`.
+   - **Venta normal:** entra el dinero a la caja — efectivo, QR, tarjeta o **pago mixto** (efectivo + QR con desglose validado en el servidor) — y queda `PAGADO`.
    - **Cortesía:** se entrega sin cobro; **no** impacta la caja.
    - **Fiado:** se entrega, pero el pago queda pendiente como **Cuenta por Cobrar** (requiere cliente registrado; no puede ser cortesía ni anónimo).
 6. La venta **descuenta stock automáticamente** vía recetas.
-7. Queda registrada en auditoría con su marca (`fiado`, `cortesía` o normal).
+7. La venta recibe un **número correlativo por turno** (`#1..#n` desde la apertura), visible en venta, pedidos, movimientos e historial; el índice único en la base garantiza que no se repita aunque operen dos cajeros a la vez.
+8. Queda registrada en auditoría con su marca (`fiado`, `cortesía` o normal).
 
 > **Protección anti-errores:** la venta tiene límite de frecuencia (máx. 3 ventas en 10 segundos) para evitar duplicados por doble clic.
 
@@ -308,10 +309,14 @@ Al terminar el turno el cajero **cuenta el dinero real** y lo declara:
 
 - Lista todas las **cuentas por cobrar pendientes** (fiados), con el cliente, el saldo, el vencimiento y si está **vencida**.
 - Muestra un **resumen**: saldo total pendiente, número de cuentas y cuántas están vencidas.
-- Permite **cobrar** una deuda (total o parcial) en efectivo o QR. El pago:
+- Al abrir la **cuenta de un deudor** se ve la venta de origen (productos y precios), los **pagos anteriores** y se puede hacer un **cobro selectivo**: se eligen qué deudas cobrar y lo no seleccionado queda pendiente.
+- Cada cobro queda en un **historial inmutable de pagos** (monto, método, quién cobró y cuándo).
+- Permite **cobrar** una deuda (total o parcial) en efectivo, QR, tarjeta o **pago mixto** (efectivo + QR). El pago:
   - Actualiza la deuda (`PARCIAL` o `PAGADA`).
   - **Ingresa dinero real** al turno abierto (impacta el cuadre).
   - No permite cobrar más que el saldo pendiente.
+  - Al saldarse la deuda, la venta fiada de origen se marca **`PAGADO`** en caja y admin. A la inversa, un pedido con deuda pendiente **no puede marcarse pagado** a mano (el sistema lo rechaza).
+- También permite aplicar un **privilegio (descuento) sobre la deuda** si se olvidó aplicarlo en la venta: reduce el saldo sin tocar la caja y solo puede hacerse una vez por deuda.
 
 ### 7.11 Repartidores del turno (conciliación)
 
@@ -412,10 +417,10 @@ Registro de bienes del negocio (equipos, mobiliario): fecha de compra, valor ori
 ### Grupo: Gestión
 
 #### 8.17 Clientes (`/admin/clientes`)
-Base única de clientes: datos de contacto, NIT, dirección, historial. Incluye **deduplicación / fusión** de clientes duplicados (por teléfono, email o NIT) y asignación de **privilegios** por cliente.
+Base única de clientes: datos de contacto, NIT, dirección, historial. Incluye **deduplicación / fusión** de clientes duplicados (por teléfono, email o NIT).
 
 #### 8.18 Privilegios (`/admin/privilegios`)
-Definición de descuentos porcentuales (nombre, descripción, porcentaje, activo). Estos privilegios se asignan a clientes y se aplican automáticamente en la venta.
+Definición de descuentos porcentuales (nombre, descripción, porcentaje, activo). El cajero elige uno de estos privilegios al registrar una venta (o lo aplica después sobre una deuda de fiado).
 
 #### 8.19 Horarios / Promociones (`/admin/reglasHorarias`)
 Reglas horarias que activan **promociones y descuentos** en rangos de fecha/hora. Determinan cuándo un producto se muestra con precio rebajado en la tienda.

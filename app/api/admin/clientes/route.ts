@@ -133,6 +133,20 @@ export async function GET(req: NextRequest) {
       .sort((a, b) => b.pedidos_mes - a.pedidos_mes || b.gastado_mes - a.gastado_mes)[0] ?? null;
     const productoMasComprado = topProductFromTransactions(globalMonthTxs);
 
+    // Productos favoritos: cuántos clientes tienen cada producto como su favorito del mes.
+    const favoritosMap = new Map<number, { producto_id: number; nombre: string; clientes: number; unidades: number }>();
+    for (const c of items) {
+      const fav = c.producto_favorito_mes;
+      if (!fav) continue;
+      const prev = favoritosMap.get(fav.producto_id) ?? { producto_id: fav.producto_id, nombre: fav.nombre, clientes: 0, unidades: 0 };
+      prev.clientes += 1;
+      prev.unidades += Number(fav.cantidad ?? 0);
+      favoritosMap.set(fav.producto_id, prev);
+    }
+    const topFavoritos = Array.from(favoritosMap.values())
+      .sort((a, b) => b.clientes - a.clientes || b.unidades - a.unidades)
+      .slice(0, 5);
+
     return NextResponse.json({
       items,
       resumen: {
@@ -147,6 +161,7 @@ export async function GET(req: NextRequest) {
         cliente_mas_comprador: clienteMasComprador,
         cliente_mas_frecuente: clienteMasFrecuente,
         producto_mas_comprado: productoMasComprado,
+        top_favoritos_mes: topFavoritos,
         top_clientes_mes: clientesActivosMes
           .slice()
           .sort((a, b) => b.gastado_mes - a.gastado_mes || b.pedidos_mes - a.pedidos_mes)
