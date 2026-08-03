@@ -1,0 +1,36 @@
+# Lo que NUNCA debe entrar a la imagen
+.env
+.env.*
+!.env.example
+!.env.dev.example
+!.env.test.example
+.whatsapp-auth/
+backups/
+
+# Pesado o regenerable dentro del build
+node_modules
+.next
+out
+build
+dist
+.claude
+.git
+.github
+.vscode
+.idea
+
+# Artefactos de desarrollo que no hacen falta en producción
+docs
+actions
+scripts
+*.md
+!README.md
+Dockerfile
+.dockerignore
+docker-compose*.yml
+coverage
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+*.tsbuildinfo

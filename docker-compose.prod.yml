@@ -1,0 +1,33 @@
+# Despliegue de Elevate en un servidor propio.
+#
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# Requiere un archivo `.env.produccion` al lado (no se commitea) con:
+#   DATABASE_URL=postgresql://usuario:clave@host:5432/elevate
+#   DIRECT_URL=postgresql://usuario:clave@host:5432/elevate
+#   SECRET_JWT=<secreto largo y aleatorio>
+#   SALT_ROUNDS=10
+#   NEXT_PUBLIC_APP_URL=https://tu-dominio
+#   NEXT_PUBLIC_API_URL=https://tu-dominio
+#
+# Las migraciones NO se aplican solas a propósito (la BD es compartida). Se
+# corren a mano, ver README-docker.md.
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: elevate-app:latest
+    restart: unless-stopped
+    env_file:
+      - .env.produccion
+    ports:
+      - "3000:3000"
+    volumes:
+      # SIN ESTO se pierde el pareo de WhatsApp en cada reinicio del
+      # contenedor y hay que volver a escanear el QR.
+      - whatsapp_auth:/data/whatsapp-auth
+
+volumes:
+  whatsapp_auth:

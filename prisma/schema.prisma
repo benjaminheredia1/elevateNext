@@ -1004,10 +1004,35 @@ model DiaFeriado {
   @@unique([fecha, sucursal_id])
 }
 
-model WhatsappMessage { 
+model WhatsappMessage {
   id          Int       @id @default(autoincrement())
   phoneNumber String
   content     String
   timestamp   DateTime  @default(now())
   created_at  DateTime  @default(now())
+}
+
+enum EstadoMensajeWhatsapp {
+  PENDIENTE
+  ENVIADO
+  FALLIDO
+}
+
+/**
+ * Cola de avisos de WhatsApp. Un pedido que entra mientras la sesión está caída
+ * no se pierde: queda acá y se manda apenas WhatsApp vuelve. Las filas ENVIADO
+ * se conservan como historial de lo que llegó tarde.
+ */
+model WhatsappPendiente {
+  id           Int                   @id @default(autoincrement())
+  jid          String
+  texto        String
+  estado       EstadoMensajeWhatsapp @default(PENDIENTE)
+  intentos     Int                   @default(0)
+  ultimo_error String?
+  created_at   DateTime              @default(now())
+  enviado_at   DateTime?
+
+  // El drenado siempre pide PENDIENTE ordenados por antigüedad.
+  @@index([estado, created_at])
 }

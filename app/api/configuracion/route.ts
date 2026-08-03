@@ -4,8 +4,12 @@ import { guard, ADMIN } from '@/lib/server/auth/guard';
 
 export async function GET() {
   try {
+    // Este endpoint es PÚBLICO (lo consume la tienda y el link del repartidor):
+    // solo puede devolver los datos de la sucursal. Nada de `whatsapp_grupo_jid`
+    // ni otras columnas internas que se agreguen después a esta tabla.
     const config = await prisma.configuracion.findUnique({
       where: { id: 1 },
+      select: { id: true, sucursal_lat: true, sucursal_lng: true, sucursal_nombre: true },
     });
     
     // Default fallback to Santa Cruz if not set
