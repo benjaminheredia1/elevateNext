@@ -2,6 +2,8 @@ import { describe, it, expect, afterAll } from 'vitest';
 import { NextRequest } from 'next/server';
 import { GET } from './route';
 import prisma from '@/lib/prisma';
+import { habilitarProductoEnSucursal } from '@/lib/server/productos/catalogo-sucursal.service';
+import { sucursalPorDefectoId } from '@/lib/server/sucursales/sucursal.service';
 
 describe('GET /api/productos (tienda)', () => {
   const createdIds: number[] = [];
@@ -43,6 +45,7 @@ describe('GET /api/productos (tienda)', () => {
       },
     });
     createdIds.push(producto.id);
+    await habilitarProductoEnSucursal(producto.id, await sucursalPorDefectoId());
 
     const response = await GET(new NextRequest('http://localhost/api/productos'));
     const body = await response.json();
@@ -74,10 +77,11 @@ describe('GET /api/productos (tienda)', () => {
         precio: 25,
         estado_publicacion: 'PUBLICADO',
         disponible: true,
-        recetaProducto_id: { create: [{ insumo_id: insumo.id, cantidad_utilizada: 100 }] },
+        recetaProducto_id: { create: [{ insumo_id: insumo.id, sucursal_id: await sucursalPorDefectoId(), cantidad_utilizada: 100 }] },
       },
     });
     createdIds.push(producto.id);
+    await habilitarProductoEnSucursal(producto.id, await sucursalPorDefectoId());
 
     const response = await GET(new NextRequest('http://localhost/api/productos'));
     expect(response.status).toBe(200);

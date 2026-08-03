@@ -7,6 +7,9 @@ export interface Privilegio {
   descripcion?: string | null;
   porcentaje: number;
   activo: boolean;
+  /** `null` = privilegio del negocio: vale en todas las sucursales. */
+  sucursal_id?: number | null;
+  sucursal?: { id: number; nombre: string } | null;
 }
 
 export interface PrivilegioPayload {
@@ -15,6 +18,8 @@ export interface PrivilegioPayload {
   descripcion?: string;
   porcentaje: number;
   activo?: boolean;
+  /** Sucursal donde vale. `null` = privilegio del negocio, vale en todas. */
+  sucursal_id?: number | null;
 }
 
 export function usePrivilegios(incluirInactivos = false) {

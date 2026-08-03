@@ -1,11 +1,16 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import apiClient from '@/hooks/api';
 import {
   foodCostColor, classifyMenu, menuClassMeta, buildablePortions,
 } from './inventoryData';
-import AdminProductWizard, { type WizardInitial } from './AdminProductWizard';
+import AdminProductWizard, { type WizardInitial, type CampoHeredable } from './AdminProductWizard';
+import ProductoSucursalesModal from './ProductoSucursalesModal';
+import SucursalSelector from '@/components/ui/SucursalSelector';
+import CopiarProductosModal from '@/components/admin/CopiarProductosModal';
+import { useSucursales } from '@/hooks/sucursales';
+import { useSucursalAdmin } from '@/hooks/sucursal-admin';
 
 type Tipo = 'ELABORADO' | 'REVENTA';
 type Estado = 'BORRADOR' | 'PUBLICADO' | 'ARCHIVADO' | 'BAJA';
@@ -24,6 +29,8 @@ interface ApiProducto {
   calorias: number | null;
   proteina: string | null;
   motivo_baja: string | null;
+  /** Estado en la sucursal consultada. `null` si no está habilitado ahí. */
+  sucursal_estado?: { disponible: boolean; motivo_baja: string | null; fecha_baja: string | null } | null;
   fecha_baja: string | null;
   en_revision: boolean;
   revision_desde: string | null;
@@ -31,10 +38,13 @@ interface ApiProducto {
   insumo_causa_revision_id: number | null;
   categoria_id: { categoria: { id: number; nombre: string } }[];
   marcas: { marca: { id: number; nombre: string } }[];
+  /** Qué campos toma del catálogo en la sucursal consultada. */
+  heredado?: Partial<Record<CampoHeredable, boolean>>;
   recetaProducto_id: {
     insumo_id: number;
     cantidad_utilizada: number;
-    insumo?: { stock_actual: number; costo_promedio: number; unidad_medida: string; nombre: string };
+    // `stocks` viene filtrado por la sucursal consultada.
+    insumo?: { stock_actual: number; costo_promedio: number; unidad_medida: string; nombre: string; stocks?: { stock_actual: number }[] };
   }[];
   costo_calculado: number;
   food_cost_pct: number;
@@ -55,7 +65,18 @@ export default function AdminProducts() {
   const [filterCat, setFilterCat] = useState('Todos');
   const [filterPub, setFilterPub] = useState<string>('todos');
   const [wizard, setWizard] = useState<WizardInitial | null>(null);
-  const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
+  // Local de referencia para el precio, el costo y el rinde de la lista. Sale
+  // del store del panel: es la misma que muestra la barra lateral, y tenerla
+  // acá evita la copia local que había que sincronizar con un efecto.
+  const { sucursal, setSucursal, listo } = useSucursalAdmin();
+  const { data: sucursales = [] } = useSucursales();
+  // Solo se nombra cuando hay más de un local: con uno solo sería ruido.
+  const nombreSucursal = sucursales.length > 1
+    ? sucursales.find(s => String(s.id) === sucursal)?.nombre
+    : null;
+  const [sucursalesDe, setSucursalesDe] = useState<{ id: number; nombre: string; precio: number } | null>(null);
+  const [copiarAbierto, setCopiarAbierto] = useState(false);
+  const [quitarConfirm, setQuitarConfirm] = useState<number | null>(null);
   const [bajaConfirm, setBajaConfirm] = useState<number | null>(null);
   const [bajaMotivo, setBajaMotivo] = useState('');
   const [dbCategorias, setDbCategorias] = useState<string[]>(['Todos']);
@@ -63,15 +84,32 @@ export default function AdminProducts() {
   const [vista, setVista] = useState<'activos' | 'en-revision' | 'eliminados'>('activos');
   const [restoreConfirm, setRestoreConfirm] = useState<number | null>(null);
 
+  /**
+   * Número del pedido en curso. Al abrir la pantalla se dispara una carga con
+   * la sucursal todavía sin resolver (que devuelve el catálogo completo) y otra
+   * apenas el panel dice en qué local estamos. Sin esto, la primera —más pesada
+   * porque trae todo— podía llegar después y pisar a la correcta: la pantalla
+   * decía "Sucursal Sur" y listaba los productos de Fitbull hasta recargar.
+   */
+  const pedido = useRef(0);
+
   const load = () => {
+    const mio = ++pedido.current;
     setLoading(true);
-    apiClient.get('/api/admin/productos')
-      .then(res => setProductos(res.data?.data ?? []))
-      .catch(() => setProductos([]))
-      .finally(() => setLoading(false));
+    apiClient.get(`/api/admin/productos${sucursal ? `?sucursal=${sucursal}` : ''}`)
+      .then(res => {
+        // Respuesta de una carga vieja: la descarta, ya hay otra más nueva.
+        if (mio !== pedido.current) return;
+        setProductos(res.data?.data ?? []);
+      })
+      .catch(() => { if (mio === pedido.current) setProductos([]); })
+      .finally(() => { if (mio === pedido.current) setLoading(false); });
   };
 
   useEffect(() => {
+    // Sin la sucursal resuelta no se pide nada: el pedido saldría sin local y
+    // traería el catálogo de todo el negocio.
+    if (!listo) return;
     load();
     apiClient.get('/api/categoria')
       .then(r => {
@@ -79,13 +117,26 @@ export default function AdminProducts() {
         setDbCategorias(['Todos', ...new Set(cats.map(c => c.nombre))]);
       })
       .catch(() => setDbCategorias(['Todos']));
-  }, []);
+    // El precio, el costo y el rinde dependen del local: se recarga al cambiarlo.
+  }, [sucursal, listo]);
 
   // Los productos en BAJA son la "eliminación lógica": no aparecen entre los activos,
   // ni en la tienda, ni en caja, hasta que se restauren desde la pestaña Eliminados.
-  const activos = useMemo(() => productos.filter(p => p.estado_publicacion !== 'BAJA' && !p.en_revision), [productos]);
+  // Con una sucursal elegida, "dado de baja" se lee del estado local; en el
+  // consolidado, del estado del catálogo.
+  const deBajaAca = (p: ApiProducto) =>
+    sucursal ? p.sucursal_estado?.disponible === false : p.estado_publicacion === 'BAJA';
+  const activos = useMemo(
+    () => productos.filter(p => !deBajaAca(p) && p.estado_publicacion !== 'BAJA' && !p.en_revision),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [productos, sucursal],
+  );
   const enRevision = useMemo(() => productos.filter(p => p.en_revision), [productos]);
-  const eliminados = useMemo(() => productos.filter(p => p.estado_publicacion === 'BAJA'), [productos]);
+  const eliminados = useMemo(
+    () => productos.filter(p => deBajaAca(p) || p.estado_publicacion === 'BAJA'),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [productos, sucursal],
+  );
 
   const publicados = activos.filter(p => p.estado_publicacion === 'PUBLICADO').length;
 
@@ -111,7 +162,12 @@ export default function AdminProducts() {
   const setEstado = async (id: number, estado: Estado) => {
     setActionError('');
     try {
-      await apiClient.patch(`/api/admin/productos/${id}`, { estado_publicacion: estado });
+      // Con una sucursal elegida, publicar/archivar es DE ESE LOCAL: el menú de
+      // las demás sucursales no se toca.
+      await apiClient.patch(`/api/admin/productos/${id}`, {
+        estado_publicacion: estado,
+        ...(sucursal ? { sucursal_id: Number(sucursal) } : {}),
+      });
       load();
     } catch (e: unknown) {
       const err = e as { response?: { data?: { error?: string } } };
@@ -120,11 +176,22 @@ export default function AdminProducts() {
     }
   };
 
+  /**
+   * Da de baja el producto. Con una sucursal elegida la baja es DE ESE LOCAL:
+   * sale de su menú con motivo y se puede restaurar, sin tocar a las demás.
+   * Sin sucursal (dueño en consolidado) sigue siendo la baja del catálogo.
+   */
   const darDeBaja = async (id: number) => {
     if (!bajaMotivo.trim()) return;
     setActionError('');
     try {
-      await apiClient.patch(`/api/admin/productos/${id}`, { estado_publicacion: 'BAJA', motivo: bajaMotivo.trim() });
+      if (sucursal) {
+        await apiClient.patch(`/api/admin/productos/${id}/sucursales`, {
+          accion: 'BAJA', sucursal_id: Number(sucursal), motivo: bajaMotivo.trim(),
+        });
+      } else {
+        await apiClient.patch(`/api/admin/productos/${id}`, { estado_publicacion: 'BAJA', motivo: bajaMotivo.trim() });
+      }
       setBajaConfirm(null);
       setBajaMotivo('');
       load();
@@ -136,33 +203,40 @@ export default function AdminProducts() {
     }
   };
 
-  const remove = async (id: number) => {
+  /**
+   * Saca el producto del menú de la sucursal que se está viendo. No lo borra del
+   * catálogo: en los otros locales sigue igual, con su precio y su historial.
+   */
+  const quitarDeSucursal = async (id: number) => {
+    if (!sucursal) return;
     setActionError('');
     try {
-      await apiClient.delete(`/api/admin/productos/${id}`);
-      setDeleteConfirm(null);
+      const res = await apiClient.delete(`/api/admin/productos/${id}/sucursales`, {
+        data: { sucursal_id: Number(sucursal) },
+      });
+      setQuitarConfirm(null);
+      if (res.data?.data?.modo === 'DESHABILITADO') {
+        setActionError(`Tiene ${res.data.data.ventas} venta(s) en ${nombreSucursal ?? 'esta sucursal'}, así que no se borra su ficha: quedó marcado como no disponible acá.`);
+        setTimeout(() => setActionError(''), 8000);
+      }
       load();
     } catch (e: unknown) {
-      const err = e as { response?: { status?: number; data?: { error?: string } } };
-      setDeleteConfirm(null);
-      if (err?.response?.status === 409) {
-        // Tiene ventas: no se puede borrar físicamente sin romper el historial.
-        // Se ofrece la baja (eliminación lógica) en su lugar.
-        setBajaConfirm(id);
-        setBajaMotivo('');
-        setActionError('El producto tiene ventas registradas, así que no puede borrarse definitivamente. Indica el motivo y se moverá a "Eliminados" (podrás restaurarlo después).');
-        setTimeout(() => setActionError(''), 8000);
-      } else {
-        setActionError(err?.response?.data?.error ?? 'No se pudo eliminar. El producto puede tener pedidos asociados.');
-        setTimeout(() => setActionError(''), 5000);
-      }
+      const err = e as { response?: { data?: { error?: string } } };
+      setQuitarConfirm(null);
+      setActionError(err?.response?.data?.error ?? 'No se pudo quitar el producto de esta sucursal.');
+      setTimeout(() => setActionError(''), 6000);
     }
   };
 
   const resolverRevision = async (id: number) => {
     setActionError('');
+    if (!sucursal) {
+      setActionError('Elegí una sucursal: la revisión se resuelve en el local donde se abrió.');
+      setTimeout(() => setActionError(''), 5000);
+      return;
+    }
     try {
-      await apiClient.patch(`/api/productos/${id}/resolver-revision`);
+      await apiClient.patch(`/api/productos/${id}/resolver-revision`, { sucursal_id: Number(sucursal) });
       load();
     } catch (e: unknown) {
       const err = e as { response?: { data?: { error?: string } } };
@@ -174,8 +248,15 @@ export default function AdminProducts() {
   const restaurar = async (id: number) => {
     setActionError('');
     try {
-      // Vuelve como BORRADOR: no se muestra en tienda ni en caja hasta que se publique.
-      await apiClient.patch(`/api/admin/productos/${id}`, { estado_publicacion: 'BORRADOR' });
+      if (sucursal) {
+        // Vuelve al menú de este local, sin tocar el estado del catálogo.
+        await apiClient.patch(`/api/admin/productos/${id}/sucursales`, {
+          accion: 'RESTAURAR', sucursal_id: Number(sucursal),
+        });
+      } else {
+        // Vuelve como BORRADOR: no se muestra en tienda ni en caja hasta publicarse.
+        await apiClient.patch(`/api/admin/productos/${id}`, { estado_publicacion: 'BORRADOR' });
+      }
       setRestoreConfirm(null);
       load();
     } catch (e: unknown) {
@@ -206,6 +287,8 @@ export default function AdminProducts() {
     marcas: p.marcas.map(m => m.marca.id),
     receta: p.recetaProducto_id.map(r => ({ insumo_id: r.insumo_id, cantidad_utilizada: r.cantidad_utilizada })),
     insumo_reventa_id: p.insumo_reventa_id,
+    // Qué campos toma del catálogo, para que el wizard lo diga en pantalla.
+    heredado: p.heredado,
   });
 
   return (
@@ -213,9 +296,24 @@ export default function AdminProducts() {
       <div className="admin-page-header">
         <div>
           <h1>Productos</h1>
-          <p>{activos.length} productos · {publicados} publicados{enRevision.length > 0 ? ` · ${enRevision.length} en revisión` : ''}{eliminados.length > 0 ? ` · ${eliminados.length} eliminados` : ''}</p>
+          <p>
+            {activos.length} productos · {publicados} publicados{enRevision.length > 0 ? ` · ${enRevision.length} en revisión` : ''}{eliminados.length > 0 ? ` · ${eliminados.length} eliminados` : ''}
+            {/* Precio, costo y rinde son de este local: decirlo evita leer los
+                números de una sucursal creyendo que son de otra. */}
+            {nombreSucursal && <> · precios y rinde de <strong>{nombreSucursal}</strong></>}
+          </p>
         </div>
-        <button className="admin-btn primary" onClick={openCreate}>+ Nuevo Producto</button>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
+          {/* El precio, el costo y el rinde son siempre de UN local: sumarlos
+              entre sucursales daría un número que no existe en ninguna. */}
+          <SucursalSelector value={sucursal} onChange={setSucursal} permitirTodas={false} />
+          {/* Un local nuevo arranca sin catálogo: este es el camino para llenarlo
+              sin duplicar productos con el mismo nombre. */}
+          {sucursales.length > 1 && sucursal && (
+            <button className="admin-btn" onClick={() => setCopiarAbierto(true)}>Agregar de otra sucursal</button>
+          )}
+          <button className="admin-btn primary" onClick={openCreate}>+ Nuevo Producto</button>
+        </div>
       </div>
 
       <div className="admin-cat-filters" style={{ marginBottom: 16 }}>
@@ -381,7 +479,8 @@ export default function AdminProducts() {
               const noRecipe = p.tipo === 'ELABORADO' && p.recetaProducto_id.length === 0;
               const rinde = p.tipo === 'REVENTA'
                 ? '—'
-                : buildablePortions(p.recetaProducto_id.map(r => ({ stock: r.insumo?.stock_actual ?? 0, cantidad: r.cantidad_utilizada })));
+                // El rinde es el del local seleccionado, no el total del negocio.
+                : buildablePortions(p.recetaProducto_id.map(r => ({ stock: r.insumo?.stocks?.[0]?.stock_actual ?? 0, cantidad: r.cantidad_utilizada })));
               const pub = p.estado_publicacion;
               return (
                 <tr key={p.id}>
@@ -404,6 +503,13 @@ export default function AdminProducts() {
                   <td>
                     <div className="action-btns">
                       <button className="action-btn edit" onClick={() => openEdit(p)} title="Editar">{EditIcon}</button>
+                      <button
+                        className="action-btn"
+                        onClick={() => setSucursalesDe({ id: p.id, nombre: p.nombre, precio: Number(p.precio) })}
+                        title="Sucursales: dónde se vende, a qué precio"
+                      >
+                        🏬
+                      </button>
                       {pub === 'PUBLICADO'
                         ? <button className="action-btn" onClick={() => setEstado(p.id, 'ARCHIVADO')} title="Archivar (pausar venta — vuelve al menú cuando quieras)">⏸</button>
                         : <button className="action-btn" onClick={() => setEstado(p.id, 'PUBLICADO')} title="Publicar al menú">▶</button>}
@@ -421,15 +527,35 @@ export default function AdminProducts() {
                           <button className="action-btn confirm-no" onClick={() => { setBajaConfirm(null); setBajaMotivo(''); }}>No</button>
                         </div>
                       ) : (
-                        <button className="action-btn delete" onClick={() => { setBajaConfirm(p.id); setBajaMotivo(''); }} title="Dar de baja">{BajaIcon}</button>
+                        <button
+                          className="action-btn delete"
+                          onClick={() => { setBajaConfirm(p.id); setBajaMotivo(''); }}
+                          title={sucursal
+                            ? `Dar de baja en ${nombreSucursal ?? 'esta sucursal'} (las demás no se tocan)`
+                            : 'Dar de baja en todo el catálogo'}
+                        >
+                          {BajaIcon}
+                        </button>
                       )}
-                      {deleteConfirm === p.id ? (
-                        <div className="delete-confirm">
-                          <button className="action-btn confirm-yes" onClick={() => remove(p.id)}>Sí</button>
-                          <button className="action-btn confirm-no" onClick={() => setDeleteConfirm(null)}>No</button>
-                        </div>
-                      ) : (
-                        <button className="action-btn delete" onClick={() => setDeleteConfirm(p.id)} title="Eliminar">{TrashIcon}</button>
+                      {/* La papelera saca el producto del menú de ESTA sucursal y
+                          nada más. No se ofrece borrarlo del catálogo completo:
+                          cada local administra lo suyo y no puede hacerlo
+                          desaparecer de los demás. */}
+                      {sucursal && (
+                        quitarConfirm === p.id ? (
+                          <div className="delete-confirm">
+                            <button className="action-btn confirm-yes" onClick={() => quitarDeSucursal(p.id)}>Sí</button>
+                            <button className="action-btn confirm-no" onClick={() => setQuitarConfirm(null)}>No</button>
+                          </div>
+                        ) : (
+                          <button
+                            className="action-btn delete"
+                            onClick={() => setQuitarConfirm(p.id)}
+                            title={`Quitar del menú de ${nombreSucursal ?? 'esta sucursal'} (las demás no se tocan)`}
+                          >
+                            {TrashIcon}
+                          </button>
+                        )
                       )}
                     </div>
                   </td>
@@ -443,11 +569,37 @@ export default function AdminProducts() {
       {!loading && filtered.length === 0 && (
         <div className="empty-state">
           <h4>Sin productos</h4>
-          <p>{activos.length === 0 ? 'Aún no hay productos. Crea el primero.' : 'Ajusta los filtros o crea un nuevo producto.'}</p>
-          <button className="admin-btn primary" onClick={openCreate}>+ Nuevo Producto</button>
+          <p>
+            {activos.length > 0
+              ? 'Ajusta los filtros o crea un nuevo producto.'
+              : nombreSucursal
+                ? `${nombreSucursal} todavía no vende ningún producto. Traelos de otra sucursal o creá el primero.`
+                : 'Aún no hay productos. Crea el primero.'}
+          </p>
         </div>
       )}
       </>
+      )}
+
+      {copiarAbierto && sucursal && (
+        <CopiarProductosModal
+          destino={Number(sucursal)}
+          destinoNombre={nombreSucursal ?? 'esta sucursal'}
+          onClose={() => setCopiarAbierto(false)}
+          onCopiado={(cantidad) => {
+            setCopiarAbierto(false);
+            setActionError('');
+            load();
+            if (cantidad === 0) setActionError('No se copió ningún producto.');
+          }}
+        />
+      )}
+
+      {sucursalesDe && (
+        <ProductoSucursalesModal
+          producto={sucursalesDe}
+          onClose={() => { setSucursalesDe(null); load(); }}
+        />
       )}
 
       {wizard && (
@@ -455,6 +607,8 @@ export default function AdminProducts() {
           initial={wizard}
           avgSales={avgSales}
           avgMargin={avgMargin}
+          sucursalId={sucursal ? Number(sucursal) : undefined}
+          sucursalNombre={sucursal ? nombreSucursal ?? undefined : undefined}
           onClose={() => setWizard(null)}
           onSaved={() => { setWizard(null); load(); }}
         />

@@ -1,4 +1,5 @@
 import prisma from '@/lib/prisma';
+import { resolverSucursal } from '@/lib/server/sucursales/sucursal.service';
 import { NotFoundError } from '@/lib/server/errors';
 import type { Frecuencia, Prisma } from '@prisma/client';
 import type { GastoFijoInput, GastoFijoUpdateInput } from '@/lib/server/dto/gastos-fijos.dto';
@@ -25,9 +26,14 @@ function decorate<T extends { monto: Prisma.Decimal; frecuencia: Frecuencia }>(r
   };
 }
 
-export async function listarGastosFijos(incluirInactivos = false) {
+export async function listarGastosFijos(incluirInactivos = false, sucursal?: number) {
   const gastos = await prisma.gastoFijo.findMany({
-    where: incluirInactivos ? {} : { activo: true },
+    where: {
+      ...(incluirInactivos ? {} : { activo: true }),
+      // Los gastos fijos son del local: el alquiler de una sucursal no es costo
+      // de la otra. Sin sucursal (solo el dueño) se ve el total del negocio.
+      ...(sucursal ? { sucursal_id: sucursal } : {}),
+    },
     orderBy: [{ activo: 'desc' }, { categoria: 'asc' }, { concepto: 'asc' }],
   });
   const items = gastos.map(decorate);
@@ -50,6 +56,7 @@ export async function crearGastoFijo(input: GastoFijoInput, usuarioId: number) {
       categoria: input.categoria,
       monto: input.monto,
       frecuencia: input.frecuencia,
+      sucursal_id: await resolverSucursal(input.sucursal_id),
       activo: input.activo ?? true,
       creado_por_id: usuarioId,
     },

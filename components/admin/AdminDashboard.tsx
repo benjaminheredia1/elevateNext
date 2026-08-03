@@ -13,9 +13,11 @@ import {
   YAxis,
 } from 'recharts';
 import apiClient from '@/hooks/api';
+import CustomDateRange, { hoyLocalISO } from '@/components/ui/CustomDateRange';
+import SucursalSelector from '@/components/ui/SucursalSelector';
 import { foodCostColor } from './inventoryData';
 
-type Period = 'hoy' | '7d' | '30d';
+type Period = 'hoy' | '7d' | '30d' | 'todo' | 'custom';
 
 interface DashboardData {
   rango: string;
@@ -62,6 +64,9 @@ interface PedidoReciente {
 interface InsumoAlerta {
   id: number;
   nombre: string;
+  // El faltante es de un local concreto, no del negocio entero.
+  sucursal_id?: number;
+  sucursal?: string;
   stock_actual: number;
   stock_minimo: number;
   unidad_medida: string;
@@ -73,6 +78,17 @@ const PERIOD_LABELS: Record<Period, string> = {
   hoy: 'Hoy',
   '7d': 'Semana',
   '30d': 'Mes',
+  todo: 'Todo',
+  custom: 'Rango',
+};
+
+/** Sufijo de los KPIs: "Ventas hoy", "Ventas del rango"… */
+const PERIOD_SUFIJO: Record<Period, string> = {
+  hoy: 'hoy',
+  '7d': 'semana',
+  '30d': 'mes',
+  todo: 'histórico',
+  custom: 'del rango',
 };
 
 const STATUS_META: Record<string, { label: string; color: string; bg: string; activity: string }> = {
@@ -102,9 +118,59 @@ function compactTime(value: string) {
   }).format(new Date(value));
 }
 
+/**
+ * 'YYYY-MM-DD' de hace 30 días en hora de Bolivia: valor inicial del rango
+ * personalizado. Se formatea con la zona del negocio, igual que `hoyLocalISO`,
+ * para no correr un día según dónde esté el navegador.
+ */
+function hace30DiasISO() {
+  const d = new Date();
+  d.setDate(d.getDate() - 29);
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/La_Paz' }).format(d);
+}
+
 function dayLabel(fechaISO: string) {
-  // 'YYYY-MM-DD' → etiqueta corta del día (sin correr el día por UTC)
-  return new Date(`${fechaISO}T12:00:00`).toLocaleDateString('es-BO', { weekday: 'short' });
+  // 'YYYY-MM-DD' → 'd/M' (mediodía fijo para que UTC no corra el día).
+  //
+  // Antes era el día de la semana, que con 30 puntos se repite cuatro veces y
+  // no permite ubicar ninguna fecha concreta en el gráfico.
+  const fecha = new Date(`${fechaISO}T12:00:00`);
+  return `${fecha.getDate()}/${fecha.getMonth() + 1}`;
+}
+
+/** 'YYYY-MM-DD' → "lun 28 de jul". El eje solo muestra el día de la semana, que
+ *  con 30 puntos se repite: al pasar el mouse hay que saber de qué fecha se
+ *  trata. Mediodía fijo para que la zona horaria no corra el día. */
+function fechaLarga(fechaISO: string) {
+  return new Date(`${fechaISO}T12:00:00`).toLocaleDateString('es-BO', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+  });
+}
+
+/**
+ * Tooltip de los gráficos de ventas: fecha completa, monto vendido y pedidos.
+ *
+ * Se lee del dato del punto y no del `payload` por serie, porque el gráfico
+ * dibuja una sola serie (ventas) y los pedidos no tienen curva propia: con el
+ * `formatter` por serie, el número de ventas salía rotulado como "Pedidos".
+ */
+function PuntoVentasTooltip({ active, payload }: {
+  active?: boolean;
+  payload?: { payload: { date: string; revenue: number; orders: number } }[];
+}) {
+  if (!active || !payload?.length) return null;
+  const punto = payload[0].payload;
+  return (
+    <div className="spark-tooltip">
+      <strong>{fechaLarga(punto.date)}</strong>
+      <span>{money(punto.revenue)}</span>
+      <span className="spark-tooltip-sub">
+        {punto.orders} {punto.orders === 1 ? 'pedido' : 'pedidos'}
+      </span>
+    </div>
+  );
 }
 
 function EmptyMini({ children }: { children: React.ReactNode }) {
@@ -113,6 +179,10 @@ function EmptyMini({ children }: { children: React.ReactNode }) {
 
 export default function AdminDashboard() {
   const [period, setPeriod] = useState<Period>('hoy');
+  // "Rango" arranca en los últimos 30 días. Con hoy–hoy, entrar a esa opción
+  // mostraba todo en cero antes de que el usuario tocara nada, y parecía roto.
+  const [custom, setCustom] = useState({ desde: hace30DiasISO(), hasta: hoyLocalISO() });
+  const [sucursal, setSucursal] = useState<string | undefined>(undefined);
   const [liveTime, setLiveTime] = useState(new Date());
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -130,7 +200,9 @@ export default function AdminDashboard() {
       setError(null);
 
       try {
-        const res = await apiClient.get<DashboardData>(`/api/admin/dashboard?rango=${period}`);
+        const extra = period === 'custom' ? `&desde=${custom.desde}&hasta=${custom.hasta}` : '';
+        const filtroSucursal = sucursal ? `&sucursal=${sucursal}` : '';
+        const res = await apiClient.get<DashboardData>(`/api/admin/dashboard?rango=${period}${extra}${filtroSucursal}`);
         if (cancelled) return;
         setData(res.data ?? null);
       } catch (err) {
@@ -151,7 +223,7 @@ export default function AdminDashboard() {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [period]);
+  }, [period, custom.desde, custom.hasta, sucursal]);
 
   const trend = useMemo(
     () => (data?.serie ?? []).map(punto => ({
@@ -183,7 +255,7 @@ export default function AdminDashboard() {
     ...alertas.slice(0, 1).map(alerta => ({
       key: `alert-${alerta.id}`,
       type: 'alert',
-      text: `Stock bajo: ${alerta.nombre}`,
+      text: `Stock bajo: ${alerta.nombre}${alerta.sucursal ? ` — ${alerta.sucursal}` : ''}`,
       time: liveTime.toLocaleTimeString('es-BO', { hour: '2-digit', minute: '2-digit' }),
     })),
   ];
@@ -208,6 +280,10 @@ export default function AdminDashboard() {
               </button>
             ))}
           </div>
+          {period === 'custom' && (
+            <CustomDateRange desde={custom.desde} hasta={custom.hasta} onChange={setCustom} />
+          )}
+          <SucursalSelector value={sucursal} onChange={setSucursal} />
           <div className="admin-live-clock">
             <span className="live-dot" />
             {liveTime.toLocaleTimeString('es-BO', { hour: '2-digit', minute: '2-digit' })}
@@ -244,7 +320,7 @@ export default function AdminDashboard() {
           <div className="kpi-grid">
             <div className="kpi-card">
               <div className="kpi-header">
-                <span className="kpi-label">Ventas {PERIOD_LABELS[period].toLowerCase()}</span>
+                <span className="kpi-label">Ventas {PERIOD_SUFIJO[period]}</span>
               </div>
               <div className="kpi-value" style={{ color: 'var(--orange)' }}>{money(kpis.ventas)}</div>
               <div className="kpi-spark">
@@ -256,6 +332,14 @@ export default function AdminDashboard() {
                         <stop offset="100%" stopColor="#FF5C19" stopOpacity={0} />
                       </linearGradient>
                     </defs>
+                    <Tooltip
+                      content={<PuntoVentasTooltip />}
+                      cursor={{ stroke: '#FF5C19', strokeWidth: 1, strokeDasharray: '3 3' }}
+                      // El mini gráfico mide 36px de alto: el globo se sale de la
+                      // tarjeta si no se lo empuja hacia arriba.
+                      offset={12}
+                      allowEscapeViewBox={{ x: false, y: true }}
+                    />
                     <Area type="monotone" dataKey="revenue" stroke="#FF5C19" strokeWidth={2} fill="url(#dash-sales-spark)" />
                   </AreaChart>
                 </ResponsiveContainer>
@@ -264,7 +348,7 @@ export default function AdminDashboard() {
 
             <div className="kpi-card">
               <div className="kpi-header">
-                <span className="kpi-label">Ganancia {PERIOD_LABELS[period].toLowerCase()}</span>
+                <span className="kpi-label">Ganancia {PERIOD_SUFIJO[period]}</span>
               </div>
               <div className="kpi-value" style={{ color: kpis.utilidad >= 0 ? 'var(--fresh)' : 'var(--danger)' }}>{money(kpis.utilidad)}</div>
               <div className="kpi-bar"><div className="kpi-bar-fill" style={{ width: kpis.ventas > 0 ? `${Math.min(100, Math.max(0, (kpis.utilidad / kpis.ventas) * 100))}%` : '0%', background: 'var(--fresh)' }} /></div>
@@ -272,7 +356,7 @@ export default function AdminDashboard() {
 
             <div className="kpi-card">
               <div className="kpi-header">
-                <span className="kpi-label">Pedidos {PERIOD_LABELS[period].toLowerCase()}</span>
+                <span className="kpi-label">Pedidos {PERIOD_SUFIJO[period]}</span>
                 {kpis.cancelados > 0 && <span className="kpi-change down">{kpis.cancelados} cancelados</span>}
               </div>
               <div className="kpi-value" style={{ color: 'var(--info)' }}>{kpis.pedidos}</div>
@@ -309,11 +393,16 @@ export default function AdminDashboard() {
             <div className="dash-card span-8">
               <div className="dash-card-header">
                 <h3>Ventas — tendencia</h3>
-                <span className="dash-card-sub">{period === 'hoy' ? 'Hoy' : period === '7d' ? 'Últimos 7 días' : 'Últimos 30 días'}</span>
+                <span className="dash-card-sub">{period === 'hoy' ? 'Hoy'
+                  : period === '7d' ? 'Últimos 7 días'
+                  : period === '30d' ? 'Últimos 30 días'
+                  : period === 'todo' ? 'Todo el historial'
+                  : 'Rango elegido'}</span>
               </div>
               {hasTrend ? (
                 <ResponsiveContainer width="100%" height={240}>
-                  <AreaChart data={trend} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+                  {/* bottom deja lugar a las fechas inclinadas del eje. */}
+                  <AreaChart data={trend} margin={{ top: 8, right: 8, left: -16, bottom: 8 }}>
                     <defs>
                       <linearGradient id="dash-sales-trend" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="0%" stopColor="#FF5C19" stopOpacity={0.28} />
@@ -321,22 +410,23 @@ export default function AdminDashboard() {
                       </linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="#E4EAE5" vertical={false} />
-                    <XAxis dataKey="day" tick={{ fill: '#5C6B63', fontSize: 11 }} axisLine={false} tickLine={false} />
+                    {/* interval={0} fuerza una marca por día: con el valor
+                        automático Recharts descartaba la mitad de las fechas.
+                        Inclinadas para que 30 etiquetas no se pisen. */}
+                    <XAxis
+                      dataKey="day"
+                      tick={{ fill: '#5C6B63', fontSize: 10 }}
+                      axisLine={false}
+                      tickLine={false}
+                      interval={0}
+                      angle={-45}
+                      textAnchor="end"
+                      height={48}
+                    />
                     <YAxis tick={{ fill: '#5C6B63', fontSize: 11 }} axisLine={false} tickLine={false} />
                     <Tooltip
-                      contentStyle={{
-                        background: '#fff',
-                        border: '1px solid #E4EAE5',
-                        borderRadius: 10,
-                        fontSize: 12,
-                        fontFamily: 'Inter, sans-serif',
-                        boxShadow: '0 4px 16px rgba(20,52,42,.1)',
-                      }}
-                      formatter={(value, name) => {
-                        const numeric = Array.isArray(value) ? Number(value[0] ?? 0) : Number(value ?? 0);
-                        return [name === 'revenue' ? money(numeric) : numeric, name === 'revenue' ? 'Ventas' : 'Pedidos'];
-                      }}
-                      labelFormatter={(_, payload) => payload?.[0]?.payload?.date ?? ''}
+                      content={<PuntoVentasTooltip />}
+                      cursor={{ stroke: '#FF5C19', strokeWidth: 1, strokeDasharray: '3 3' }}
                     />
                     <Area type="monotone" dataKey="revenue" name="Ventas" stroke="#FF5C19" strokeWidth={2.5} fill="url(#dash-sales-trend)" />
                   </AreaChart>
@@ -356,12 +446,15 @@ export default function AdminDashboard() {
               ) : (
                 <div className="alert-card-list">
                   {alertas.slice(0, 5).map(insumo => (
-                    <div key={insumo.id} className="alert-row">
+                    <div key={`${insumo.sucursal_id ?? 0}-${insumo.id}`} className="alert-row">
                       <span
                         className="alert-row-dot"
                         style={{ background: insumo.nivel === 'critico' ? 'var(--danger)' : 'var(--amber)' }}
                       />
-                      <span className="alert-row-name">{insumo.nombre}</span>
+                      <span className="alert-row-name">
+                        {insumo.nombre}
+                        {insumo.sucursal && <span className="alert-row-sucursal">{insumo.sucursal}</span>}
+                      </span>
                       <span className="alert-row-qty">{insumo.stock_actual} {insumo.unidad_medida}</span>
                     </div>
                   ))}

@@ -6,6 +6,8 @@ export const gastoFijoSchema = z.object({
   monto: z.coerce.number().positive(),
   frecuencia: z.enum(['MENSUAL', 'QUINCENAL', 'SEMANAL', 'ANUAL']).default('MENSUAL'),
   activo: z.boolean().optional(),
+  // Local al que pertenece; si no viene, se usa la sucursal principal.
+  sucursal_id: z.coerce.number().int().positive().optional(),
 });
 
 export const gastoFijoUpdateSchema = gastoFijoSchema.partial().extend({

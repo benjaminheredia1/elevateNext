@@ -5,7 +5,10 @@ import { logAudit } from '@/lib/server/audit/audit.service';
 import { ConflictError, NotFoundError, ValidationError } from '@/lib/server/errors';
 import type { AperturaCajaInput, MovimientoManualInput, CierreCajaInput, VentaFisicaInput } from '@/lib/server/dto/caja.dto';
 import { descontarStockPorTransaccion } from '@/lib/server/inventario/descuento-stock.service';
+import { lineasDeCombo } from '@/lib/server/promociones/combos.service';
 import { resolverCliente, getClienteAnonimo } from '@/lib/server/clientes/clientes.service';
+import { rangoDiaNegocio, hoyISO } from '@/lib/server/fechas';
+import { siguienteNumeroSucursal } from '@/lib/server/ventas/numeracion';
 
 interface Meta { ip?: string | null; userAgent?: string | null }
 
@@ -103,6 +106,7 @@ export async function registrarMovimientoManual(
 
     const mov = await tx.movimientoCaja.create({
       data: {
+        sucursal_id,
         turno_id: turno.id,
         cuenta_id: cuenta.id,
         tipo: tipo as TipoMovimientoCaja,
@@ -134,10 +138,114 @@ export async function getMovimientos(session: Session) {
   const movimientos = await prisma.movimientoCaja.findMany({
     where: { turno_id: turno.id },
     orderBy: { created_at: 'desc' },
-    // Para mostrar el #N del pedido dentro del turno junto al global
-    include: { transaccion: { select: { id: true, numero_turno: true } } },
+    include: {
+      transaccion: {
+        select: {
+          // Para mostrar el correlativo de la sucursal junto al id global
+          id: true, numero_turno: true, numero_sucursal: true,
+          // Detalle que se despliega al abrir la fila.
+          total: true, cliente_nombre: true, codigo_descuento: true,
+          transaccionesDetalles_id: {
+            select: {
+              cantidad: true, precio_unitario: true,
+              producto: { select: { nombre: true } },
+              combo: { select: { nombre: true } },
+            },
+          },
+        },
+      },
+    },
   });
   return { turno, movimientos };
+}
+
+/**
+ * Ventas de la caja: todas las del turno abierto, pagadas o no.
+ *
+ * Es distinto del libro de movimientos, que solo registra plata que entró o
+ * salió: los fiados y las cortesías NO generan movimiento de caja, así que ahí
+ * no aparecen nunca. Acá se ven todas, con su forma de cierre.
+ *
+ * Sin turno abierto (caja cerrada) cae al día de negocio en curso de la misma
+ * sucursal, para poder revisar lo vendido después de cerrar.
+ */
+export async function getVentasDeCaja(session: Session, fechaISO?: string | null) {
+  const sucursal_id = sucursalDe(session);
+  const turno = await prisma.cajaTurno.findFirst({ where: { sucursal_id, estado: 'ABIERTO' } });
+
+  // Con fecha explícita manda la fecha; si no, el turno abierto; y si no hay
+  // turno, el día de negocio de hoy en esa sucursal.
+  const porFecha = fechaISO || !turno;
+  const rango = porFecha ? rangoDiaNegocio(fechaISO) : null;
+
+  const ventas = await prisma.transaccion.findMany({
+    where: {
+      sucursal_id,
+      ...(rango ? { created_at: { gte: rango.desde, lte: rango.hasta } } : { turno_id: turno!.id }),
+    },
+    orderBy: { created_at: 'desc' },
+    include: {
+      transaccionesDetalles_id: {
+        include: {
+          producto: { select: { id: true, nombre: true } },
+          combo: { select: { id: true, nombre: true } },
+        },
+      },
+      cliente: { select: { id: true, nombre: true, telefono: true } },
+      cajero: { select: { id: true, nombre: true } },
+      // La deuda explica un fiado: cuánto queda y cuándo vence.
+      cuenta_corriente: { select: { id: true, monto: true, monto_pagado: true, estado: true, vencimiento: true } },
+    },
+  });
+
+  return {
+    turno,
+    // Ámbito de lo que se está viendo, para que la pantalla pueda decirlo.
+    ambito: porFecha ? 'DIA' : 'TURNO',
+    fecha: rango ? hoyISO() : null,
+    ventas: ventas.map(v => {
+      // Pendiente de cobro: el fiado de salón y el contra-entrega del delivery.
+      const esFiado = v.payment_status === 'PENDIENTE' || v.payment_status === 'COD_PENDIENTE';
+      const deuda = v.cuenta_corriente;
+      return {
+        id: v.id,
+        numero_turno: v.numero_turno,
+        // El que se le dice al cliente; `id` queda como referencia interna.
+        numero_sucursal: v.numero_sucursal,
+        codigo: v.codigo,
+        canal: v.canal,
+        created_at: v.created_at,
+        total: Number(v.total),
+        metodo_pago: v.metodo_pago,
+        estado: v.estado,
+        payment_status: v.payment_status,
+        // Cómo se cerró la venta: es el eje por el que se filtra la pantalla.
+        forma: v.es_cortesia ? 'CORTESIA' : esFiado ? 'FIADO' : 'PAGADA',
+        es_cortesia: v.es_cortesia,
+        // `codigo_descuento` guarda el privilegio o la promo aplicada.
+        descuento: v.codigo_descuento,
+        cliente: v.cliente ? { id: v.cliente.id, nombre: v.cliente.nombre, telefono: v.cliente.telefono } : null,
+        cliente_nombre: v.cliente?.nombre ?? v.cliente_nombre,
+        cajero: v.cajero?.nombre ?? null,
+        deuda: deuda
+          ? {
+              saldo: Number(deuda.monto) - Number(deuda.monto_pagado),
+              estado: deuda.estado,
+              vencimiento: deuda.vencimiento,
+            }
+          : null,
+        items: v.transaccionesDetalles_id.map(d => ({
+          producto_id: d.producto_id,
+          nombre: d.producto.nombre,
+          cantidad: d.cantidad,
+          precio_unitario: Number(d.precio_unitario),
+          descuento: Number(d.descuentoAplicado),
+          // Las líneas de un combo comparten combo_id: la pantalla las agrupa.
+          combo: d.combo ? { id: d.combo.id, nombre: d.combo.nombre } : null,
+        })),
+      };
+    }),
+  };
 }
 
 export async function cerrarTurno(session: Session, dto: CierreCajaInput, meta: Meta = {}) {
@@ -293,7 +401,7 @@ async function aplicarAbonoDeudaFifo(tx: Prisma.TransactionClient, args: {
       }
       const mov = await tx.movimientoCaja.create({
         data: {
-          turno_id: args.turno_id, cuenta_id: cuentaFin.id, tipo: 'INGRESO_EXTRA',
+          sucursal_id: args.sucursal_id, turno_id: args.turno_id, cuenta_id: cuentaFin.id, tipo: 'INGRESO_EXTRA',
           metodo_pago: pago.metodo_pago, monto: aplicar,
           concepto: `Cobro fiado — ${deuda.contraparte}: ${deuda.concepto}${args.venta_id ? ` (junto a venta #${args.venta_id})` : ''}`,
           categoria: 'Cobro fiado',
@@ -371,15 +479,40 @@ export async function registrarVentaFisica(session: Session, dto: VentaFisicaInp
     const productos = await tx.producto.findMany({ where: { id: { in: ids } } });
     if (productos.length !== ids.length) throw new NotFoundError('Algún producto no existe');
 
+    // Precios de ESTA sucursal: el mismo plato puede costar distinto en cada local.
+    const habilitaciones = await tx.productoSucursal.findMany({
+      where: { producto_id: { in: ids }, sucursal_id },
+    });
+    const precioDeSucursal = new Map(habilitaciones.map(h => [h.producto_id, h]));
+
     // Calcular total EN EL SERVIDOR
     let total = new Prisma.Decimal(0);
-    const detalles = dto.items.map(item => {
-      const p = productos.find(x => x.id === item.producto_id)!;
-      if (p.disponible === false) throw new ValidationError(`Producto no disponible: ${p.nombre}`);
-      const precio = new Prisma.Decimal(p.precio);
-      total = total.plus(precio.times(item.cantidad));
-      return { producto_id: p.id, precio_unitario: Number(precio), cantidad: item.cantidad };
-    });
+    const detalles: { producto_id: number; precio_unitario: number; cantidad: number; combo_id?: number }[] =
+      dto.items.map(item => {
+        const p = productos.find(x => x.id === item.producto_id)!;
+        if (p.disponible === false) throw new ValidationError(`Producto no disponible: ${p.nombre}`);
+        const enSucursal = precioDeSucursal.get(p.id);
+        if (!enSucursal || !enSucursal.disponible) {
+          throw new ValidationError(`Producto no disponible en esta sucursal: ${p.nombre}`);
+        }
+        const precio = new Prisma.Decimal(enSucursal.precio);
+        total = total.plus(precio.times(item.cantidad));
+        return { producto_id: p.id, precio_unitario: Number(precio), cantidad: item.cantidad };
+      });
+
+    // Combos: el servidor los valoriza y los descompone en una línea por
+    // producto. Se revalida la ventana horaria acá aunque el POS ya haya
+    // filtrado: un combo de 7:00 a 12:00 no se cobra 12:05 porque la pantalla
+    // quedó abierta.
+    for (const pedido of dto.combos) {
+      const { combo, lineas } = await lineasDeCombo(pedido.combo_id, pedido.cantidad, sucursal_id, new Date(), tx);
+      for (const linea of lineas) {
+        total = total.plus(new Prisma.Decimal(linea.precio_unitario).times(linea.cantidad));
+        detalles.push(linea);
+      }
+      if (lineas.length === 0) throw new ValidationError(`El combo "${combo.nombre}" no tiene productos`);
+    }
+
     if (total.lte(0)) throw new ValidationError('El total debe ser mayor a 0');
 
     // Un fiado no puede ser cortesía ni anónimo: la deuda debe quedar a nombre
@@ -424,11 +557,18 @@ export async function registrarVentaFisica(session: Session, dto: VentaFisicaInp
       if (!clienteId || esAnonimo) {
         throw new ValidationError('El privilegio requiere un cliente registrado');
       }
+      // El privilegio tiene que valer en ESTE local: `sucursal_id` nulo es del
+      // negocio (vale en todos), con valor solo descuenta en el suyo. Sin este
+      // filtro, un "Staff Fitbull" descontaría también comprando en Sur.
       const privilegio = await tx.privilegio.findFirst({
-        where: { id: dto.privilegio_id, activo: true },
+        where: {
+          id: dto.privilegio_id,
+          activo: true,
+          OR: [{ sucursal_id: null }, { sucursal_id }],
+        },
       });
       if (!privilegio) {
-        throw new ValidationError('El privilegio no existe o no está activo');
+        throw new ValidationError('El privilegio no existe, no está activo o no aplica en esta sucursal');
       }
       const pct = Number(privilegio.porcentaje);
       if (pct > 0) {
@@ -464,7 +604,11 @@ export async function registrarVentaFisica(session: Session, dto: VentaFisicaInp
         estado: dto.es_fiado ? 'ENTREGADO' : 'PAGADO',
         payment_status: dto.es_fiado ? 'PENDIENTE' : 'PAGADO',
         turno_id: turno.id,
+        // La venta de salón pertenece a la sucursal del turno abierto.
+        sucursal_id: turno.sucursal_id,
         numero_turno: await siguienteNumeroTurno(tx, turno.id),
+        // El correlativo del local: es el que se le canta al cliente.
+        numero_sucursal: await siguienteNumeroSucursal(tx, turno.sucursal_id),
         cajero_id: session.id,
         cliente_id: clienteId,
         cliente_nombre: nombreCliente,
@@ -506,7 +650,7 @@ export async function registrarVentaFisica(session: Session, dto: VentaFisicaInp
         const cuenta = await getCuenta(tx, sucursal_id, parte.metodo);
         await tx.movimientoCaja.create({
           data: {
-            turno_id: turno.id, cuenta_id: cuenta.id, tipo: 'VENTA',
+            sucursal_id: turno.sucursal_id, turno_id: turno.id, cuenta_id: cuenta.id, tipo: 'VENTA',
             metodo_pago: parte.metodo, monto: parte.monto,
             concepto: partes.length > 1 ? `Venta #${venta.id} (mixto, ${parte.metodo.toLowerCase()})` : `Venta #${venta.id}`,
             transaccion_id: venta.id, creado_por_id: session.id,
@@ -651,7 +795,7 @@ export async function entregarPedido(
       const cuenta = await getCuenta(tx, sucursal_id, 'EFECTIVO');
       await tx.movimientoCaja.create({
         data: {
-          turno_id: turno.id, cuenta_id: cuenta.id, tipo: 'VENTA',
+          sucursal_id: turno.sucursal_id, turno_id: turno.id, cuenta_id: cuenta.id, tipo: 'VENTA',
           metodo_pago: 'EFECTIVO', monto: cobroEfectivo,
           concepto: esDelivery
             ? `Adelanto repartidor ${dto.driver_nombre?.trim()} · pedido #${pedido.id}`
@@ -825,7 +969,7 @@ export async function cobrarDeudaCaja(
       const cuentaFin = await getCuenta(tx, sucursal_id, pago.metodo_pago as TipoCuenta);
       const mov = await tx.movimientoCaja.create({
         data: {
-          turno_id: turno.id, cuenta_id: cuentaFin.id, tipo: 'INGRESO_EXTRA',
+          sucursal_id: turno.sucursal_id, turno_id: turno.id, cuenta_id: cuentaFin.id, tipo: 'INGRESO_EXTRA',
           metodo_pago: pago.metodo_pago as TipoCuenta, monto: pago.monto,
           concepto: `Cobro fiado — ${cuenta.contraparte}: ${cuenta.concepto}`, categoria: 'Cobro fiado',
           transaccion_id: cuenta.transaccion_id, creado_por_id: session.id,
@@ -877,8 +1021,18 @@ export async function aplicarDescuentoDeuda(
       throw new ConflictError('La deuda ya tiene un privilegio aplicado');
     }
 
-    const privilegio = await tx.privilegio.findFirst({ where: { id: dto.privilegio_id, activo: true } });
-    if (!privilegio) throw new ValidationError('El privilegio no existe o no está activo');
+    // Mismo criterio que en la venta: el privilegio debe valer en el local donde
+    // se está aplicando el descuento.
+    const privilegio = await tx.privilegio.findFirst({
+      where: {
+        id: dto.privilegio_id,
+        activo: true,
+        OR: [{ sucursal_id: null }, { sucursal_id: sucursalDe(session) }],
+      },
+    });
+    if (!privilegio) {
+      throw new ValidationError('El privilegio no existe, no está activo o no aplica en esta sucursal');
+    }
     const pct = Number(privilegio.porcentaje);
     if (pct <= 0) throw new ValidationError('El privilegio no genera descuento');
 

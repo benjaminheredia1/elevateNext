@@ -28,6 +28,7 @@ const NAV_ITEMS = [
   { to: '/caja/pedidos', label: 'Pedidos', icon: Icons.pedidos },
   { to: '/caja/entregar', label: 'Entregar', icon: Icons.entregar },
   { to: '/caja/venta', label: 'Venta', icon: Icons.venta },
+  { to: '/caja/ventas', label: 'Ventas', icon: Icons.venta },
   { to: '/caja/movimientos', label: 'Movimientos', icon: Icons.movimientos },
   { to: '/caja/ingreso', label: 'Ingreso', icon: Icons.ingreso },
   { to: '/caja/gasto', label: 'Gasto', icon: Icons.gasto },

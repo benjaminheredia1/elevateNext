@@ -28,7 +28,16 @@ export const VentaFisicaDTO = z.object({
   items: z.array(z.object({
     producto_id: z.number().int().positive(),
     cantidad: z.number().positive(),
-  })).min(1),
+  })).default([]),
+  /**
+   * Combos vendidos. Viajan aparte de los productos sueltos porque el servidor
+   * los valoriza y los descompone él mismo: del cliente solo se acepta CUÁL y
+   * CUÁNTOS, nunca el precio ni qué lleva adentro.
+   */
+  combos: z.array(z.object({
+    combo_id: z.number().int().positive(),
+    cantidad: z.number().positive(),
+  })).default([]),
   metodo_pago: z.enum(['EFECTIVO', 'QR', 'TARJETA', 'MIXTO']),
   // Desglose obligatorio cuando metodo_pago = MIXTO. El servidor valida además
   // que efectivo + qr sea exactamente el total calculado server-side.
@@ -65,6 +74,12 @@ export const VentaFisicaDTO = z.object({
     if (dto.metodo_pago === 'MIXTO') {
       ctx.addIssue({ code: 'custom', path: ['abono_deuda'], message: 'El abono a deuda no se puede combinar con pago mixto; cóbralo por separado' });
     }
+  }
+
+  // Antes `items` era obligatorio; ahora una venta puede ser solo de combos,
+  // pero no puede estar vacía.
+  if (dto.items.length === 0 && dto.combos.length === 0) {
+    ctx.addIssue({ code: 'custom', path: ['items'], message: 'La venta debe tener al menos un producto o un combo' });
   }
 });
 

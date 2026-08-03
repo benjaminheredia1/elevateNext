@@ -11,10 +11,15 @@ function decorate<T extends { porcentaje: Prisma.Decimal }>(row: T) {
   return { ...row, porcentaje: toNumber(row.porcentaje) };
 }
 
-export async function listarPrivilegios(incluirInactivos = false) {
+export async function listarPrivilegios(incluirInactivos = false, sucursal?: number) {
   const rows = await prisma.privilegio.findMany({
-    where: incluirInactivos ? {} : { activo: true },
+    where: {
+      ...(incluirInactivos ? {} : { activo: true }),
+      // Los del local mas los del negocio (sucursal_id null), que valen en todos.
+      ...(sucursal ? { OR: [{ sucursal_id: null }, { sucursal_id: sucursal }] } : {}),
+    },
     orderBy: [{ activo: 'desc' }, { nombre: 'asc' }],
+    include: { sucursal: { select: { id: true, nombre: true } } },
   });
   return rows.map(decorate);
 }
@@ -26,6 +31,7 @@ export async function crearPrivilegio(input: PrivilegioInput, usuarioId: number)
       descripcion: input.descripcion ?? null,
       porcentaje: input.porcentaje,
       activo: input.activo ?? true,
+      sucursal_id: input.sucursal_id ?? null,
       creado_por_id: usuarioId,
     },
   });
@@ -41,6 +47,8 @@ export async function actualizarPrivilegio(input: PrivilegioUpdateInput) {
       descripcion: input.descripcion,
       porcentaje: input.porcentaje,
       activo: input.activo,
+      // `undefined` deja el valor como esta; `null` lo vuelve privilegio del negocio.
+      sucursal_id: input.sucursal_id,
     },
   });
   return decorate(row);

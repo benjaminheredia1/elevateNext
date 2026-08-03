@@ -1,3 +1,4 @@
+import prisma from '@/lib/prisma';
 import { rangoDiaNegocio, inicioMesNegocio, hoyISO } from '@/lib/server/fechas';
 
 export interface RangoFechas {
@@ -6,15 +7,40 @@ export interface RangoFechas {
 }
 
 /**
+ * Arranque del rango "todo": el primer registro real del negocio.
+ *
+ * No se usa una fecha centinela (1970 o similar) porque el rango no solo filtra:
+ * `gastosOperativos` prorratea los gastos fijos por la cantidad de días que
+ * abarca, y partir de una fecha inventada inflaría los costos por miles de días
+ * en los que el negocio no existía.
+ */
+export async function inicioDelHistorial(): Promise<Date> {
+  const [ventas, movimientos] = await Promise.all([
+    prisma.transaccion.aggregate({ _min: { created_at: true } }),
+    prisma.movimientoCaja.aggregate({ _min: { created_at: true } }),
+  ]);
+  const fechas = [ventas._min.created_at, movimientos._min.created_at]
+    .filter((f): f is Date => f != null);
+  // Sin datos todavía, "todo" equivale al mes en curso: no hay historial que mostrar.
+  if (fechas.length === 0) return inicioMesNegocio();
+  return new Date(Math.min(...fechas.map(f => f.getTime())));
+}
+
+/**
  * Rangos de reportes anclados al día de negocio (Bolivia, UTC-4), sin importar
  * la zona del servidor. Ver lib/server/fechas.ts.
  */
-export function parseRango(searchParams: URLSearchParams): RangoFechas {
+export async function parseRango(searchParams: URLSearchParams): Promise<RangoFechas> {
   const rango = searchParams.get('rango') ?? 'mes';
   const hoy = rangoDiaNegocio();
 
   if (rango === 'hoy') {
     return hoy;
+  }
+
+  // Todo el historial, sin filtro de fechas.
+  if (rango === 'todo') {
+    return { desde: await inicioDelHistorial(), hasta: hoy.hasta };
   }
 
   if (rango === '7d') {

@@ -3,10 +3,14 @@ import prisma from '@/lib/prisma';
 import { TipoCuenta, TipoEntrega, EstadoPago } from '@prisma/client';
 import { calcularRinde } from '@/lib/server/inventario/disponibilidad';
 import { resolverCliente } from '@/lib/server/clientes/clientes.service';
+import { resolverSucursal, alcanceSucursal } from '@/lib/server/sucursales/sucursal.service';
+import { parseSucursal } from '@/lib/server/finanzas/rango';
+import { aplicarOverrides } from '@/lib/server/productos/overrides';
 import { calcularPrecioFinal, includePromos } from '@/lib/server/productos/precio';
 import { customAlphabet } from 'nanoid';
 import { guard, STAFF } from '@/lib/server/auth/guard';
 import { rangoDiaNegocio } from '@/lib/server/fechas';
+import { siguienteNumeroSucursal } from '@/lib/server/ventas/numeracion';
 
 // Código de retiro/handoff legible (sin caracteres ambiguos)
 const genCodigo = customAlphabet('ABCDEFGHJKLMNPQRSTUVWXYZ23456789', 5);
@@ -57,6 +61,11 @@ export async function GET(req: NextRequest) {
     const limit = searchParams.get('limit');
 
     const where: Record<string, unknown> = {};
+    // Pedidos del local pedido. `alcanceSucursal` además encierra al cajero en
+    // el suyo: sin esto veía —y podía cambiar de estado— los pedidos de otra
+    // sucursal. Sin parámetro y con alcance global, se listan todos.
+    const sucursalId = alcanceSucursal(auth, parseSucursal(searchParams));
+    if (sucursalId) where.sucursal_id = sucursalId;
     if (estado) where.estado = estado;
     if (desde) where.created_at = { gt: new Date(desde) };
     if (hoy === 'true') {
@@ -88,54 +97,105 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     // NOTA: total y precios enviados por el cliente se IGNORAN; se recalculan desde la BD.
-    const { cliente_nombre, cliente_telefono, cliente_direccion, cliente_lat, cliente_lng, cliente_nit, cliente_email, tipo_entrega, codigo_descuento, metodo_pago, items } = body;
+    const { cliente_nombre, cliente_telefono, cliente_direccion, cliente_lat, cliente_lng, cliente_nit, cliente_email, tipo_entrega, codigo_descuento, metodo_pago, items, sucursal_id } = body;
 
     if (!Array.isArray(items) || items.length === 0) {
       return NextResponse.json({ error: 'El pedido debe tener al menos un item' }, { status: 400 });
     }
 
+    // La sucursal define qué se vende y a qué precio. Se resuelve antes de
+    // valorizar el pedido para no cobrar el precio de otro local.
+    const sucursalId = await resolverSucursal(sucursal_id);
+
     // Resolver cada item contra el catálogo y calcular precio server-side
     const now = new Date();
-    const lineas: { producto_id: number; precio_unitario: number; descuento: number; cantidad: number }[] = [];
+    // `nombre` es el que ve el cliente en ESE menú: se usa en los mensajes de
+    // error, así que no puede ser el del catálogo si el local lo sobrescribió.
+    const lineas: { producto_id: number; nombre: string; precio_unitario: number; descuento: number; cantidad: number }[] = [];
     for (const item of items) {
       const cantidad = Number(item.cantidad);
       if (!Number.isFinite(cantidad) || cantidad <= 0 || cantidad > 999) {
         return NextResponse.json({ error: `Cantidad inválida para "${item.nombre ?? '?'}"` }, { status: 400 });
       }
+      // El producto se busca EN ESTA SUCURSAL: si el local le puso otro nombre,
+      // ese es el que llega desde su menú, y el del catálogo puede ser distinto.
+      const conSucursal = { ...includePromos, sucursales: { where: { sucursal_id: sucursalId } } };
       let producto = item.id
-        ? await prisma.producto.findFirst({
-            where: { id: Number(item.id), estado_publicacion: 'PUBLICADO', disponible: true },
-            include: includePromos,
-          })
+        ? await prisma.producto.findFirst({ where: { id: Number(item.id) }, include: conSucursal })
         : null;
       if (!producto && item.nombre) {
+        const nombre = String(item.nombre);
         producto = await prisma.producto.findFirst({
-          where: { nombre: { equals: String(item.nombre), mode: 'insensitive' }, estado_publicacion: 'PUBLICADO', disponible: true },
-          include: includePromos,
+          where: {
+            OR: [
+              // Nombre propio del local…
+              { sucursales: { some: { sucursal_id: sucursalId, nombre: { equals: nombre, mode: 'insensitive' } } } },
+              // …o el del catálogo, si el local no lo sobrescribió.
+              {
+                nombre: { equals: nombre, mode: 'insensitive' },
+                sucursales: { some: { sucursal_id: sucursalId, nombre: null } },
+              },
+            ],
+          },
+          include: conSucursal,
         });
       }
       if (!producto) {
         return NextResponse.json({ error: `Producto no disponible: ${item.nombre ?? item.id}` }, { status: 400 });
       }
-      const { precioFinal, descuento } = calcularPrecioFinal(producto, now);
-      lineas.push({ producto_id: producto.id, precio_unitario: precioFinal, descuento, cantidad });
+
+      // Si no está habilitado acá, no se vende acá.
+      const enSucursal = producto.sucursales[0];
+      if (!enSucursal) {
+        return NextResponse.json(
+          { error: `Producto no disponible en esta sucursal: ${producto.nombre}` },
+          { status: 400 },
+        );
+      }
+      // Precio y estado de publicación son los del local, no los del catálogo.
+      const vendible = aplicarOverrides(producto, enSucursal);
+      if (vendible.estado_publicacion !== 'PUBLICADO' || !vendible.disponible) {
+        return NextResponse.json({ error: `Producto no disponible: ${vendible.nombre}` }, { status: 400 });
+      }
+      const { precioFinal, descuento } = calcularPrecioFinal(vendible, now, sucursalId);
+      lineas.push({ producto_id: producto.id, nombre: vendible.nombre, precio_unitario: precioFinal, descuento, cantidad });
     }
     const totalCalculado = Math.round(lineas.reduce((s, l) => s + l.precio_unitario * l.cantidad, 0) * 100) / 100;
 
     // Bloqueo duro por stock: rechazar items agotados o con cantidad mayor al RINDE.
     const sinStock: string[] = [];
-    for (const item of items) {
+    for (const linea of lineas) {
       const prod = await prisma.producto.findFirst({
-        where: { nombre: { equals: item.nombre, mode: 'insensitive' } },
+        // Por id: el nombre puede ser el propio del local y no el del catálogo.
+        where: { id: linea.producto_id },
         include: {
-          recetaProducto_id: { include: { insumo: { select: { stock_actual: true, activo: true } } } },
-          insumo_reventa: { select: { stock_actual: true, activo: true } },
+          // Receta y stock DEL LOCAL: el bloqueo debe mirar lo que hay en la
+          // sucursal que va a preparar el pedido, no el total del negocio.
+          recetaProducto_id: {
+            where: { sucursal_id: sucursalId },
+            include: {
+              insumo: {
+                select: {
+                  stock_actual: true,
+                  activo: true,
+                  stocks: { where: { sucursal_id: sucursalId }, select: { stock_actual: true, activo: true } },
+                },
+              },
+            },
+          },
+          insumo_reventa: {
+            select: {
+              stock_actual: true,
+              activo: true,
+              stocks: { where: { sucursal_id: sucursalId }, select: { stock_actual: true, activo: true } },
+            },
+          },
         },
       });
       if (!prod) continue; // producto no rastreado en inventario
       const { stockTracked, rinde } = calcularRinde(prod);
-      if (stockTracked && (rinde ?? 0) < Number(item.cantidad)) {
-        sinStock.push(item.nombre);
+      if (stockTracked && (rinde ?? 0) < linea.cantidad) {
+        sinStock.push(linea.nombre);
       }
     }
     if (sinStock.length > 0) {
@@ -159,9 +219,14 @@ export async function POST(req: NextRequest) {
       direccion: dirEntrega,
     });
 
-    // Create the transaction
-    const transaccion = await prisma.transaccion.create({
+    // Create the transaction.
+    // Va en una transacción de BD porque el correlativo de la sucursal se toma
+    // con un lock que dura hasta el commit: dos checkouts simultáneos del mismo
+    // local se serializan en vez de pelearse el mismo número.
+    const transaccion = await prisma.$transaction(async (tx) => tx.transaccion.create({
       data: {
+        sucursal_id: sucursalId,
+        numero_sucursal: await siguienteNumeroSucursal(tx, sucursalId),
         cliente_id: clienteId,
         cliente_nombre,
         cliente_telefono,
@@ -179,7 +244,7 @@ export async function POST(req: NextRequest) {
         total: totalCalculado,
         estado: 'PENDIENTE',
       },
-    });
+    }));
 
     // Detalles con precios calculados en servidor
     // (el descuento de inventario se maneja en PUT /api/pedidos/[id] al cambiar de estado)

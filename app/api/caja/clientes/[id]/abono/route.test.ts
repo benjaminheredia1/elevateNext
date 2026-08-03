@@ -8,6 +8,7 @@ import { NextRequest } from 'next/server';
 import { POST } from './route';
 import { login } from '@/lib/auth';
 import prisma from '@/lib/prisma';
+import { sucursalPorDefectoId } from '@/lib/server/sucursales/sucursal.service';
 
 const CONTRAPARTE = 'Cliente Abono Selectivo E2E';
 
@@ -77,7 +78,7 @@ beforeAll(async () => {
   deudaAntiguaId = antigua.id;
   // La reciente nace de una venta fiada: al saldarla debe pasar a PAGADO
   const ventaFiada = await prisma.transaccion.create({
-    data: { total: 20, estado: 'PAGADO', payment_status: 'PENDIENTE', cliente_id: clienteId, turno_id: turnoId, cajero_id: cajeroUserId },
+    data: { sucursal_id: await sucursalPorDefectoId(), total: 20, estado: 'PAGADO', payment_status: 'PENDIENTE', cliente_id: clienteId, turno_id: turnoId, cajero_id: cajeroUserId },
   });
   ventaFiadaId = ventaFiada.id;
   const reciente = await prisma.cuentaCorriente.create({

@@ -3,6 +3,7 @@ import { NextRequest } from 'next/server';
 import { PUT, PATCH, DELETE } from './route';
 import { login } from '@/lib/auth';
 import prisma from '@/lib/prisma';
+import { sucursalPorDefectoId } from '@/lib/server/sucursales/sucursal.service';
 
 describe('PUT /api/admin/productos/[id]', () => {
   const createdIds: number[] = [];
@@ -300,7 +301,7 @@ describe('DELETE /api/admin/productos/[id]', () => {
     });
     createdIds.push(producto.id);
 
-    const transaccion = await prisma.transaccion.create({ data: { total: 10 } });
+    const transaccion = await prisma.transaccion.create({ data: { sucursal_id: await sucursalPorDefectoId(), total: 10 } });
     createdTransaccionIds.push(transaccion.id);
     await prisma.transaccionesDetalles.create({
       data: { transaccion_id: transaccion.id, producto_id: producto.id, precio_unitario: 10, cantidad: 1 },

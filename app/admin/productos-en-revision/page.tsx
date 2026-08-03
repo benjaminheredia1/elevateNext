@@ -4,18 +4,27 @@ import { useState } from 'react';
 import AdminPanel from '@/components/admin/AdminPanel';
 import EmptyState from '@/components/ui/EmptyState';
 import { useProductosEnRevision, useResolverProductoEnRevision } from '@/hooks/insumos';
+import SucursalSelector from '@/components/ui/SucursalSelector';
 
 export default function ProductosEnRevisionPage() {
-  const { data: productos, isLoading, refetch } = useProductosEnRevision();
+  // La revisión es de cada local: se ve y se resuelve la de la sucursal
+  // elegida. Sin sucursal (dueño en consolidado) se ven las de todos.
+  const [sucursal, setSucursal] = useState<string | undefined>(undefined);
+  const sucursalId = sucursal ? Number(sucursal) : undefined;
+  const { data: productos, isLoading, refetch } = useProductosEnRevision(sucursalId);
   const resolverMutation = useResolverProductoEnRevision();
   const [mensaje, setMensaje] = useState<{ type: 'ok' | 'error'; text: string } | null>(null);
 
   const handleResolver = async (id: number, nombre: string) => {
+    if (!sucursalId) {
+      setMensaje({ type: 'error', text: 'Elegí una sucursal: la revisión se resuelve en el local donde se abrió.' });
+      return;
+    }
     try {
-      await resolverMutation.mutateAsync(id);
+      await resolverMutation.mutateAsync({ id, sucursalId });
       setMensaje({
         type: 'ok',
-        text: `Producto "${nombre}" resuelto. Vuelve a publicarlo cuando esté listo.`,
+        text: `Producto "${nombre}" resuelto en esta sucursal. Vuelve a publicarlo cuando esté listo.`,
       });
       setTimeout(() => setMensaje(null), 4000);
       await refetch();
@@ -33,8 +42,9 @@ export default function ProductosEnRevisionPage() {
       <div className="admin-page-header">
         <div>
           <h1>Productos en Revisión</h1>
-          <p>Productos que necesitan ser ajustados debido a cambios en insumos</p>
+          <p>Productos que necesitan ser ajustados debido a cambios en insumos de su sucursal</p>
         </div>
+        <SucursalSelector value={sucursal} onChange={setSucursal} />
       </div>
 
       {mensaje && (

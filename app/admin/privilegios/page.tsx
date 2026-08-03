@@ -12,6 +12,7 @@ import {
   type Privilegio,
   type PrivilegioPayload,
 } from '@/hooks/privilegios';
+import { useSucursales } from '@/hooks/sucursales';
 
 function PrivilegioModal({ inicial, onClose, onSubmit, saving }: {
   inicial: Privilegio | null;
@@ -25,7 +26,9 @@ function PrivilegioModal({ inicial, onClose, onSubmit, saving }: {
     descripcion: inicial?.descripcion ?? '',
     porcentaje: inicial?.porcentaje ?? 10,
     activo: inicial?.activo ?? true,
+    sucursal_id: inicial?.sucursal_id ?? null,
   });
+  const { data: sucursales = [] } = useSucursales();
   // Texto crudo del porcentaje: permite borrar el campo y reescribir sin que
   // el 0 reaparezca (el número solo se materializa al guardar).
   const [pctTxt, setPctTxt] = useState(String(inicial?.porcentaje ?? 10));
@@ -61,12 +64,24 @@ function PrivilegioModal({ inicial, onClose, onSubmit, saving }: {
                 <option value="0">Inactivo</option>
               </select>
             </div>
+            <div className="form-group">
+              <label>Sucursal</label>
+              <select
+                value={form.sucursal_id == null ? '' : String(form.sucursal_id)}
+                onChange={e => setForm(f => ({ ...f, sucursal_id: e.target.value ? Number(e.target.value) : null }))}
+              >
+                <option value="">Todas (privilegio del negocio)</option>
+                {sucursales.map(s => (
+                  <option key={s.id} value={String(s.id)}>{s.nombre}</option>
+                ))}
+              </select>
+            </div>
             <div className="form-group full">
               <label>Descripción (opcional)</label>
               <input value={form.descripcion ?? ''} onChange={e => setForm(f => ({ ...f, descripcion: e.target.value }))} placeholder="Ej. 10% en todos los productos" />
             </div>
           </div>
-          <span className="form-hint">El descuento se aplica al total de la venta (y del fiado) del cliente que tenga este privilegio.</span>
+          <span className="form-hint">El descuento se aplica al total de la venta (y del fiado) del cliente que tenga este privilegio. Si eligís una sucursal, solo descuenta comprando ahí.</span>
         </div>
         <div className="admin-modal-footer">
           <button type="button" className="admin-btn ghost" onClick={onClose}>Cancelar</button>

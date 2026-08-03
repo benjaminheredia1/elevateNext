@@ -16,7 +16,12 @@ export async function GET(req: NextRequest) {
         select: { total: true, estado: true, created_at: true },
       }),
       prisma.transaccion.count({ where: { estado: 'PENDIENTE' } }),
-      prisma.insumo.findMany(),
+      // Los faltantes se cuentan por local: un insumo agotado en una sucursal es
+      // una alerta real aunque la otra tenga de sobra.
+      prisma.stockSucursal.findMany({
+        where: { insumo: { activo: true } },
+        select: { stock_actual: true, stock_minimo: true },
+      }),
     ]);
 
     const ingresosHoy = pedidosHoy.reduce((acc, p) => acc + Number(p.total), 0);

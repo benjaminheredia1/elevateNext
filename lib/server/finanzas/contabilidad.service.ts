@@ -8,7 +8,8 @@ function toNumber(value: Prisma.Decimal): number {
 }
 
 function sucursalWhere(sucursal?: number) {
-  return sucursal ? { turno: { sucursal_id: sucursal } } : {};
+  // MovimientoCaja lleva su propia sucursal desde la Fase 2 multi-sucursal.
+  return sucursal ? { sucursal_id: sucursal } : {};
 }
 
 /**
@@ -102,8 +103,12 @@ export async function balanceGeneral(sucursal?: number) {
     prisma.cuentaFinanciera.findMany({
       where: sucursal ? { sucursal_id: sucursal } : {},
     }),
-    prisma.insumo.findMany({
-      where: { activo: true },
+    // Inventario valorizado por local: cada sucursal tiene su stock y su costo
+    // promedio. Sin filtro se suman todas, que es el valor del negocio.
+    prisma.stockSucursal.findMany({
+      // `activo` de la fila: un insumo de baja en Sur no vale como inventario
+      // de Sur, aunque Fitbull lo siga usando.
+      where: { activo: true, ...(sucursal ? { sucursal_id: sucursal } : {}) },
       select: { stock_actual: true, costo_promedio: true },
     }),
     prisma.cuentaCorriente.findMany({
@@ -123,7 +128,7 @@ export async function balanceGeneral(sucursal?: number) {
 
   // Stock negativo (deuda operativa de inventario) no suma valor al activo.
   const inventario = insumos.reduce(
-    (sum, insumo) => sum + Math.max(0, insumo.stock_actual) * insumo.costo_promedio,
+    (sum, fila) => sum + Math.max(0, fila.stock_actual) * fila.costo_promedio,
     0,
   );
 

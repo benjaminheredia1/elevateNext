@@ -23,7 +23,18 @@ export interface WizardInitial {
   // cantidad_utilizada SIEMPRE está en la unidad base del insumo y es lo único que se guarda.
   receta: { insumo_id: number; cantidad_utilizada: number; ui_txt?: string; ui_unidad?: string }[];
   insumo_reventa_id: number | null;
+  /**
+   * Qué campos toma esta sucursal del catálogo. Editar uno lo vuelve propio del
+   * local; "usar el del catálogo" lo devuelve a heredar. Vacío cuando se edita
+   * el catálogo (vista consolidada del dueño), donde no hay de quién heredar.
+   */
+  heredado?: Partial<Record<CampoHeredable, boolean>>;
 }
+
+/** Campos que una sucursal puede heredar del catálogo o tener propios. */
+export type CampoHeredable =
+  | 'nombre' | 'descripcion' | 'imagen_url' | 'calorias' | 'proteina'
+  | 'estado_publicacion' | 'categorias' | 'marcas';
 
 interface InsumoOpt { id: number; nombre: string; unidad_medida: string; costo_promedio: number; stock_actual: number; stock_minimo?: number; punto_critico?: number; proveedor?: string | null; activo: boolean; }
 interface CategoriaOpt { id: number; nombre: string; }
@@ -98,10 +109,44 @@ function InsumoPicker({ opciones, seleccionado, esDeBaja, onPick }: {
   );
 }
 
-export default function AdminProductWizard({ initial, avgSales, avgMargin, onClose, onSaved }: {
+/**
+ * Dice si el campo viene del catálogo o es propio de esta sucursal, y deja
+ * cambiarlo. Sin esto el usuario no puede saber si al guardar está congelando
+ * un valor o si el campo va a seguir los cambios que haga el dueño.
+ */
+function Herencia({ heredado, onVolverAHeredar }: { heredado: boolean; onVolverAHeredar: () => void }) {
+  if (heredado) {
+    return (
+      <span className="form-hint" title="Si el dueño lo cambia en el catálogo, acá también cambia">
+        ↳ heredado del catálogo
+      </span>
+    );
+  }
+  return (
+    <span className="form-hint">
+      ★ propio de esta sucursal{' '}
+      <button
+        type="button"
+        className="linklike"
+        onClick={onVolverAHeredar}
+        title="Vuelve a tomar el valor del catálogo y a seguir sus cambios"
+      >
+        usar el del catálogo
+      </button>
+    </span>
+  );
+}
+
+export default function AdminProductWizard({ initial, avgSales, avgMargin, sucursalId, sucursalNombre, onClose, onSaved }: {
   initial: WizardInitial;
   avgSales: number;
   avgMargin: number;
+  /** Local del alta: su precio, su receta y su stock inicial. Sin esto el
+   *  producto nacía siempre en la sucursal principal, aunque estuvieras
+   *  parado en otra. */
+  sucursalId?: number;
+  /** Solo para avisar en pantalla a qué local afecta lo que se está editando. */
+  sucursalNombre?: string;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -112,16 +157,48 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, onClo
   const [marcas, setMarcas] = useState<MarcaOpt[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [duplicado, setDuplicado] = useState<{
+    id: number;
+    nombre: string;
+    sucursales: { id: number; nombre: string }[];
+  } | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState('');
+
+  /**
+   * Campos que siguen colgados del catálogo. Se arranca con lo que dice el
+   * servidor y se va vaciando a medida que el usuario edita: tocar un campo
+   * heredado es, justamente, decidir que este local quiere el suyo.
+   */
+  const [heredado, setHeredado] = useState<Partial<Record<CampoHeredable, boolean>>>(initial.heredado ?? {});
+  const editandoSucursal = !!sucursalId && !!initial.id;
+  const esHeredado = (campo: CampoHeredable) => editandoSucursal && heredado[campo] === true;
+  /** Marca el campo como propio del local (lo saca de la herencia). */
+  const hacerPropio = (campo: CampoHeredable) =>
+    setHeredado(prev => (prev[campo] ? { ...prev, [campo]: false } : prev));
+  /** Vuelve a colgar el campo del catálogo; el valor se recupera al recargar. */
+  const volverAHeredar = (campo: CampoHeredable) =>
+    setHeredado(prev => ({ ...prev, [campo]: true }));
 
   useEffect(() => {
     // Se cargan también los inactivos para poder detectar y señalar recetas que
     // referencian insumos dados de baja (el selector solo ofrece los activos).
-    apiClient.get('/api/insumo?incluir_inactivos=1').then(r => setInsumos(Array.isArray(r.data) ? r.data : r.data?.data ?? [])).catch(() => setInsumos([]));
+    //
+    // Con una sucursal, solo los insumos que ESE local maneja: una receta no
+    // puede descontar stock que el local no tiene. Los que la receta ya usa
+    // viajan en `incluir_ids` para que sigan visibles aunque el local no los
+    // maneje — así una ficha vieja se muestra completa en vez de perder líneas.
+    const yaEnReceta = initial.receta.map(r => r.insumo_id).filter(Boolean);
+    const params = new URLSearchParams({ incluir_inactivos: '1' });
+    if (sucursalId) params.set('sucursal', String(sucursalId));
+    if (sucursalId && yaEnReceta.length > 0) params.set('incluir_ids', yaEnReceta.join(','));
+    apiClient.get(`/api/insumo?${params}`).then(r => setInsumos(Array.isArray(r.data) ? r.data : r.data?.data ?? [])).catch(() => setInsumos([]));
     apiClient.get('/api/categoria').then(r => setCats(Array.isArray(r.data) ? r.data : r.data?.data ?? [])).catch(() => setCats([]));
     apiClient.get('/api/admin/marcas').then(r => setMarcas(r.data?.data ?? r.data?.items ?? [])).catch(() => setMarcas([]));
-  }, []);
+    // `initial` queda fuera a propósito: es la ficha con la que se abrió el
+    // wizard y no cambia mientras está abierto.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sucursalId]);
 
   const set = (patch: Partial<WizardInitial>) => setP(prev => ({ ...prev, ...patch }));
   const insumoOf = (id: number) => insumos.find(i => i.id === id);
@@ -191,14 +268,35 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, onClo
   if (p.tipo === 'REVENTA' && !(reventaInsumo.costo_unitario > 0)) gate.push('Define el costo unitario del insumo de reventa.');
   const canPublish = gate.length === 0;
 
-  const toggleMarca = (id: number) => set({ marcas: p.marcas.includes(id) ? p.marcas.filter(x => x !== id) : [...p.marcas, id] });
+  const toggleMarca = (id: number) => {
+    hacerPropio('marcas');
+    set({ marcas: p.marcas.includes(id) ? p.marcas.filter(x => x !== id) : [...p.marcas, id] });
+  };
 
   const updateRecipe = (idx: number, patch: Partial<WizardInitial['receta'][number]>) =>
     set({ receta: p.receta.map((it, i) => i === idx ? { ...it, ...patch } : it) });
   const addRecipe = () => set({ receta: [...p.receta, { insumo_id: insumosActivos[0]?.id ?? 0, cantidad_utilizada: 0.1 }] });
   const removeRecipe = (idx: number) => set({ receta: p.receta.filter((_, i) => i !== idx) });
 
-  const save = async (publish: boolean) => {
+  /** Habilita acá el producto que ya existe, copiando su receta del local donde está. */
+  const habilitarExistente = async () => {
+    if (!duplicado || !sucursalId) return;
+    setSaving(true); setError('');
+    try {
+      const origen = duplicado.sucursales.find(s => s.id !== sucursalId)?.id;
+      await apiClient.post(`/api/admin/productos/${duplicado.id}/sucursales`, {
+        sucursal_id: sucursalId,
+        precio: p.precio > 0 ? p.precio : undefined,
+        copiar_receta_de: origen,
+      });
+      onSaved();
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { error?: string } } };
+      setError(err?.response?.data?.error ?? 'No se pudo habilitar el producto acá');
+    } finally { setSaving(false); }
+  };
+
+  const save = async (publish: boolean, permitirDuplicado = false) => {
     if (publish && !canPublish) {
       setError(`No se puede publicar: ${gate.join(' ')}`);
       return;
@@ -210,12 +308,19 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, onClo
       calorias: p.calorias ?? undefined,
       proteina: p.proteina?.trim() ? p.proteina.trim() : undefined,
       tipo: p.tipo, estado_publicacion: estado, disponible: estado === 'PUBLICADO',
+      sucursal_id: sucursalId,
       categorias: p.categorias, marcas: p.marcas,
       // Solo los campos persistibles: el estado de edición (ui_*) no viaja a la API
       receta: p.tipo === 'REVENTA' ? [] : p.receta.map(({ insumo_id, cantidad_utilizada }) => ({ insumo_id, cantidad_utilizada })),
       insumo_reventa_id: p.insumo_reventa_id ?? undefined,
       imagen_url: p.imagen_url || undefined,
     };
+    // Editando una sucursal se manda la decisión explícita de qué queda
+    // heredado; el resto queda propio del local aunque hoy coincida con el
+    // catálogo. Editando el catálogo no se manda: no hay de quién heredar.
+    if (editandoSucursal) {
+      body.heredar = (Object.keys(heredado) as CampoHeredable[]).filter(c => heredado[c]);
+    }
     if (p.tipo === 'REVENTA') {
       body.nuevo_insumo_reventa = {
         unidad_medida: reventaInsumo.unidad_medida,
@@ -228,11 +333,17 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, onClo
     }
     try {
       if (p.id) await apiClient.put(`/api/admin/productos/${p.id}`, body);
-      else await apiClient.post('/api/admin/productos', body);
+      else await apiClient.post('/api/admin/productos', { ...body, permitir_duplicado: permitirDuplicado });
       onSaved();
     } catch (e: unknown) {
-      const err = e as { response?: { data?: { error?: string } } };
-      setError(err?.response?.data?.error ?? 'Error al guardar el producto');
+      const err = e as { response?: { status?: number; data?: { error?: string; code?: string; producto?: typeof duplicado } } };
+      // El nombre ya existe: en vez de crear otro producto igual, se ofrece
+      // habilitar el que está en la otra sucursal.
+      if (err?.response?.status === 409 && err.response.data?.code === 'PRODUCTO_DUPLICADO' && err.response.data.producto) {
+        setDuplicado(err.response.data.producto);
+      } else {
+        setError(err?.response?.data?.error ?? 'Error al guardar el producto');
+      }
     } finally { setSaving(false); }
   };
 
@@ -240,7 +351,18 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, onClo
     <div className="admin-modal-overlay" onClick={onClose}>
       <div className="admin-modal wide" onClick={e => e.stopPropagation()}>
         <div className="admin-modal-header">
-          <h2>{p.id ? 'Editar producto' : 'Nuevo producto'}</h2>
+          <div>
+            <h2>{p.id ? 'Editar producto' : 'Nuevo producto'}</h2>
+            {/* Editar desde una sucursal cambia solo su ficha: el mismo producto
+                en los otros locales queda como estaba. */}
+            {sucursalNombre && (
+              <p className="wizard-scope-note">
+                {p.id
+                  ? `Los cambios se guardan solo para ${sucursalNombre}. Las demás sucursales no se tocan.`
+                  : `Se crea en ${sucursalNombre}.`}
+              </p>
+            )}
+          </div>
           <button className="admin-modal-close" onClick={onClose}>×</button>
         </div>
 
@@ -257,7 +379,17 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, onClo
           {/* STEP 1 — básicos */}
           {step === 0 && (
             <div className="form-grid">
-              <div className="form-group full"><label>Nombre</label><input value={p.nombre} onChange={e => set({ nombre: e.target.value })} autoFocus /></div>
+              <div className="form-group full">
+                <label>Nombre</label>
+                <input
+                  value={p.nombre}
+                  onChange={e => { hacerPropio('nombre'); set({ nombre: e.target.value }); }}
+                  autoFocus
+                />
+                {editandoSucursal && (
+                  <Herencia heredado={esHeredado('nombre')} onVolverAHeredar={() => volverAHeredar('nombre')} />
+                )}
+              </div>
               <div className="form-group full">
                 <label>Tipo de producto</label>
                 <div className="type-choice">
@@ -298,15 +430,27 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, onClo
                   )}
                 </div>
                 <span className="form-hint">Puedes asignar el producto a uno o ambos menús a la vez.</span>
+                {editandoSucursal && (
+                  <Herencia heredado={esHeredado('marcas')} onVolverAHeredar={() => volverAHeredar('marcas')} />
+                )}
               </div>
               <div className="form-group">
                 <label>Categoría</label>
-                <select value={p.categorias[0] ?? ''} onChange={e => set({ categorias: e.target.value ? [+e.target.value] : [] })}>
+                <select value={p.categorias[0] ?? ''} onChange={e => { hacerPropio('categorias'); set({ categorias: e.target.value ? [+e.target.value] : [] }); }}>
                   <option value="" disabled>Selecciona…</option>
                   {cats.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
                 </select>
+                {editandoSucursal && (
+                  <Herencia heredado={esHeredado('categorias')} onVolverAHeredar={() => volverAHeredar('categorias')} />
+                )}
               </div>
-              <div className="form-group full"><label>Descripción (opcional)</label><textarea rows={3} value={p.descripcion} onChange={e => set({ descripcion: e.target.value })} /></div>
+              <div className="form-group full">
+                <label>Descripción (opcional)</label>
+                <textarea rows={3} value={p.descripcion} onChange={e => { hacerPropio('descripcion'); set({ descripcion: e.target.value }); }} />
+                {editandoSucursal && (
+                  <Herencia heredado={esHeredado('descripcion')} onVolverAHeredar={() => volverAHeredar('descripcion')} />
+                )}
+              </div>
             </div>
           )}
 
@@ -314,8 +458,20 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, onClo
           {step === 1 && (
             <div className="form-grid">
               <div className="form-group"><label>Precio venta (Bs)</label><input type="number" value={p.precio || ''} onChange={e => set({ precio: +e.target.value })} /></div>
-              <div className="form-group"><label>Calorías (opcional)</label><input type="number" min="0" value={p.calorias ?? ''} onChange={e => set({ calorias: e.target.value ? +e.target.value : null })} /></div>
-              <div className="form-group"><label>Proteína (opcional)</label><input value={p.proteina ?? ''} onChange={e => set({ proteina: e.target.value })} placeholder="30g" /></div>
+              <div className="form-group">
+                <label>Calorías (opcional)</label>
+                <input type="number" min="0" value={p.calorias ?? ''} onChange={e => { hacerPropio('calorias'); set({ calorias: e.target.value ? +e.target.value : null }); }} />
+                {editandoSucursal && (
+                  <Herencia heredado={esHeredado('calorias')} onVolverAHeredar={() => volverAHeredar('calorias')} />
+                )}
+              </div>
+              <div className="form-group">
+                <label>Proteína (opcional)</label>
+                <input value={p.proteina ?? ''} onChange={e => { hacerPropio('proteina'); set({ proteina: e.target.value }); }} placeholder="30g" />
+                {editandoSucursal && (
+                  <Herencia heredado={esHeredado('proteina')} onVolverAHeredar={() => volverAHeredar('proteina')} />
+                )}
+              </div>
               <div className="form-group full">
                 <label>Foto del producto</label>
                 <label
@@ -484,6 +640,39 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, onClo
             </div>
           )}
         </div>
+
+        {/* Ya existe un producto con ese nombre: casi siempre es el de otra
+            sucursal que se está recreando a mano. Duplicarlo parte las ventas
+            en dos en la analítica, así que primero se ofrece habilitarlo. */}
+        {duplicado && (
+          <div className="dup-aviso">
+            <strong>«{duplicado.nombre}» ya existe en el catálogo.</strong>
+            <p>
+              {duplicado.sucursales.length > 0
+                ? `Está habilitado en ${duplicado.sucursales.map(s => s.nombre).join(', ')}.`
+                : 'Todavía no está habilitado en ninguna sucursal.'}
+              {' '}Si es el mismo plato, conviene habilitarlo acá en vez de crear otro:
+              así las ventas de los dos locales se suman al mismo producto y podés compararlos.
+            </p>
+            <div className="dup-acciones">
+              {sucursalId && (
+                <button className="admin-btn primary" onClick={habilitarExistente} disabled={saving}>
+                  Habilitar el existente acá
+                </button>
+              )}
+              <button
+                className="admin-btn"
+                onClick={() => { setDuplicado(null); save(p.estado_publicacion === 'PUBLICADO', true); }}
+                disabled={saving}
+              >
+                Crear uno nuevo igual
+              </button>
+              <button className="admin-btn ghost" onClick={() => setDuplicado(null)} disabled={saving}>
+                Cancelar
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="admin-modal-footer">
           {step > 0 && <button className="admin-btn ghost" onClick={() => setStep(step - 1)}>← Atrás</button>}

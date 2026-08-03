@@ -5,7 +5,17 @@
  * RINDE del panel de admin para mantener consistencia.
  */
 
-type InsumoStock = { stock_actual: number; activo?: boolean };
+/**
+ * El insumo puede traer `stocks` (filas de StockSucursal ya filtradas por el
+ * local que se está consultando). Cuando viene, manda: el rinde debe salir del
+ * stock DE ESE LOCAL. Con el agregado del negocio, una sucursal en cero se veía
+ * abastecida por el stock de la otra y dejaba vender lo que no tenía.
+ */
+type InsumoStock = {
+  stock_actual: number;
+  activo?: boolean;
+  stocks?: { stock_actual: number; activo?: boolean }[] | null;
+};
 type RecetaItem = { cantidad_utilizada: number; insumo?: InsumoStock | null };
 
 interface ProductoLike {
@@ -14,8 +24,19 @@ interface ProductoLike {
 }
 
 // Un insumo dado de baja no es vendible aunque le quede stock residual.
-const stockDisponible = (insumo: InsumoStock) =>
-  insumo.activo === false ? 0 : insumo.stock_actual;
+const stockDisponible = (insumo: InsumoStock) => {
+  // `stocks` presente = consulta con sucursal. Array vacío significa que ese
+  // local no maneja el insumo: es cero, no se hereda el total del negocio.
+  if (insumo.stocks) {
+    const local = insumo.stocks[0];
+    // La baja es del local: acá manda su fila, no el agregado del negocio. Un
+    // insumo de baja en Sur no rinde en Sur aunque Fitbull lo siga usando.
+    if (!local || local.activo === false) return 0;
+    return local.stock_actual;
+  }
+  if (insumo.activo === false) return 0;
+  return insumo.stock_actual;
+};
 
 export interface RindeInfo {
   /** Porciones producibles con el stock actual. null = no se rastrea stock. */

@@ -9,6 +9,8 @@ import { useShop, ShopOverlays } from '@/components/shop/order';
 import { TiltCard } from '@/components/shop/interactions';
 import { AnimatedChars, AnimatedWords, staggerContainer, staggerItem } from '@/components/shop/motion';
 import { BRANDS, type BrandKey } from '@/data/menus';
+import SucursalPicker from '@/components/shop/SucursalPicker';
+import { useSucursalTienda } from '@/hooks/sucursal-tienda';
 
 export default function MenuPage() {
   const params = useParams();
@@ -16,18 +18,21 @@ export default function MenuPage() {
   const router = useRouter();
   const shop = useShop();
   const [activeCat, setActiveCat] = useState('Todos');
+  const { sucursalId, cargando: cargandoSucursal } = useSucursalTienda();
   const [dbProducts, setDbProducts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const brandKey = (brand === 'fitbull' || brand === 'elevate' ? brand : null);
     if (!brandKey) return;
+    // El menú y los precios son los del local elegido.
+    if (cargandoSucursal) return;
 
     setDbProducts([]);
     setActiveCat('Todos');
     setLoading(true);
 
-    fetch(`/api/productos?marca=${brandKey}`)
+    fetch(`/api/productos?marca=${brandKey}${sucursalId ? `&sucursal=${sucursalId}` : ''}`)
       .then(r => r.json())
       .then(res => {
         const items: any[] = res.data ?? [];
@@ -66,7 +71,7 @@ export default function MenuPage() {
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [brand]);
+  }, [brand, sucursalId, cargandoSucursal]);
 
   const brandKey = (brand === 'fitbull' || brand === 'elevate' ? brand : null) as BrandKey | null;
   const data = brandKey ? BRANDS[brandKey] : null;
@@ -142,6 +147,7 @@ export default function MenuPage() {
             <span className="menu-hero-dot" />
             <span>{Icons.star} 4.9</span>
           </motion.div>
+          <SucursalPicker />
         </div>
       </header>
 

@@ -10,6 +10,8 @@ export const activoFijoSchema = z.object({
   valor_actual: z.coerce.number().nonnegative(),
   depreciacion_pct: z.coerce.number().nonnegative().max(100).optional().nullable(),
   notas: z.string().trim().optional().nullable(),
+  // Local al que pertenece; si no viene, se usa la sucursal principal.
+  sucursal_id: z.coerce.number().int().positive().optional(),
 });
 
 export const activoFijoUpdateSchema = activoFijoSchema.partial().extend({

@@ -5,6 +5,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import prisma from '@/lib/prisma';
+import { sucursalPorDefectoId } from '@/lib/server/sucursales/sucursal.service';
 import {
   ventasNetas,
   cmvPorReceta,
@@ -37,6 +38,7 @@ async function crearVenta(args: {
 }) {
   const venta = await prisma.transaccion.create({
     data: {
+      sucursal_id: await sucursalPorDefectoId(),
       cliente_nombre: MARCADOR,
       total: args.total,
       estado: args.estado,
@@ -72,7 +74,7 @@ beforeAll(async () => {
       precio: 20,
       tipo: 'ELABORADO',
       estado_publicacion: 'PUBLICADO',
-      recetaProducto_id: { create: [{ insumo_id: insumoId, cantidad_utilizada: 2 }] },
+      recetaProducto_id: { create: [{ insumo_id: insumoId, sucursal_id: await sucursalPorDefectoId(), cantidad_utilizada: 2 }] },
     },
   });
   productoId = producto.id;

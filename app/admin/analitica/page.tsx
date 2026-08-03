@@ -18,10 +18,13 @@ import {
   ZAxis,
 } from 'recharts';
 import AdminPanel from '@/components/admin/AdminPanel';
+import CustomDateRange, { hoyLocalISO } from '@/components/ui/CustomDateRange';
+import SucursalSelector from '@/components/ui/SucursalSelector';
+import { useSucursales } from '@/hooks/sucursales';
 import apiClient from '@/hooks/api';
 import { foodCostColor, menuClassMeta, type MenuClass } from '@/components/admin/inventoryData';
 
-type Rango = '7d' | '30d' | '90d';
+type Rango = '7d' | '30d' | '90d' | 'todo' | 'custom';
 
 interface MenuItem {
   producto_id: number;
@@ -57,9 +60,15 @@ const RANGOS: { key: Rango; label: string; dias: number }[] = [
   { key: '7d', label: '7 días', dias: 7 },
   { key: '30d', label: '30 días', dias: 30 },
   { key: '90d', label: '90 días', dias: 90 },
+  { key: 'todo', label: 'Todo', dias: 0 },
+  { key: 'custom', label: 'Rango', dias: 0 },
 ];
 
 const PALETTE = ['#FF5C19', '#1FA971', '#14342A', '#3B82C4', '#E8A317', '#E5484D'];
+/** Color reservado para la tajada agregada "Otros". */
+const OTROS_COLOR = '#9AA8A0';
+/** Elementos con tajada propia en las donas; el resto se agrupa en "Otros". */
+const TOP_MIX = 5;
 const CLASS_COLORS: Record<MenuClass, string> = {
   Estrella: '#1FA971',
   Caballo: '#3B82C4',
@@ -80,6 +89,33 @@ function mediana(values: number[]): number {
   return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
 }
 
+interface MixEntrada { nombre: string; total: number; pct: number }
+interface MixDona {
+  data: { name: string; value: number; pct: number }[];
+  /** Detalle de lo agrupado en "Otros" (null si todo cabe en el top). */
+  otros: { total: number; pct: number; items: MixEntrada[] } | null;
+}
+
+/**
+ * Deja las TOP_MIX entradas principales con tajada propia y suma el resto en "Otros",
+ * de modo que la dona siempre represente el 100% de las ventas del periodo.
+ */
+function buildMix(items: MixEntrada[] = []): MixDona {
+  const top = items.slice(0, TOP_MIX).map(item => ({ name: item.nombre, value: item.total, pct: item.pct }));
+  const resto = items.slice(TOP_MIX);
+  if (resto.length === 0) return { data: top, otros: null };
+
+  const total = resto.reduce((acc, item) => acc + item.total, 0);
+  const pct = Math.round(resto.reduce((acc, item) => acc + item.pct, 0) * 100) / 100;
+  return {
+    data: [...top, { name: 'Otros', value: Math.round(total * 100) / 100, pct }],
+    otros: { total, pct, items: resto },
+  };
+}
+
+/** Platos visibles por tarjeta antes de expandir. */
+const RECO_PREVIEW = 4;
+
 const CLASS_RECO: Record<MenuClass, string> = {
   Estrella: 'Mantén su calidad y dales protagonismo en el menú: son tus platos populares y rentables.',
   Caballo: 'Populares pero de bajo margen. Sube el precio con cuidado o reduce su costo de receta.',
@@ -96,8 +132,10 @@ function isoLocal(date: Date) {
 }
 
 /** Query del estado de resultados para el mismo período que la analítica. */
-function erQuery(rango: Rango) {
-  if (rango === '7d') return 'rango=7d';
+function erQuery(rango: Rango, custom: { desde: string; hasta: string }) {
+  if (rango === 'custom') return `rango=custom&desde=${custom.desde}&hasta=${custom.hasta}`;
+  // 'todo' y '7d' existen tal cual en el estado de resultados: se pasan directo.
+  if (rango === 'todo' || rango === '7d') return `rango=${rango}`;
   const dias = RANGOS.find(r => r.key === rango)!.dias;
   const hasta = new Date();
   const desde = new Date();
@@ -107,19 +145,41 @@ function erQuery(rango: Rango) {
 
 export default function AnaliticaPage() {
   const [rango, setRango] = useState<Rango>('30d');
+  const [custom, setCustom] = useState({ desde: hoyLocalISO(), hasta: hoyLocalISO() });
+  const [sucursal, setSucursal] = useState<string | undefined>(undefined);
+  const { data: sucursales = [] } = useSucursales();
+  // Se nombra el local solo cuando hay más de uno: con uno solo sería ruido.
+  const nombreSucursal = sucursales.length > 1
+    ? sucursales.find(s => String(s.id) === sucursal)?.nombre
+    : null;
   const [analitica, setAnalitica] = useState<AnaliticaData | null>(null);
   const [estado, setEstado] = useState<EstadoResultados | null>(null);
   const [loading, setLoading] = useState(true);
+  // Clases cuya lista de platos se muestra completa (por defecto se recorta a RECO_PREVIEW).
+  const [clasesExpandidas, setClasesExpandidas] = useState<MenuClass[]>([]);
+
+  const toggleClase = (clazz: MenuClass) =>
+    setClasesExpandidas(prev => (prev.includes(clazz) ? prev.filter(c => c !== clazz) : [...prev, clazz]));
 
   useEffect(() => {
     let cancelled = false;
 
     async function load() {
+      // Sin sucursal no se consulta. El selector la fija apenas carga la lista de
+      // locales; si se pedía antes, el servidor caía a la principal y la pantalla
+      // mostraba por un instante los números de otro local (y hacía dos pedidos).
+      if (!sucursal) {
+        if (sucursales.length === 0) setLoading(false);
+        return;
+      }
       setLoading(true);
       try {
+        const filtroSucursal = `&sucursal=${sucursal}`;
         const [analiticaRes, erRes] = await Promise.all([
-          apiClient.get(`/api/admin/analitica?rango=${rango}`),
-          apiClient.get(`/api/admin/contabilidad/estado-resultados?${erQuery(rango)}`),
+          apiClient.get(
+            `/api/admin/analitica?rango=${rango}${rango === 'custom' ? `&desde=${custom.desde}&hasta=${custom.hasta}` : ''}${filtroSucursal}`,
+          ),
+          apiClient.get(`/api/admin/contabilidad/estado-resultados?${erQuery(rango, custom)}${filtroSucursal}`),
         ]);
         if (cancelled) return;
         setAnalitica(analiticaRes.data?.data ?? null);
@@ -139,16 +199,10 @@ export default function AnaliticaPage() {
     return () => {
       cancelled = true;
     };
-  }, [rango]);
+  }, [rango, custom.desde, custom.hasta, sucursal, sucursales.length]);
 
-  const categoryMix = useMemo(
-    () => (analitica?.mixCategoria ?? []).slice(0, 6).map(item => ({ name: item.nombre, value: item.total })),
-    [analitica],
-  );
-  const brandMix = useMemo(
-    () => (analitica?.mixMarca ?? []).slice(0, 6).map(item => ({ name: item.nombre, value: item.total })),
-    [analitica],
-  );
+  const categoryMix = useMemo(() => buildMix(analitica?.mixCategoria), [analitica]);
+  const brandMix = useMemo(() => buildMix(analitica?.mixMarca), [analitica]);
 
   const rows = useMemo(
     () => [...(analitica?.ingenieriaMeniu ?? [])].sort((a, b) => b.margen - a.margen),
@@ -196,7 +250,10 @@ export default function AnaliticaPage() {
         <div className="admin-page-header">
           <div>
             <h1>Analítica & Finanzas</h1>
-            <p>Rentabilidad, tendencias e ingeniería de menú del periodo</p>
+            <p>
+              Rentabilidad, tendencias e ingeniería de menú del periodo
+              {nombreSucursal && <> · <strong>{nombreSucursal}</strong></>}
+            </p>
           </div>
           <div className="period-selector">
             {RANGOS.map(option => (
@@ -210,6 +267,14 @@ export default function AnaliticaPage() {
               </button>
             ))}
           </div>
+          {rango === 'custom' && (
+            <CustomDateRange desde={custom.desde} hasta={custom.hasta} onChange={setCustom} />
+          )}
+          {/* Sin consolidado a propósito: el costo por receta y el rinde son de
+              un local concreto. Mezclar las ventas de dos sucursales con la
+              receta de una sola daba un food cost y una clasificación de menú
+              que no corresponden a ninguna de las dos. */}
+          <SucursalSelector value={sucursal} onChange={setSucursal} permitirTodas={false} />
         </div>
 
         {loading ? (
@@ -251,8 +316,8 @@ export default function AnaliticaPage() {
                   )}
                 </div>
 
-                <DonutCard title="Mix por categoría" data={categoryMix} />
-                <DonutCard title="Mix por marca" data={brandMix} />
+                <DonutCard title="Mix por categoría" mix={categoryMix} unidad="categorías" />
+                <DonutCard title="Mix por marca" mix={brandMix} unidad="marcas" />
 
                 <div className="dash-card span-8">
                   <div className="dash-card-header">
@@ -283,18 +348,36 @@ export default function AnaliticaPage() {
                         ))}
                       </div>
                       <div className="menu-reco-grid">
-                        {claseResumen.map(({ clazz, productos }) => (
-                          <div key={clazz} className="menu-reco-card">
-                            <div className="menu-reco-head">
-                              <span className="menu-class-badge">{menuClassMeta[clazz].icon} {clazz}</span>
-                              <span className="menu-reco-count">{productos.length} {productos.length === 1 ? 'plato' : 'platos'}</span>
+                        {claseResumen.map(({ clazz, productos }) => {
+                          const expandida = clasesExpandidas.includes(clazz);
+                          const ocultos = productos.length - RECO_PREVIEW;
+                          return (
+                            <div key={clazz} className="menu-reco-card">
+                              <div className="menu-reco-head">
+                                <span className="menu-class-badge">{menuClassMeta[clazz].icon} {clazz}</span>
+                                <span className="menu-reco-count">{productos.length} {productos.length === 1 ? 'plato' : 'platos'}</span>
+                              </div>
+                              <p className="menu-reco-text">{CLASS_RECO[clazz]}</p>
+                              {productos.length > 0 && (
+                                <>
+                                  <p className={`menu-reco-items ${expandida ? 'expanded' : ''}`}>
+                                    {(expandida ? productos : productos.slice(0, RECO_PREVIEW)).join(', ')}
+                                  </p>
+                                  {ocultos > 0 && (
+                                    <button
+                                      type="button"
+                                      className="menu-reco-more"
+                                      onClick={() => toggleClase(clazz)}
+                                      aria-expanded={expandida}
+                                    >
+                                      {expandida ? 'Ver menos' : `+${ocultos} más`}
+                                    </button>
+                                  )}
+                                </>
+                              )}
                             </div>
-                            <p className="menu-reco-text">{CLASS_RECO[clazz]}</p>
-                            {productos.length > 0 && (
-                              <p className="menu-reco-items">{productos.slice(0, 4).join(', ')}{productos.length > 4 ? `, +${productos.length - 4}` : ''}</p>
-                            )}
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </>
                   )}
@@ -373,7 +456,13 @@ function MenuTooltip({ active, payload }: { active?: boolean; payload?: any[] })
   );
 }
 
-function DonutCard({ title, data }: { title: string; data: { name: string; value: number }[] }) {
+function DonutCard({ title, mix, unidad }: { title: string; mix: MixDona; unidad: string }) {
+  const { data, otros } = mix;
+  const [verOtros, setVerOtros] = useState(false);
+  // La tajada "Otros" siempre es la última y lleva color propio para distinguirla del top.
+  const colorAt = (index: number) =>
+    otros && index === data.length - 1 ? OTROS_COLOR : PALETTE[index % PALETTE.length];
+
   return (
     <div className="dash-card span-4">
       <div className="dash-card-header"><h3>{title}</h3></div>
@@ -384,20 +473,56 @@ function DonutCard({ title, data }: { title: string; data: { name: string; value
           <ResponsiveContainer width="100%" height={230}>
             <PieChart>
               <Pie data={data} dataKey="value" nameKey="name" innerRadius="58%" outerRadius="84%" paddingAngle={2}>
-                {data.map((_, index) => <Cell key={index} fill={PALETTE[index % PALETTE.length]} />)}
+                {data.map((_, index) => <Cell key={index} fill={colorAt(index)} />)}
               </Pie>
               <Tooltip contentStyle={{ background: '#fff', border: '1px solid #E4EAE5', borderRadius: 10, fontSize: 12 }} formatter={(value) => money(Number(value ?? 0))} />
             </PieChart>
           </ResponsiveContainer>
           <ul className="donut-legend">
-            {data.map((item, index) => (
-              <li key={item.name} className="donut-legend-item">
-                <span className="donut-legend-dot" style={{ background: PALETTE[index % PALETTE.length] }} />
-                <span className="donut-legend-name">{item.name}</span>
-                <span className="donut-legend-value">{money(item.value)}</span>
-              </li>
-            ))}
+            {data.map((item, index) => {
+              const esOtros = !!otros && index === data.length - 1;
+              return (
+                <li key={item.name} className={`donut-legend-item ${esOtros ? 'is-otros' : ''}`}>
+                  <span className="donut-legend-dot" style={{ background: colorAt(index) }} />
+                  {esOtros ? (
+                    <button
+                      type="button"
+                      className="donut-legend-name donut-legend-toggle"
+                      onClick={() => setVerOtros(v => !v)}
+                      aria-expanded={verOtros}
+                    >
+                      Otros ({otros!.items.length} {unidad}) {verOtros ? '▾' : '▸'}
+                    </button>
+                  ) : (
+                    <span className="donut-legend-name">{item.name}</span>
+                  )}
+                  <span className="donut-legend-value">{money(item.value)}</span>
+                  <span className="donut-legend-pct">{item.pct.toFixed(1)}%</span>
+                </li>
+              );
+            })}
           </ul>
+          {otros && verOtros && (
+            <ul className="donut-otros-detail">
+              <li className="donut-otros-item donut-otros-head">
+                <span className="donut-otros-name">Detalle de Otros</span>
+                <span className="donut-otros-value">Bs</span>
+                <span className="donut-otros-pct">% del total</span>
+              </li>
+              {otros.items.map(item => (
+                <li key={item.nombre} className="donut-otros-item">
+                  <span className="donut-otros-name">{item.nombre}</span>
+                  <span className="donut-otros-value">{money(item.total)}</span>
+                  <span className="donut-otros-pct">{item.pct.toFixed(1)}%</span>
+                </li>
+              ))}
+              <li className="donut-otros-item donut-otros-total">
+                <span className="donut-otros-name">Total Otros</span>
+                <span className="donut-otros-value">{money(otros.total)}</span>
+                <span className="donut-otros-pct">{otros.pct.toFixed(1)}%</span>
+              </li>
+            </ul>
+          )}
         </>
       )}
     </div>
