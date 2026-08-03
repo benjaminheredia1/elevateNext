@@ -6,6 +6,8 @@ import { handleApiError, ValidationError } from '@/lib/server/errors';
 import { horariosBatchSchema } from '@/lib/server/dto/horarios-trabajadores.dto';
 import { ROLES_TRABAJADOR, esRolTrabajador, normalizarCelda, normalizarSemana, validarCelda } from '@/lib/server/horarios/reglas';
 import prisma from '@/lib/prisma';
+import { alcanceSucursal } from '@/lib/server/sucursales/sucursal.service';
+import { parseSucursal } from '@/lib/server/finanzas/rango';
 
 /** Negocio de la sucursal (v1: sin relación Usuario/Sucursal -> Marca; valor único por ahora). */
 const NEGOCIO_DEFAULT = 'Elevate';
@@ -15,8 +17,18 @@ export async function GET(req: NextRequest) {
     const session = await requireAuth(req);
     requireRole(session, ['DUENO', 'ADMIN']);
 
+    // El horario es de una persona y una persona trabaja en un solo local, así
+    // que la sucursal se deriva del trabajador: no hace falta duplicarla en
+    // `HorarioTrabajador`. Si algún día alguien cubriera turnos en dos locales,
+    // ahí sí haría falta la columna propia.
+    const sucursalId = alcanceSucursal(session, parseSucursal(new URL(req.url).searchParams));
+
     const usuarios = await prisma.usuario.findMany({
-      where: { activo: true, rol: { in: ROLES_TRABAJADOR } },
+      where: {
+        activo: true,
+        rol: { in: ROLES_TRABAJADOR },
+        ...(sucursalId ? { sucursal_id: sucursalId } : {}),
+      },
       select: {
         id: true,
         nombre: true,

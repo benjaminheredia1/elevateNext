@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import apiClient from '@/hooks/api';
 import { useCrearFiado } from '@/hooks/cuentas-corrientes';
+import { useSucursalAdmin } from '@/hooks/sucursal-admin';
 
 type EstadoPedido = 'PENDIENTE' | 'EN_PREPARACION' | 'LISTO' | 'EN_LOCAL' | 'EN_CAMINO' | 'LLEGO' | 'ENTREGADO' | 'CANCELADO' | 'PAGADO';
 type FiltroEstado = 'Todos' | EstadoPedido;
@@ -18,6 +19,8 @@ interface DetalleItem {
 
 interface Pedido {
   id: number;
+  /** Correlativo propio de la sucursal: es el número que ve el cliente. */
+  numero_sucursal?: number | null;
   cliente_nombre: string | null;
   cliente_telefono: string | null;
   cliente_direccion: string | null;
@@ -135,7 +138,7 @@ function FiadoModal({
         </div>
         <div className="admin-modal-body">
           <div className="finance-modal-note">
-            Pedido #{pedido.id} · {pedido.cliente_nombre ?? 'Sin nombre'} · <strong>Bs. {pedido.total.toFixed(2)}</strong>
+            Pedido #{pedido.numero_sucursal ?? pedido.id} · {pedido.cliente_nombre ?? 'Sin nombre'} · <strong>Bs. {pedido.total.toFixed(2)}</strong>
           </div>
           <p style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 12 }}>
             Se creará una cuenta por cobrar vinculada a este pedido. El cliente podrá pagar luego.
@@ -191,9 +194,11 @@ function PedidoCard({
     <div className={`order-card ${expanded ? 'expanded' : ''}`}>
       <button className="order-card-main" onClick={onToggle} type="button">
         <div className="order-card-left">
-          {/* Aquí se listan pedidos de todos los turnos: manda el número global.
-              El #N del turno vive en /caja/movimientos, que sí es solo del turno. */}
-          <span className="order-id">#{pedido.id}</span>
+          {/* Manda el correlativo de la sucursal, que es el que se le dice al
+              cliente. El `id` es un contador compartido por todo el negocio: en
+              un local nuevo mostraba #2101 solo porque los otros ya vendieron
+              2100 veces. Queda como referencia interna. */}
+          <span className="order-id">#{pedido.numero_sucursal ?? pedido.id}</span>
           <span className="order-time">{time(pedido.created_at)}</span>
         </div>
         <div className="order-card-center">
@@ -340,9 +345,13 @@ export default function AdminOrders({ readOnly = false }: { readOnly?: boolean }
   const [actionError, setActionError] = useState('');
   const crearFiado = useCrearFiado();
 
+  // Los pedidos son los del local elegido en el panel: cada sucursal prepara
+  // y entrega los suyos.
+  const { sucursal } = useSucursalAdmin();
+
   const fetchPedidos = useCallback(async () => {
     try {
-      const res = await apiClient.get('/api/pedidos');
+      const res = await apiClient.get(`/api/pedidos${sucursal ? `?sucursal=${sucursal}` : ''}`);
       setPedidos(res.data?.data ?? []);
     } catch (err) {
       console.error(err);
@@ -350,7 +359,7 @@ export default function AdminOrders({ readOnly = false }: { readOnly?: boolean }
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [sucursal]);
 
   useEffect(() => {
     fetchPedidos();

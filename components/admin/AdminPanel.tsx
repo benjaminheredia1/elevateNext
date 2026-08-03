@@ -6,6 +6,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useOrderPolling, useAlertasPolling, type NuevoPedido } from '@/hooks/useOrderPolling';
 import { useAuth } from '@/hooks/auth';
+import SucursalActual from '@/components/admin/SucursalActual';
 
 /* ============================
    ICONS
@@ -58,6 +59,7 @@ const NAV_GROUPS = [
       { to: '/admin/products', label: 'Productos', icon: Icons.products },
       { to: '/admin/category', label: 'Categorías', icon: Icons.category },
       { to: '/admin/insumos', label: 'Inventario', icon: Icons.insumos, alertKey: 'insumos' },
+      { to: '/admin/inventario-sucursal', label: 'Stock por Sucursal', icon: Icons.insumos },
       { to: '/admin/bajas', label: 'Bajas', icon: Icons.bajas },
     ],
   },
@@ -71,6 +73,7 @@ const NAV_GROUPS = [
   {
     label: 'Finanzas',
     items: [
+      { to: '/admin/consolidado', label: 'Consolidado', icon: Icons.analitica },
       { to: '/admin/caja', label: 'Caja', icon: Icons.caja },
       { to: '/admin/flujo-caja', label: 'Flujo de Caja', icon: Icons.flujo },
       { to: '/admin/contabilidad', label: 'Contabilidad', icon: Icons.contabilidad },
@@ -84,9 +87,10 @@ const NAV_GROUPS = [
   {
     label: 'Gestión',
     items: [
+      { to: '/admin/sucursales', label: 'Sucursales', icon: Icons.caja },
       { to: '/admin/clientes', label: 'Clientes', icon: Icons.clientes },
       { to: '/admin/privilegios', label: 'Privilegios', icon: Icons.privilegios },
-      { to: '/admin/reglasHorarias', label: 'Horarios', icon: Icons.horarios },
+      { to: '/admin/combos', label: 'Combos y promos', icon: Icons.horarios },
       { to: '/admin/horarios-trabajadores', label: 'Horario de Trabajadores', icon: Icons.horarioTrabajadores },
       { to: '/admin/usuarios', label: 'Usuarios', icon: Icons.usuarios },
       { to: '/admin/auditoria', label: 'Auditoría', icon: Icons.auditoria },
@@ -222,6 +226,9 @@ export default function AdminPanel({ children }: { children: React.ReactNode }) 
           <img src="/elevate-logo-light.png" alt="Elevate" className="admin-logo" />
           <span className="admin-badge">Admin</span>
         </div>
+
+        {/* Dónde estoy parado: condiciona la lectura de todos los números del panel. */}
+        <SucursalActual />
 
         <nav className="admin-nav">
           {NAV_GROUPS.map(group => (

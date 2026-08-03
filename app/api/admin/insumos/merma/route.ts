@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
+import { resolverSucursal } from '@/lib/server/sucursales/sucursal.service';
 import { requireAuth, requireRole } from '@/lib/server/auth/session';
 import { handleApiError } from '@/lib/server/errors';
 import { RegistrarMermaSchema } from '@/lib/server/dto/inventario.dto';
@@ -21,6 +22,7 @@ export async function POST(req: NextRequest) {
         parsed.descripcion,
         session.id,
         session.rol,
+        await resolverSucursal(parsed.sucursal_id, tx),
       ),
     );
 

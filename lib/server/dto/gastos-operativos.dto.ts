@@ -7,6 +7,8 @@ export const gastoOperativoSchema = z.object({
   metodo_pago: z.enum(['EFECTIVO', 'QR']),
   fecha: z.coerce.date(),
   notas: z.string().trim().max(500).optional(),
+  // Local al que pertenece; si no viene, se usa la sucursal principal.
+  sucursal_id: z.coerce.number().int().positive().optional(),
 });
 
 export const idSchema = z.object({

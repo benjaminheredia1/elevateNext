@@ -1,9 +1,13 @@
 'use client';
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import apiClient from '@/hooks/api';
 import { useDarDeBajaInsumo, useReactivarInsumo, type ResultadoBajaInsumo, type ResultadoReactivarInsumo } from '@/hooks/insumos';
 import { convertir, unidadesEntrada } from '@/lib/unidades';
+import SucursalSelector from '@/components/ui/SucursalSelector';
+import CopiarInsumosModal from '@/components/admin/CopiarInsumosModal';
+import { useSucursales } from '@/hooks/sucursales';
+import { useSucursalAdmin } from '@/hooks/sucursal-admin';
 
 type Tab = 'insumos' | 'movimientos' | 'recetas' | 'unidades';
 type EstadoStock = 'ok' | 'bajo' | 'critico' | 'agotado';
@@ -290,12 +294,24 @@ function errorMsg(err: unknown): string {
 
 export default function AdminInsumos({ readOnly = false }: { readOnly?: boolean }) {
   const [tab, setTab] = useState<Tab>('insumos');
+  // Local cuyo stock se está viendo y operando. Sin sucursal elegida se muestra
+  // el agregado del negocio, que es el comportamiento previo a multi-sucursal.
+  // Sale del store del panel: es la misma que muestra la barra lateral.
+  const { sucursal, setSucursal, listo } = useSucursalAdmin();
+  // Sin sucursal elegida se ve la suma de todos los locales: el stock total es
+  // un dato válido, pero el estado (OK/Bajo/Crítico) sobre esa suma no lo es.
+  const consolidado = !sucursal;
   const [insumos, setInsumos] = useState<Insumo[]>([]);
   const [movimientos, setMovimientos] = useState<Movimiento[]>([]);
   const [recetas, setRecetas] = useState<Receta[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'todos' | EstadoStock>('todos');
+
+  // Al pasar a la vista sumada, un filtro por estado dejaría de tener sentido.
+  useEffect(() => {
+    if (consolidado) setStatusFilter('todos');
+  }, [consolidado]);
   const [selected, setSelected] = useState<Insumo | null>(null);
   const [modalAction, setModalAction] = useState<ModalAction>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
@@ -313,36 +329,58 @@ export default function AdminInsumos({ readOnly = false }: { readOnly?: boolean 
   const [resultadoBaja, setResultadoBaja] = useState<ResultadoBajaInsumo | null>(null);
   const [resultadoReactivar, setResultadoReactivar] = useState<ResultadoReactivarInsumo | null>(null);
   const [vistaInsumos, setVistaInsumos] = useState<'activos' | 'baja'>('activos');
+  const [copiarAbierto, setCopiarAbierto] = useState(false);
+  const { data: sucursales = [] } = useSucursales();
+  const nombreSucursal = useMemo(
+    () => (sucursal ? sucursales.find(s => s.id === Number(sucursal))?.nombre : undefined),
+    [sucursales, sucursal],
+  );
+  // Confirmación de "quitar del inventario de este local" (no borra el insumo).
+  const [quitarConfirm, setQuitarConfirm] = useState<number | null>(null);
   const darDeBaja = useDarDeBajaInsumo();
   const reactivar = useReactivarInsumo();
 
+  /**
+   * Carga en curso. Al abrir la pantalla se pide una vez con la sucursal sin
+   * resolver y otra apenas el panel dice en qué local estamos; sin este número
+   * la primera puede llegar después y pisar a la correcta, dejando el
+   * inventario de otro local en pantalla hasta recargar.
+   */
+  const pedido = useRef(0);
+
   const load = useCallback(async () => {
+    const mio = ++pedido.current;
     setLoading(true);
     try {
       const [insumosRes, movimientosRes, recetasRes, unidadesRes] = await Promise.all([
-        apiClient.get('/api/insumo?incluir_inactivos=1'),
+        apiClient.get(`/api/insumo?incluir_inactivos=1${sucursal ? `&sucursal=${sucursal}` : ''}`),
         apiClient.get('/api/insumo/movimiento'),
         apiClient.get('/api/recetas'),
         apiClient.get('/api/unidades-medida'),
       ]);
+      if (mio !== pedido.current) return; // llegó tarde: ya hay una carga más nueva
       setInsumos(Array.isArray(insumosRes.data) ? insumosRes.data : []);
       setMovimientos(movimientosRes.data?.data ?? []);
       setRecetas(recetasRes.data?.data ?? []);
       setUnidades(Array.isArray(unidadesRes.data) ? unidadesRes.data : []);
     } catch (err) {
+      if (mio !== pedido.current) return;
       console.error(err);
       setInsumos([]);
       setMovimientos([]);
       setRecetas([]);
       setUnidades([]);
     } finally {
-      setLoading(false);
+      if (mio === pedido.current) setLoading(false);
     }
-  }, []);
+  }, [sucursal]);
 
   useEffect(() => {
+    // Sin la sucursal resuelta el pedido saldría sin local y traería el
+    // inventario de todo el negocio.
+    if (!listo) return;
     load();
-  }, [load]);
+  }, [load, listo]);
 
   const insumosActivos = useMemo(() => insumos.filter(i => i.activo), [insumos]);
   // Base de la vista actual: activos o dados de baja (los filtros de stock cuentan sobre esta)
@@ -542,15 +580,43 @@ export default function AdminInsumos({ readOnly = false }: { readOnly?: boolean 
     }
   };
 
-  const handleReactivar = async (insumo: Insumo) => {
-    if (!window.confirm(`¿Reactivar el insumo "${insumo.nombre}"? Los productos en revisión se resolverán automáticamente.`)) return;
+  /**
+   * Saca el insumo del inventario de la sucursal elegida. No elimina el insumo:
+   * la ficha es del negocio y la comparten las recetas y el histórico de todos
+   * los locales. Si acá hubo movimientos o queda stock, el servidor lo rechaza.
+   */
+  const handleQuitarDeSucursal = async (insumo: Insumo) => {
+    if (!sucursal) return;
     setPageMsg(null);
     try {
-      const resultado = await reactivar.mutateAsync(insumo.id);
+      await apiClient.delete(`/api/insumo/${insumo.id}/sucursales`, {
+        data: { sucursal_id: Number(sucursal) },
+      });
+      setQuitarConfirm(null);
+      setPageMsg({
+        type: 'ok',
+        text: `"${insumo.nombre}" salió del inventario de ${nombreSucursal ?? 'esta sucursal'}. El insumo sigue existiendo en el negocio.`,
+      });
+      await load();
+    } catch (err) {
+      setQuitarConfirm(null);
+      setPageMsg({ type: 'error', text: errorMsg(err) });
+    }
+  };
+
+  const handleReactivar = async (insumo: Insumo) => {
+    if (!sucursal) {
+      setPageMsg({ type: 'error', text: 'Elegí una sucursal: el insumo se reactiva en ese local.' });
+      return;
+    }
+    if (!window.confirm(`¿Reactivar el insumo "${insumo.nombre}" en ${nombreSucursal ?? 'esta sucursal'}? Los productos que estaban en revisión acá se resolverán automáticamente.`)) return;
+    setPageMsg(null);
+    try {
+      const resultado = await reactivar.mutateAsync({ id: insumo.id, sucursalId: Number(sucursal) });
       setResultadoReactivar(resultado);
       setPageMsg({
         type: 'ok',
-        text: `Insumo "${resultado.insumo.nombre}" reactivado. ${resultado.productosResueltos} producto(s) resuelto(s).`,
+        text: `Insumo "${resultado.insumo.nombre}" reactivado en ${nombreSucursal ?? 'esta sucursal'}. ${resultado.productosResueltos} producto(s) resuelto(s) acá.`,
       });
       await load();
     } catch (err) {
@@ -590,6 +656,9 @@ export default function AdminInsumos({ readOnly = false }: { readOnly?: boolean 
     }
     setSaving(true);
     setFormError('');
+    // Los movimientos se registran en el local que se está viendo; sin selección
+    // van a la principal (comportamiento previo a multi-sucursal).
+    const sucursalNumero = sucursal ? Number(sucursal) : undefined;
     try {
       if (modalAction === 'crear') {
         await apiClient.post('/api/insumo', {
@@ -603,6 +672,7 @@ export default function AdminInsumos({ readOnly = false }: { readOnly?: boolean 
           stock_actual: Number(form.stock_actual || 0),
           stock_minimo: Number(form.stock_minimo || 0),
           unidad_medida: form.unidad_medida,
+          sucursal_id: sucursalNumero,
         });
       }
       if (modalAction === 'editar' && selected) {
@@ -614,7 +684,9 @@ export default function AdminInsumos({ readOnly = false }: { readOnly?: boolean 
           nombre: form.nombre.trim(),
           proveedor: form.proveedor.trim() || null,
           punto_critico: Number(form.punto_critico || 0),
-          stock_actual: selected.stock_actual,
+          // El stock NO se manda: editar un insumo no puede cambiarlo. Reenviar
+          // el valor de pantalla pisaba las ventas descontadas mientras la lista
+          // estaba abierta. Para corregirlo está el conteo físico (✓).
           stock_minimo: Number(form.stock_minimo || 0),
           unidad_medida: form.unidad_medida,
         });
@@ -627,6 +699,7 @@ export default function AdminInsumos({ readOnly = false }: { readOnly?: boolean 
           nota: usarEnvases
             ? [`${envN} envase(s) de ${envT} ${selSufijo}`, form.descripcion].filter(Boolean).join(' — ')
             : form.descripcion || undefined,
+          sucursal_id: sucursalNumero,
         });
       }
       if (modalAction === 'merma' && selected) {
@@ -634,6 +707,7 @@ export default function AdminInsumos({ readOnly = false }: { readOnly?: boolean 
           insumo_id: selected.id,
           cantidad: Number(form.cantidad || 0),
           descripcion: form.descripcion || `Merma de ${selected.nombre}`,
+          sucursal_id: sucursalNumero,
         });
       }
       if (modalAction === 'conteo' && selected) {
@@ -643,17 +717,24 @@ export default function AdminInsumos({ readOnly = false }: { readOnly?: boolean 
           descripcion: usarEnvases
             ? [`Conteo: ${envN} envase(s) de ${envT} ${selSufijo}`, form.descripcion].filter(Boolean).join(' — ')
             : form.descripcion || undefined,
+          sucursal_id: sucursalNumero,
         });
       }
       if (modalAction === 'baja' && selected) {
+        // La baja es del local: sin sucursal elegida no hay dónde aplicarla.
+        if (!sucursalNumero) {
+          setFormError('Elegí una sucursal arriba: el insumo se da de baja en ese local, no en todo el negocio.');
+          return;
+        }
         const resultado = await darDeBaja.mutateAsync({
           id: selected.id,
           motivo: form.descripcion.trim() || `Baja de ${selected.nombre}`,
+          sucursalId: sucursalNumero,
         });
         setResultadoBaja(resultado);
         setPageMsg({
           type: 'ok',
-          text: `Insumo "${resultado.insumo.nombre}" dado de baja. ${resultado.productosEnRevision} producto(s) pasó/pasaron a revisión.`,
+          text: `Insumo "${resultado.insumo.nombre}" dado de baja en ${nombreSucursal ?? 'esta sucursal'}. ${resultado.productosEnRevision} producto(s) pasó/pasaron a revisión acá. Las demás sucursales no se tocaron.`,
         });
         await load(); // Refresca la tabla detrás del modal de resultado
         return; // No cierra el modal aún, muestra resultado
@@ -686,8 +767,14 @@ export default function AdminInsumos({ readOnly = false }: { readOnly?: boolean 
           <h1>Inventario</h1>
           <p>Stock, movimientos y fichas técnicas{readOnly ? ' · solo lectura (lo gestiona el administrador)' : ''}</p>
         </div>
-        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <SucursalSelector value={sucursal} onChange={setSucursal} />
           <button className="admin-btn secondary" onClick={load} type="button">Actualizar</button>
+          {/* Con una sucursal elegida el inventario es el de ese local: se puede
+              poblar trayendo insumos de otro sin recrearlos a mano. */}
+          {!readOnly && sucursal && (
+            <button className="admin-btn" onClick={() => setCopiarAbierto(true)} type="button">Agregar de otra sucursal</button>
+          )}
           {!readOnly && <button className="admin-btn primary" onClick={() => openModal('crear')} type="button">+ Insumo</button>}
         </div>
       </div>
@@ -782,13 +869,18 @@ export default function AdminInsumos({ readOnly = false }: { readOnly?: boolean 
               )}
             </div>
             <div className="admin-cat-filters">
-              {[
-                ['todos', 'Todos', insumosVista.length],
-                ['ok', 'OK', countsVista.ok],
-                ['bajo', 'Bajo', countsVista.bajo],
-                ['critico', 'Crítico', countsVista.critico],
-                ['agotado', 'Agotado', countsVista.agotado],
-              ].map(([key, label, count]) => (
+              {(consolidado
+                // Sumando locales el estado no es real, así que no se ofrece
+                // filtrar por él: para eso se elige una sucursal.
+                ? [['todos', 'Todos', insumosVista.length]]
+                : [
+                  ['todos', 'Todos', insumosVista.length],
+                  ['ok', 'OK', countsVista.ok],
+                  ['bajo', 'Bajo', countsVista.bajo],
+                  ['critico', 'Crítico', countsVista.critico],
+                  ['agotado', 'Agotado', countsVista.agotado],
+                ]
+              ).map(([key, label, count]) => (
                 <button
                   key={key}
                   className={`cat-filter-btn ${statusFilter === key ? 'active' : ''}`}
@@ -806,7 +898,13 @@ export default function AdminInsumos({ readOnly = false }: { readOnly?: boolean 
           ) : filtered.length === 0 ? (
             <div className="empty-state">
               <h4>Sin insumos</h4>
-              <p>{insumos.length === 0 ? 'Crea el primer insumo para controlar el stock.' : 'Ajusta los filtros o la búsqueda.'}</p>
+              <p>
+                {insumos.length > 0
+                  ? 'Ajusta los filtros o la búsqueda.'
+                  : nombreSucursal
+                    ? `${nombreSucursal} todavía no maneja ningún insumo. Traelos de otra sucursal o creá el primero.`
+                    : 'Crea el primer insumo para controlar el stock.'}
+              </p>
               {insumos.length === 0 && !readOnly && <button className="admin-btn primary" onClick={() => openModal('crear')} type="button">+ Insumo</button>}
             </div>
           ) : (
@@ -851,8 +949,19 @@ export default function AdminInsumos({ readOnly = false }: { readOnly?: boolean 
                         </td>
                         <td>{insumo.categoria_insumo || '—'}</td>
                         <td>{insumo.equivalencia_cantidad != null && insumo.equivalencia_unidad ? `${number(insumo.equivalencia_cantidad)} ${insumo.equivalencia_unidad}` : '—'}</td>
-                        <td><span className={`pub-badge ${meta.className}`} style={{ color: meta.color }}>{meta.label}</span></td>
-                        <td className="num"><span className={`stock-val ${state !== 'ok' ? 'low' : ''}`}>{number(insumo.stock_actual)} {insumo.unidad_medida}</span></td>
+                        <td>
+                          {consolidado ? (
+                            // Sumando todos los locales, el semáforo mentiría: puede
+                            // dar "OK" mientras una sucursal está en cero. El estado
+                            // real se ve eligiendo un local o en Stock por Sucursal.
+                            <span className="admin-cell-muted" title="Elige una sucursal para ver su estado de stock">
+                              varía por local
+                            </span>
+                          ) : (
+                            <span className={`pub-badge ${meta.className}`} style={{ color: meta.color }}>{meta.label}</span>
+                          )}
+                        </td>
+                        <td className="num"><span className={`stock-val ${!consolidado && state !== 'ok' ? 'low' : ''}`}>{number(insumo.stock_actual)} {insumo.unidad_medida}</span></td>
                         <td className="num">{number(insumo.stock_minimo)}</td>
                         <td className="num">{coverage(insumo)}</td>
                         <td className="num">{money(insumo.costo_promedio)}</td>
@@ -866,12 +975,48 @@ export default function AdminInsumos({ readOnly = false }: { readOnly?: boolean 
                                 <button className="action-btn edit" title="Compra" onClick={() => openModal('compra', insumo)} type="button">↥</button>
                                 <button className="action-btn delete" title="Merma" onClick={() => openModal('merma', insumo)} type="button">⌫</button>
                                 <button className="action-btn" title="Corregir stock (conteo físico) — usa esto si te equivocaste en una cantidad" onClick={() => openModal('conteo', insumo)} type="button">✓</button>
-                                <button className="action-btn delete" title="Dar de baja" onClick={() => openModal('baja', insumo)} type="button">⛔</button>
-                                <button className="action-btn delete" title="Eliminar insumo" onClick={() => handleDelete(insumo)} type="button">🗑</button>
+                                <button
+                                  className="action-btn delete"
+                                  title={sucursal
+                                    ? `Dar de baja en ${nombreSucursal ?? 'esta sucursal'} (las demás lo siguen usando)`
+                                    : 'Elegí una sucursal: la baja del insumo es de un local'}
+                                  disabled={!sucursal}
+                                  onClick={() => openModal('baja', insumo)}
+                                  type="button"
+                                >⛔</button>
+                                {/* Con una sucursal elegida la papelera saca el insumo del
+                                    inventario DE ESE LOCAL y no borra nada más; el insumo y
+                                    las demás sucursales quedan intactos. En consolidado sigue
+                                    siendo la eliminación del insumo del negocio. */}
+                                {sucursal ? (
+                                  quitarConfirm === insumo.id ? (
+                                    <>
+                                      <button className="action-btn confirm-yes" onClick={() => handleQuitarDeSucursal(insumo)} type="button">Sí</button>
+                                      <button className="action-btn confirm-no" onClick={() => setQuitarConfirm(null)} type="button">No</button>
+                                    </>
+                                  ) : (
+                                    <button
+                                      className="action-btn delete"
+                                      title={`Quitar del inventario de ${nombreSucursal ?? 'esta sucursal'} (el insumo no se elimina)`}
+                                      onClick={() => setQuitarConfirm(insumo.id)}
+                                      type="button"
+                                    >🗑</button>
+                                  )
+                                ) : (
+                                  <button className="action-btn delete" title="Eliminar insumo" onClick={() => handleDelete(insumo)} type="button">🗑</button>
+                                )}
                               </>
                             ) : (
                               <>
-                                <button className="action-btn edit" title="Reactivar insumo" onClick={() => handleReactivar(insumo)} type="button">↩</button>
+                                <button
+                                  className="action-btn edit"
+                                  title={sucursal
+                                    ? `Reactivar en ${nombreSucursal ?? 'esta sucursal'}`
+                                    : 'Elegí una sucursal: el insumo se reactiva en un local'}
+                                  disabled={!sucursal}
+                                  onClick={() => handleReactivar(insumo)}
+                                  type="button"
+                                >↩</button>
                               </>
                             )}
                           </div>
@@ -1193,6 +1338,19 @@ export default function AdminInsumos({ readOnly = false }: { readOnly?: boolean 
             </div>
           </form>
         </div>
+      )}
+
+      {copiarAbierto && sucursal && (
+        <CopiarInsumosModal
+          destino={Number(sucursal)}
+          destinoNombre={nombreSucursal ?? 'esta sucursal'}
+          onClose={() => setCopiarAbierto(false)}
+          onCopiado={(cantidad) => {
+            setCopiarAbierto(false);
+            setPageMsg({ type: 'ok', text: `${cantidad} insumo(s) agregados al inventario de ${nombreSucursal ?? 'esta sucursal'}, con stock en cero.` });
+            load();
+          }}
+        />
       )}
     </div>
   );

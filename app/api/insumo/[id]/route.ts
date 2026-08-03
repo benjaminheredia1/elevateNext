@@ -31,9 +31,14 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     const anterior = await prisma.insumo.findUnique({ where: { id: insumoId } });
     if (!anterior) throw new NotFoundError('Insumo no encontrado');
 
+    // `stock_actual` se ignora a propósito aunque venga en el body: el stock es
+    // consecuencia de movimientos (compra, merma, conteo, venta), nunca de una
+    // edición. Escribirlo acá pisaba las ventas descontadas mientras el formulario
+    // estaba abierto, sin dejar rastro, y con multi-sucursal desincronizaba
+    // `Insumo` (agregado) de `StockSucursal` (por local).
     const {
       categoria_insumo, costo_promedio, equivalencia_cantidad, equivalencia_unidad, nombre, proveedor,
-      punto_critico, stock_actual, stock_minimo, unidad_medida,
+      punto_critico, stock_minimo, unidad_medida,
     } = await request.json();
     const tieneEquivalencia = equivalencia_unidad && equivalencia_cantidad;
     const insumo = await prisma.insumo.update({
@@ -46,7 +51,6 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
         nombre,
         proveedor: proveedor || null,
         punto_critico: Number(punto_critico || 0),
-        stock_actual: Number(stock_actual ?? anterior.stock_actual),
         stock_minimo: Number(stock_minimo || 0),
         unidad_medida,
       },

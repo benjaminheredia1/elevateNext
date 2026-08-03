@@ -104,17 +104,33 @@
 .navbar-mobile-toggle {
   display: none;
   flex-direction: column;
+  align-items: center;
+  justify-content: center;
   gap: 5px;
+  /* Botón real de 44x44: area de toque comoda y peso visual parejo al logo,
+     en vez de tres rayas sueltas pegadas al borde. */
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
   cursor: pointer;
-  padding: 4px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .navbar-mobile-toggle span {
   width: 24px;
   height: 2px;
   background: var(--text-primary);
-  transition: all 0.3s;
+  transition: transform 0.3s var(--ease-out), opacity 0.2s;
 }
+
+/* Abierto, las tres lineas se convierten en una X. */
+.navbar-mobile-toggle.is-abierto span:nth-child(1) { transform: translateY(7px) rotate(45deg); }
+.navbar-mobile-toggle.is-abierto span:nth-child(2) { opacity: 0; }
+.navbar-mobile-toggle.is-abierto span:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
+
+.navbar-mobile-panel { display: none; }
 
 @media (max-width: 768px) {
   .navbar-links {
@@ -124,6 +140,39 @@
   .navbar-mobile-toggle {
     display: flex;
   }
+
+  /* Despliegue bajo la barra: los mismos enlaces que en escritorio. */
+  .navbar-mobile-panel {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: rgba(22, 22, 22, 0.97);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .navbar-mobile-panel a {
+    padding: 15px 24px;
+    color: var(--text-primary);
+    font-weight: 600;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  }
+
+  .navbar-mobile-panel a:active { background: rgba(255, 255, 255, 0.05); }
+
+  .navbar-mobile-panel .navbar-cta {
+    margin: 16px 24px 20px;
+    width: calc(100% - 48px);
+  }
+}
+
+/* El navbar es fijo: sin este margen el ancla deja el titulo de la seccion
+   escondido detras de la barra. */
+section[id] { scroll-margin-top: 96px; }
+
+@media (max-width: 768px) {
+  section[id] { scroll-margin-top: 76px; }
 }
 
 /* ===== HERO ===== */
@@ -2702,8 +2751,12 @@
   flex-direction: column;
   justify-content: center;
   text-align: center;
+  /* Sin el parrafo el contenido ya no llena la pantalla: con min-height 100vh
+     el sobrante se repartia arriba y abajo y dejaba un hueco enorme antes de
+     la siguiente seccion. Ahora el alto lo define el contenido. */
+  min-height: auto;
   padding-top: 150px;
-  padding-bottom: 64px;
+  padding-bottom: 40px;
 }
 
 /* Calm the ambient glow — one disciplined wash, not two saturated blobs */
@@ -2936,11 +2989,16 @@
   font-size: 1.05rem;
 }
 
+/* Sin el parrafo descriptivo, su espacio se reparte entre los bloques que
+   quedan en vez de dejar un hueco: mas aire bajo el subtitulo y separaciones
+   parejas entre botones, sucursal y estadisticas. */
+.hero-centered .hero-subhead { margin-bottom: 46px; }
+
 .hero-centered .hero-actions {
   justify-content: center;
   align-items: center;
   gap: 24px;
-  margin-bottom: 54px;
+  margin-bottom: 72px;
 }
 
 /* Quiet secondary action (demoted from a second button) */
@@ -2987,6 +3045,8 @@
    =================================================================== */
 .menus {
   padding: var(--section-padding);
+  /* El hero ya cierra con su propio aire: sin esto la separacion se duplicaba. */
+  padding-top: 80px;
   position: relative;
 }
 
@@ -3295,3 +3355,134 @@
   box-shadow: 0 6px 28px rgba(255, 92, 25, 0.45);
 }
 
+
+/* ===== SELECTOR DE SUCURSAL (tienda) ===== */
+/* Dentro del hero, antes de las estadísticas: el local elegido define menú,
+   precios y disponibilidad, así que tiene que verse sin scrollear. */
+.hero-sucursal {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  /* Mismo aire arriba que abajo (los 72px los pone .hero-actions), para que
+     quede a mitad de camino entre los botones y las estadisticas. */
+  margin: 0 0 72px;
+}
+.hero-sucursal .shop-sucursal-block { margin-top: 0; }
+
+/* Pestañas: el local activo va resaltado y el resto apagado, de modo que la
+   sucursal en la que se compra se lee de un vistazo sin abrir nada. */
+.shop-sucursal-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin-top: 18px;
+}
+.shop-sucursal-block.is-compacto { margin-top: 0; width: auto; }
+
+.shop-sucursal-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 760px;
+}
+.shop-sucursal-block.is-compacto .shop-sucursal-row { width: auto; max-width: 100%; }
+
+/* Con muchos locales la fila se desplaza en vez de apretar las pestañas. */
+.shop-sucursal-tabs {
+  display: flex;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  scroll-behavior: smooth;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.shop-sucursal-tabs::-webkit-scrollbar { display: none; }
+.shop-sucursal-block.is-compacto .shop-sucursal-tabs { gap: 6px; }
+
+.shop-sucursal-nav {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(0, 0, 0, 0.28);
+  color: #fff;
+  cursor: pointer;
+  transition: background 0.25s, opacity 0.25s;
+}
+.shop-sucursal-nav:hover:not(:disabled) { background: rgba(0, 0, 0, 0.45); }
+.shop-sucursal-nav:disabled { opacity: 0.3; cursor: default; }
+.shop-sucursal-block.is-compacto .shop-sucursal-nav { width: 26px; height: 26px; }
+
+.shop-sucursal-tab {
+  /* Crecen para repartirse la fila cuando son pocas; con muchas conservan un
+     ancho legible y la fila pasa a desplazarse. */
+  flex: 1 0 auto;
+  min-width: 180px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 12px 18px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(0, 0, 0, 0.22);
+  color: rgba(255, 255, 255, 0.72);
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  transition: background 0.25s, color 0.25s, transform 0.2s var(--ease-out);
+}
+.shop-sucursal-tab:hover:not(.is-activa):not(.is-proxima) {
+  background: rgba(0, 0, 0, 0.34);
+  color: #fff;
+}
+.shop-sucursal-tab.is-activa {
+  background: var(--cream-light);
+  border-color: transparent;
+  color: var(--black);
+  font-weight: 700;
+  cursor: default;
+}
+/* Hueco de la próxima sucursal: presente pero explícitamente inactivo. */
+.shop-sucursal-tab.is-proxima {
+  cursor: default;
+  color: rgba(255, 255, 255, 0.55);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.76rem;
+}
+.shop-sucursal-pin { flex-shrink: 0; opacity: 0.85; }
+
+.shop-sucursal-block.is-compacto .shop-sucursal-tab {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 7px 12px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+}
+.shop-sucursal-block.is-compacto .shop-sucursal-tab.is-proxima { font-size: 0.68rem; }
+
+.shop-sucursal-dir { font-size: 0.78rem; opacity: 0.6; }
+
+@media (max-width: 560px) {
+  /* En móvil la fila sigue horizontal: se recorre deslizando, que es el gesto
+     esperado. Solo se achican las pestañas para que entren dos sin flechas. */
+  .shop-sucursal-tab { min-width: 140px; padding: 10px 12px; font-size: 0.82rem; }
+  .shop-sucursal-tab.is-proxima { font-size: 0.68rem; letter-spacing: 0.05em; }
+}

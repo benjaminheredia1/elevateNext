@@ -1,4 +1,5 @@
 import prisma from '@/lib/prisma';
+import { resolverSucursal } from '@/lib/server/sucursales/sucursal.service';
 import { NotFoundError } from '@/lib/server/errors';
 import type { Prisma } from '@prisma/client';
 import type { ActivoFijoInput, ActivoFijoUpdateInput, CategoriaActivo } from '@/lib/server/dto/activos-fijos.dto';
@@ -17,9 +18,14 @@ function decorate<T extends { valor_original: Prisma.Decimal; valor_actual: Pris
   };
 }
 
-export async function listarActivosFijos(incluirInactivos = false) {
+export async function listarActivosFijos(incluirInactivos = false, sucursal?: number) {
   const rows = await prisma.activoFijo.findMany({
-    where: incluirInactivos ? {} : { activo: true },
+    where: {
+      ...(incluirInactivos ? {} : { activo: true }),
+      // El activo está instalado en un local concreto: el horno de una sucursal
+      // no es patrimonio de la otra. Sin sucursal, el total del negocio.
+      ...(sucursal ? { sucursal_id: sucursal } : {}),
+    },
     orderBy: [{ activo: 'desc' }, { categoria: 'asc' }, { nombre: 'asc' }],
   });
   const items = rows.map(decorate);
@@ -54,6 +60,8 @@ export async function listarActivosFijos(incluirInactivos = false) {
 export async function crearActivoFijo(input: ActivoFijoInput, usuarioId: number) {
   const row = await prisma.activoFijo.create({
     data: {
+      // El activo está instalado en un local concreto.
+      sucursal_id: await resolverSucursal(input.sucursal_id),
       nombre: input.nombre,
       categoria: input.categoria,
       fecha_compra: input.fecha_compra,

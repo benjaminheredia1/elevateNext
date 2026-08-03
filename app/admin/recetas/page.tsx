@@ -14,7 +14,13 @@ interface Receta {
   costo_calculado: number;
   food_cost_pct: number;
   recetaProducto_id: {
-    insumo: { nombre: string; unidad_medida: string; costo_promedio: number };
+    // `stocks` trae el costo del local consultado; `costo_promedio` es el del catálogo.
+    insumo: {
+      nombre: string;
+      unidad_medida: string;
+      costo_promedio: number;
+      stocks?: { costo_promedio: number }[];
+    };
     cantidad_utilizada: number;
   }[];
 }
@@ -125,12 +131,15 @@ export default function RecetasPage() {
                           </thead>
                           <tbody>
                             {p.recetaProducto_id.map((r, i) => {
-                              const subtotal = r.insumo.costo_promedio * r.cantidad_utilizada;
+                              // Costo del local; cae al del catálogo si esa sucursal
+                              // todavía no maneja el insumo.
+                              const costoUnit = r.insumo.stocks?.[0]?.costo_promedio ?? r.insumo.costo_promedio;
+                              const subtotal = costoUnit * r.cantidad_utilizada;
                               return (
                                 <tr key={i} style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
                                   <td style={{ color: '#ddd', padding: '8px 12px' }}>{r.insumo.nombre}</td>
                                   <td style={{ color: '#888', padding: '8px 12px', textAlign: 'right' }}>{r.cantidad_utilizada} {r.insumo.unidad_medida}</td>
-                                  <td style={{ color: '#888', padding: '8px 12px', textAlign: 'right' }}>Bs {r.insumo.costo_promedio.toFixed(2)}</td>
+                                  <td style={{ color: '#888', padding: '8px 12px', textAlign: 'right' }}>Bs {costoUnit.toFixed(2)}</td>
                                   <td style={{ color: '#fff', padding: '8px 12px', textAlign: 'right', fontWeight: 600 }}>Bs {subtotal.toFixed(2)}</td>
                                 </tr>
                               );

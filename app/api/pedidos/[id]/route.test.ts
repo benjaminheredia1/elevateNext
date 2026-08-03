@@ -10,6 +10,7 @@ import { GET, PUT } from './route';
 import { GET as GET_TRACKING } from './tracking/route';
 import { login } from '@/lib/auth';
 import prisma from '@/lib/prisma';
+import { sucursalPorDefectoId } from '@/lib/server/sucursales/sucursal.service';
 
 const CONTRAPARTE = 'Cliente Pedido Fiado Seguridad E2E';
 
@@ -48,7 +49,7 @@ beforeAll(async () => {
 
   // Venta fiada con su deuda pendiente vinculada
   const venta = await prisma.transaccion.create({
-    data: { total: 25, estado: 'PAGADO', payment_status: 'PENDIENTE', cajero_id: cajeroUserId },
+    data: { sucursal_id: await sucursalPorDefectoId(), total: 25, estado: 'PAGADO', payment_status: 'PENDIENTE', cajero_id: cajeroUserId },
   });
   pedidoId = venta.id;
   const cuenta = await prisma.cuentaCorriente.create({

@@ -8,6 +8,8 @@ import { NextRequest } from 'next/server';
 import { POST } from './route';
 import { login } from '@/lib/auth';
 import prisma from '@/lib/prisma';
+import { habilitarProductoEnSucursal } from '@/lib/server/productos/catalogo-sucursal.service';
+import { sucursalPorDefectoId } from '@/lib/server/sucursales/sucursal.service';
 
 const NOMBRE_PROD = 'Producto Venta Mixta E2E';
 const PRECIO = 20;
@@ -49,6 +51,7 @@ beforeAll(async () => {
       data: { nombre: NOMBRE_PROD, descripcion: 'Fixture venta mixta', precio: PRECIO, disponible: true },
     });
   }
+  await habilitarProductoEnSucursal(prod.id, sucursalId);
   productoId = prod.id;
 
   // Turno limpio: cerrar cualquier abierto de la sucursal y abrir uno propio
@@ -284,6 +287,7 @@ describe('POST /api/caja/venta — pago mixto', () => {
         data: { nombre: NOMBRE, descripcion: 'Fixture stock negativo', precio: 10, tipo: 'REVENTA', disponible: true, insumo_reventa_id: insumo.id },
       });
     }
+    await habilitarProductoEnSucursal(prod.id, await sucursalPorDefectoId());
 
     const res = await POST(req({
       items: [{ producto_id: prod.id, cantidad: 1 }],
@@ -442,6 +446,7 @@ describe('POST /api/caja/venta — pago mixto', () => {
       // Pedido web ya pagado (QR), listo para recoger: no cobra nada en mostrador
       await prisma.transaccion.create({
         data: {
+          sucursal_id: await sucursalPorDefectoId(),
           codigo: CODIGO_ONLINE, canal: 'PICKUP', tipo_entrega: 'RECOJO',
           metodo_pago: 'QR', payment_status: 'PAGADO', estado: 'LISTO',
           total: 10, cliente_nombre: 'Cliente Online NumTurno E2E',

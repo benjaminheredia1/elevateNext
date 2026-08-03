@@ -2,23 +2,18 @@
 
 import { useMemo, useState } from 'react';
 import AdminPanel from '@/components/admin/AdminPanel';
+import VentaDetalleModal, { renderMetodo } from '@/components/admin/VentaDetalleModal';
 import { useFlujoCaja, type RangoState } from '@/hooks/finanzas';
 import KpiCard from '@/components/ui/KpiCard';
 import MoneyText from '@/components/ui/MoneyText';
-import MethodPill from '@/components/ui/MethodPill';
 import RangeFilter from '@/components/ui/RangeFilter';
 import DataTable from '@/components/ui/DataTable';
 import ChartCard from '@/components/ui/ChartCard';
 import EmptyState from '@/components/ui/EmptyState';
 
-const PAYMENT_METHODS = ['EFECTIVO', 'QR', 'TARJETA'] as const;
-
-function renderMetodo(metodo: string) {
-  return PAYMENT_METHODS.includes(metodo as any) ? <MethodPill metodo={metodo as any} /> : <span>{metodo}</span>;
-}
-
 export default function AdminFlujoCajaPage() {
   const [rango, setRango] = useState<RangoState>({ rango: 'mes' });
+  const [ventaAbierta, setVentaAbierta] = useState<number | null>(null);
   const flujo = useFlujoCaja(rango);
   const data = flujo.data;
 
@@ -45,6 +40,10 @@ export default function AdminFlujoCajaPage() {
         <RangeFilter value={rango} onChange={setRango} />
       </div>
 
+      {ventaAbierta !== null && (
+        <VentaDetalleModal transaccionId={ventaAbierta} onClose={() => setVentaAbierta(null)} />
+      )}
+
       {flujo.isLoading ? <EmptyState title="Cargando flujo de caja..." /> : flujo.isError ? <EmptyState title="No se pudo cargar flujo de caja" /> : (
         <>
           <div className="kpi-grid">
@@ -65,12 +64,24 @@ export default function AdminFlujoCajaPage() {
               data={data?.movimientos ?? []}
               emptyTitle="Sin movimientos en el periodo"
               rowKey={(row: any) => row.id}
+              onRowClick={(row: any) => setVentaAbierta(row.transaccion_id)}
+              isRowClickable={(row: any) => !!row.transaccion_id}
               columns={[
                 { key: 'fecha', header: 'Fecha', render: (row: any) => new Date(row.created_at).toLocaleString('es-BO') },
                 { key: 'tipo', header: 'Tipo', render: (row: any) => row.tipo },
                 { key: 'metodo', header: 'Metodo', render: (row: any) => renderMetodo(row.metodo_pago ?? '-') },
-                { key: 'concepto', header: 'Concepto', render: (row: any) => row.concepto ?? '-' },
+                { key: 'concepto', header: 'Concepto', render: (row: any) => (
+                  <div>
+                    <div>{row.concepto ?? '-'}</div>
+                    {row.venta_cliente && <div className="admin-cell-sub">{row.venta_cliente}</div>}
+                  </div>
+                )},
                 { key: 'monto', header: 'Monto', className: 'num', render: (row: any) => <MoneyText value={row.monto ?? 0} /> },
+                { key: 'detalle', header: '', className: 'num', render: (row: any) => (
+                  row.transaccion_id
+                    ? <span className="venta-detalle-link">Ver detalle ›</span>
+                    : <span className="admin-cell-muted">—</span>
+                )},
               ]}
             />
           </div>

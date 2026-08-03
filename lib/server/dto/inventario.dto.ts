@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { CAMPOS_HEREDABLES } from '@/lib/server/productos/overrides';
 
 // ── Compra de insumo ───────────────────────────────────────────────
 export const RegistrarCompraSchema = z.object({
@@ -6,6 +7,8 @@ export const RegistrarCompraSchema = z.object({
   cantidad:      z.number().positive(),
   costo_unitario: z.number().positive(),
   nota:          z.string().optional(),
+  // Local donde ocurre el movimiento; sin indicarlo va a la sucursal principal.
+  sucursal_id:   z.number().int().positive().optional(),
 });
 export type RegistrarCompraInput = z.infer<typeof RegistrarCompraSchema>;
 
@@ -14,6 +17,8 @@ export const RegistrarMermaSchema = z.object({
   insumo_id:   z.number().int().positive(),
   cantidad:    z.number().positive(),
   descripcion: z.string().min(1),
+  // Local donde ocurre el movimiento; sin indicarlo va a la sucursal principal.
+  sucursal_id:   z.number().int().positive().optional(),
 });
 export type RegistrarMermaInput = z.infer<typeof RegistrarMermaSchema>;
 
@@ -34,6 +39,8 @@ export const ConteoFisicoSchema = z.object({
   insumo_id:   z.number().int().positive(),
   nuevo_stock: z.number().min(0),
   descripcion: z.string().optional(),
+  // Local donde ocurre el movimiento; sin indicarlo va a la sucursal principal.
+  sucursal_id:   z.number().int().positive().optional(),
 });
 export type ConteoFisicoInput = z.infer<typeof ConteoFisicoSchema>;
 
@@ -74,6 +81,21 @@ export const ProductoConFichaSchema = z.object({
   categorias:         z.array(z.number().int().positive()).optional().default([]),
   marcas:             z.array(z.number().int().positive()).optional().default([]),
   receta:             z.array(ItemRecetaSchema).optional().default([]),
+  // Sucursal cuya ficha técnica y precio se están editando. Si no viene, se usa
+  // la principal: mantiene compatible el alta de producto de una sola sucursal.
+  sucursal_id:        z.number().int().positive().optional(),
+  /**
+   * Campos que esta sucursal quiere HEREDAR del catálogo: se guardan en null y
+   * siguen los cambios que haga el dueño. Los que no estén acá quedan propios
+   * del local, aunque su valor coincida hoy con el del catálogo.
+   *
+   * Es la forma explícita de decidirlo. Sin este dato (clientes viejos) se cae
+   * a la heurística anterior: coincide con el catálogo = hereda.
+   */
+  heredar:            z.array(z.enum(CAMPOS_HEREDABLES)).optional(),
+  // El alta avisa si ya existe un producto con ese nombre. Con esto en true el
+  // usuario confirma que igual quiere uno nuevo (dos platos parecidos).
+  permitir_duplicado: z.boolean().optional().default(false),
 }).superRefine((data, ctx) => {
   // Exclusión de tipos: REVENTA descuenta 1:1 de su insumo vinculado; si
   // además tuviera receta, el descuento de stock usaría la receta e ignoraría
@@ -89,7 +111,8 @@ export const ProductoConFichaSchema = z.object({
 export type ProductoConFichaInput = z.infer<typeof ProductoConFichaSchema>;
 
 // ── Rango de analítica ─────────────────────────────────────────────
-export const RangoSchema = z.enum(['7d', '30d', '90d']).default('30d');
+// `todo` = sin filtro de fechas: desde el primer registro del negocio hasta hoy.
+export const RangoSchema = z.enum(['7d', '30d', '90d', 'todo', 'custom']).default('30d');
 export type Rango = z.infer<typeof RangoSchema>;
 
 // ── ConfiguracionAlertas ──────────────────────────────────────────

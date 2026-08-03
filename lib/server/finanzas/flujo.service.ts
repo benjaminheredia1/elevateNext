@@ -14,9 +14,14 @@ export async function flujoCaja(rango: RangoFechas, sucursal?: number) {
   const movimientos = await prisma.movimientoCaja.findMany({
     where: {
       created_at: { gte: rango.desde, lte: rango.hasta },
-      ...(sucursal ? { turno: { sucursal_id: sucursal } } : {}),
+      // Columna propia: incluye también los movimientos sin turno (gastos y ajustes).
+      ...(sucursal ? { sucursal_id: sucursal } : {}),
     },
-    include: { cuenta: true, turno: true, transaccion: true },
+    include: {
+      cuenta: true,
+      turno: true,
+      transaccion: { include: { cliente: { select: { nombre: true } } } },
+    },
     orderBy: { created_at: 'desc' },
   });
 
@@ -66,6 +71,9 @@ export async function flujoCaja(rango: RangoFechas, sucursal?: number) {
       cuenta: m.cuenta.nombre,
       turno_id: m.turno_id,
       transaccion_id: m.transaccion_id,
+      // Datos ligeros de la venta para mostrarlos en la fila sin abrir el detalle.
+      venta_codigo: m.transaccion?.codigo ?? null,
+      venta_cliente: m.transaccion?.cliente?.nombre ?? m.transaccion?.cliente_nombre ?? null,
     })),
   };
 }

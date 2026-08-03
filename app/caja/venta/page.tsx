@@ -20,15 +20,37 @@ interface Producto {
   categoria_id?: { categoria: { id: number; nombre: string } }[];
 }
 
+/**
+ * Combo vigente en esta sucursal y a esta hora. La lista ya viene filtrada por
+ * el servidor: si aparece, se puede cobrar.
+ */
+interface Combo {
+  id: number;
+  nombre: string;
+  descripcion?: string | null;
+  precio: number;
+  precio_lista: number;
+  ahorro: number;
+  vigencia: string;
+  rinde: number | null;
+  items: { producto_id: number; nombre: string; cantidad: number }[];
+}
+
 interface CartItem extends Producto {
   cantidad: number;
+  /** Presente si la línea es un combo: se cobra y descuenta distinto. */
+  combo_id?: number;
 }
+
+/** Categoría virtual del filtro: los combos no son productos del catálogo. */
+const CAT_COMBOS = -1;
 
 export default function VentaCajaPage() {
   const router = useRouter();
   const registrarVenta = useRegistrarVenta();
   const abonarDeuda = useAbonarDeuda();
   const [productos, setProductos] = useState<Producto[]>([]);
+  const [combos, setCombos] = useState<Combo[]>([]);
   const [loading, setLoading] = useState(true);
   const [busqueda, setBusqueda] = useState('');
   const [filterCat, setFilterCat] = useState<number | null>(null);
@@ -128,11 +150,33 @@ export default function VentaCajaPage() {
   };
 
   useEffect(() => {
-    fetch('/api/productos')
-      .then(res => res.json())
-      .then(body => setProductos((body.data ?? []).filter((p: Producto) => p.disponible)))
-      .catch(() => setAlert({ title: 'Error', description: 'No se pudieron cargar productos.', type: 'error' }))
-      .finally(() => setLoading(false));
+    // El menú del POS es el de la sucursal del turno abierto: sus productos,
+    // con su precio y su nombre. Sin turno se cae al de la sucursal principal.
+    (async () => {
+      try {
+        let url = '/api/productos';
+        let urlCombos = '/api/combos';
+        try {
+          const turno = await fetch('/api/caja/turno-activo').then(r => (r.ok ? r.json() : null));
+          if (turno?.sucursal_id) {
+            url += `?sucursal=${turno.sucursal_id}`;
+            urlCombos += `?sucursal=${turno.sucursal_id}`;
+          }
+        } catch { /* sin turno: menú de la principal */ }
+
+        const [body, bodyCombos] = await Promise.all([
+          fetch(url).then(r => r.json()),
+          // Los combos vienen ya filtrados por franja horaria y stock del local.
+          fetch(urlCombos).then(r => (r.ok ? r.json() : { data: [] })).catch(() => ({ data: [] })),
+        ]);
+        setProductos((body.data ?? []).filter((p: Producto) => p.disponible));
+        setCombos(bodyCombos.data ?? []);
+      } catch {
+        setAlert({ title: 'Error', description: 'No se pudieron cargar productos.', type: 'error' });
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, []);
 
   const categorias = useMemo(() => {
@@ -146,6 +190,12 @@ export default function VentaCajaPage() {
     p.nombre.toLowerCase().includes(busqueda.toLowerCase()) &&
     (filterCat === null || (p.categoria_id ?? []).some(c => c.categoria.id === filterCat))
   );
+  // Los combos se ven en "Todos" y en su propia solapa, nunca dentro de una
+  // categoría de productos: no pertenecen a ninguna.
+  const combosVisibles = (filterCat === null || filterCat === CAT_COMBOS)
+    ? combos.filter(c => c.nombre.toLowerCase().includes(busqueda.toLowerCase()))
+    : [];
+  const sinResultados = filtrados.length === 0 && combosVisibles.length === 0;
   const subtotal = useMemo(() => cart.reduce((sum, item) => sum + item.precio * item.cantidad, 0), [cart]);
   const privVenta = (!anonimo && clienteSeleccionado && privVentaId)
     ? catalogoPriv.find(p => p.id === privVentaId) ?? null
@@ -164,17 +214,43 @@ export default function VentaCajaPage() {
   // (abonoActivo ya excluye fiado, cortesía y pago mixto)
   const soloDeuda = cart.length === 0 && abonoActivo && abonoNum > 0 && abonoValido;
 
+  // Los combos comparten el espacio de ids con los productos, así que la línea
+  // del carrito se identifica por ambos: sin esto, el combo #3 y el producto #3
+  // se sumarían en la misma fila.
+  const claveLinea = (item: { id: number; combo_id?: number }) => `${item.combo_id ? 'c' : 'p'}${item.id}`;
+
   const addProduct = (producto: Producto) => {
     setCart(prev => {
-      const existing = prev.find(item => item.id === producto.id);
-      if (existing) return prev.map(item => item.id === producto.id ? { ...item, cantidad: item.cantidad + 1 } : item);
+      const existing = prev.find(item => !item.combo_id && item.id === producto.id);
+      if (existing) return prev.map(item => (!item.combo_id && item.id === producto.id) ? { ...item, cantidad: item.cantidad + 1 } : item);
       return [...prev, { ...producto, cantidad: 1 }];
     });
   };
 
-  const changeQty = (id: number, delta: number) => {
+  /** Un combo entra al carrito como UNA línea, al precio que fijó el servidor. */
+  const addCombo = (combo: Combo) => {
+    setCart(prev => {
+      const existing = prev.find(item => item.combo_id === combo.id);
+      if (existing) {
+        // No se puede vender más combos de los que el local puede armar.
+        if (combo.rinde != null && existing.cantidad >= combo.rinde) return prev;
+        return prev.map(item => item.combo_id === combo.id ? { ...item, cantidad: item.cantidad + 1 } : item);
+      }
+      return [...prev, {
+        id: combo.id,
+        combo_id: combo.id,
+        nombre: combo.nombre,
+        descripcion: combo.items.map(i => `${i.cantidad}× ${i.nombre}`).join(' + '),
+        precio: combo.precio,
+        disponible: true,
+        cantidad: 1,
+      }];
+    });
+  };
+
+  const changeQty = (clave: string, delta: number) => {
     setCart(prev => prev
-      .map(item => item.id === id ? { ...item, cantidad: item.cantidad + delta } : item)
+      .map(item => claveLinea(item) === clave ? { ...item, cantidad: item.cantidad + delta } : item)
       .filter(item => item.cantidad > 0));
   };
 
@@ -198,7 +274,10 @@ export default function VentaCajaPage() {
       }
 
       const venta = await registrarVenta.mutateAsync({
-        items: cart.map(item => ({ producto_id: item.id, cantidad: item.cantidad })),
+        // Del combo solo viaja cuál y cuántos: el precio y qué lleva adentro
+        // los resuelve el servidor, que además revalida la franja horaria.
+        items: cart.filter(i => !i.combo_id).map(item => ({ producto_id: item.id, cantidad: item.cantidad })),
+        combos: cart.filter(i => i.combo_id).map(item => ({ combo_id: item.combo_id!, cantidad: item.cantidad })),
         metodo_pago: metodoPago,
         pago_mixto: metodoPago === 'MIXTO' ? { efectivo: mixtoEfectivo, qr: mixtoQr } : undefined,
         abono_deuda: abonoActivo && abonoNum > 0 ? abonoNum : undefined,
@@ -319,13 +398,24 @@ export default function VentaCajaPage() {
           </div>
           <div className="admin-cat-filters" style={{ marginBottom: 18 }}>
             <button className={`cat-filter-btn ${filterCat === null ? 'active' : ''}`} type="button" onClick={() => setFilterCat(null)}>Todos</button>
+            {/* La solapa de combos solo aparece si hay alguno vigente ahora:
+                fuera de su franja horaria no tiene nada que mostrar. */}
+            {combos.length > 0 && (
+              <button
+                className={`cat-filter-btn ${filterCat === CAT_COMBOS ? 'active' : ''}`}
+                type="button"
+                onClick={() => setFilterCat(CAT_COMBOS)}
+              >
+                Combos ({combos.length})
+              </button>
+            )}
             {categorias.map(cat => (
               <button key={cat.id} className={`cat-filter-btn ${filterCat === cat.id ? 'active' : ''}`} type="button" onClick={() => setFilterCat(cat.id)}>{cat.nombre}</button>
             ))}
           </div>
           {loading ? (
             <div style={{ minHeight: 220 }} />
-          ) : filtrados.length === 0 ? (
+          ) : sinResultados ? (
             productos.length === 0 ? (
               <EmptyState title="Sin productos" hint="No hay productos disponibles para venta." />
             ) : (
@@ -333,6 +423,30 @@ export default function VentaCajaPage() {
             )
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
+              {combosVisibles.map(combo => (
+                <button
+                  key={`combo-${combo.id}`}
+                  className="type-card"
+                  type="button"
+                  onClick={() => addCombo(combo)}
+                  style={{ textAlign: 'left', borderColor: 'var(--orange)' }}
+                  title={combo.vigencia ? `Disponible ${combo.vigencia}` : undefined}
+                >
+                  <h5>🎁 {combo.nombre}</h5>
+                  <p>{combo.items.map(i => `${i.cantidad}× ${i.nombre}`).join(' + ')}</p>
+                  <div style={{ marginTop: 12, color: 'var(--orange)', fontWeight: 800 }}>
+                    <MoneyText value={combo.precio} />
+                    {combo.ahorro > 0 && (
+                      <span style={{ marginLeft: 8, fontSize: '0.72rem', color: 'var(--slate)', textDecoration: 'line-through' }}>
+                        <MoneyText value={combo.precio_lista} />
+                      </span>
+                    )}
+                  </div>
+                  {combo.rinde != null && combo.rinde <= 5 && (
+                    <span className="form-hint">Alcanza para {combo.rinde}</span>
+                  )}
+                </button>
+              ))}
               {filtrados.map(producto => (
                 <button key={producto.id} className="type-card" type="button" onClick={() => addProduct(producto)} style={{ textAlign: 'left' }}>
                   <h5>{producto.nombre}</h5>
@@ -354,14 +468,17 @@ export default function VentaCajaPage() {
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {cart.map(item => (
-                <div key={item.id} className="ocd-item" style={{ alignItems: 'center' }}>
+                <div key={claveLinea(item)} className="ocd-item" style={{ alignItems: 'center' }}>
                   <div style={{ flex: 1 }}>
-                    <div>{item.nombre}</div>
+                    <div>{item.combo_id ? `🎁 ${item.nombre}` : item.nombre}</div>
+                    {/* En un combo se muestra qué lleva: el cajero cobra una
+                        línea, pero conviene que vea qué está entregando. */}
+                    {item.combo_id && <span className="dim" style={{ display: 'block' }}>{item.descripcion}</span>}
                     <span className="dim"><MoneyText value={item.precio * item.cantidad} /></span>
                   </div>
-                  <button className="action-btn" type="button" onClick={() => changeQty(item.id, -1)}>-</button>
+                  <button className="action-btn" type="button" onClick={() => changeQty(claveLinea(item), -1)}>-</button>
                   <span className="num">{item.cantidad}</span>
-                  <button className="action-btn" type="button" onClick={() => changeQty(item.id, 1)}>+</button>
+                  <button className="action-btn" type="button" onClick={() => changeQty(claveLinea(item), 1)}>+</button>
                 </div>
               ))}
             </div>

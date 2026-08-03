@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Icons } from './icons'
+import { sucursalElegidaId } from '@/hooks/sucursal-tienda'
 
 /* ===== Types ===== */
 export type CartItem = {
@@ -357,6 +358,9 @@ function CheckoutModal({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          // Local en el que compra el cliente: define el precio cobrado y a qué
+          // sucursal se atribuye la venta. El servidor lo valida igual.
+          sucursal_id: sucursalElegidaId(),
           cliente_nombre: nombre || 'Cliente',
           cliente_nit: nit,
           cliente_email: email,

@@ -10,6 +10,13 @@ import prisma from '@/lib/prisma';
 import { logAudit } from '@/lib/server/audit/audit.service';
 import { NotFoundError, ValidationError } from '@/lib/server/errors';
 import { enviarAlerta } from '@/lib/server/alertas/whatsapp.service';
+// El stock real vive por sucursal; estas funciones lo escriben y mantienen
+// sincronizado el agregado de Insumo. Ver stock-sucursal.service.ts.
+import {
+  ajustarStock,
+  fijarStock,
+  registrarCompra as registrarCompraEnSucursal,
+} from './stock-sucursal.service';
 
 // ─────────────────────────────────────────────
 // Tipos auxiliares
@@ -43,10 +50,12 @@ export async function registrarCompra(
   nota: string | undefined,
   userId: number,
   rol: Rol,
+  sucursalId?: number,
 ) {
   const insumo = await tx.insumo.findUnique({ where: { id: insumoId } });
   if (!insumo) throw new NotFoundError('Insumo no encontrado');
   if (cantidad <= 0) throw new ValidationError('La cantidad debe ser positiva');
+  const sucursal = sucursalId ?? (await sucursalRecetaPorDefecto(tx));
 
   // Costo promedio ponderado. El stock negativo NO participa en la ponderación
   // (estilo Odoo AVCO): ponderar contra un faltante produce costos absurdos
@@ -59,17 +68,18 @@ export async function registrarCompra(
       ? (stockPonderable * costoActual + cantidad * costoUnitario) / (stockPonderable + cantidad)
       : costoUnitario;
 
+  // El stock y el costo promedio de la compra son del local que compró; el
+  // agregado del insumo se actualiza dentro de registrarCompraEnSucursal.
+  await registrarCompraEnSucursal(tx, insumoId, sucursal, cantidad, costoUnitario);
   const insumoActualizado = await tx.insumo.update({
     where: { id: insumoId },
-    data: {
-      stock_actual:   { increment: cantidad },
-      costo_promedio: nuevoCosto,
-    },
+    data: { costo_promedio: nuevoCosto },
   });
 
   const mov = await tx.movimientoInterno.create({
     data: {
       insumo_id:       insumoId,
+      sucursal_id:     sucursal,
       tipo_movimiento: 'INGRESO',
       cantidad,
       descripcion:     nota ?? `Compra de ${insumo.nombre}`,
@@ -98,19 +108,21 @@ export async function registrarMerma(
   descripcion: string,
   userId: number,
   rol: Rol,
+  sucursalId?: number,
 ) {
   const insumo = await tx.insumo.findUnique({ where: { id: insumoId } });
   if (!insumo) throw new NotFoundError('Insumo no encontrado');
   if (cantidad <= 0) throw new ValidationError('La cantidad debe ser positiva');
+  const sucursal = sucursalId ?? (await sucursalRecetaPorDefecto(tx));
 
-  const insumoActualizado = await tx.insumo.update({
-    where: { id: insumoId },
-    data: { stock_actual: { decrement: cantidad } },
-  });
+  // La merma sale del stock del local donde se produjo.
+  await ajustarStock(tx, insumoId, sucursal, -cantidad);
+  const insumoActualizado = await tx.insumo.findUniqueOrThrow({ where: { id: insumoId } });
 
   const mov = await tx.movimientoInterno.create({
     data: {
       insumo_id:       insumoId,
+      sucursal_id:     sucursal,
       tipo_movimiento: 'MERMA',
       cantidad:        -cantidad,
       descripcion,
@@ -143,15 +155,25 @@ export async function registrarBaja(
   const stockPerdido = insumo.stock_actual;
 
   if (stockPerdido > 0) {
-    await tx.movimientoInterno.create({
-      data: {
-        insumo_id:       insumoId,
-        tipo_movimiento: 'BAJA',
-        cantidad:        -stockPerdido,
-        descripcion:     motivo,
-        responsable:     String(userId),
-      },
+    // La baja retira el insumo del negocio entero: se deja en cero el stock de
+    // cada sucursal y queda un movimiento por local para poder auditarlo.
+    const porSucursal = await tx.stockSucursal.findMany({
+      where: { insumo_id: insumoId, stock_actual: { not: 0 } },
+      select: { sucursal_id: true, stock_actual: true },
     });
+    for (const fila of porSucursal) {
+      await tx.movimientoInterno.create({
+        data: {
+          insumo_id:       insumoId,
+          sucursal_id:     fila.sucursal_id,
+          tipo_movimiento: 'BAJA',
+          cantidad:        -fila.stock_actual,
+          descripcion:     motivo,
+          responsable:     String(userId),
+        },
+      });
+    }
+    await tx.stockSucursal.updateMany({ where: { insumo_id: insumoId }, data: { stock_actual: 0 } });
   }
 
   const insumoActualizado = await tx.insumo.update({
@@ -209,20 +231,21 @@ export async function registrarConteoFisico(
   descripcion: string | undefined,
   userId: number,
   rol: Rol,
+  sucursalId?: number,
 ) {
   const insumo = await tx.insumo.findUnique({ where: { id: insumoId } });
   if (!insumo) throw new NotFoundError('Insumo no encontrado');
+  const sucursal = sucursalId ?? (await sucursalRecetaPorDefecto(tx));
 
-  const varianza = nuevoStock - insumo.stock_actual;
-
-  const insumoActualizado = await tx.insumo.update({
-    where: { id: insumoId },
-    data: { stock_actual: nuevoStock },
-  });
+  // El conteo físico se hace en un local: fija el stock de esa sucursal y la
+  // varianza se propaga al agregado del insumo.
+  const { delta: varianza } = await fijarStock(tx, insumoId, sucursal, nuevoStock);
+  const insumoActualizado = await tx.insumo.findUniqueOrThrow({ where: { id: insumoId } });
 
   const mov = await tx.movimientoInterno.create({
     data: {
       insumo_id:       insumoId,
+      sucursal_id:     sucursal,
       tipo_movimiento: 'AJUSTE',
       cantidad:        varianza,
       descripcion:     descripcion ?? `Conteo físico. Varianza: ${varianza >= 0 ? '+' : ''}${varianza}`,
@@ -233,10 +256,18 @@ export async function registrarConteoFisico(
   await logAudit({
     usuarioId: userId, rol, accion: 'MODIFICO',
     entidad: 'MovimientoInterno', entidadId: mov.id,
-    detalle: `Conteo físico "${insumo.nombre}": ${insumo.stock_actual} → ${nuevoStock} (varianza ${varianza >= 0 ? '+' : ''}${varianza})`,
+    // El antes/después del conteo es el del local, no el agregado del negocio.
+    detalle: `Conteo físico "${insumo.nombre}" (sucursal #${sucursal}): ${nuevoStock - varianza} → ${nuevoStock} (varianza ${varianza >= 0 ? '+' : ''}${varianza})`,
   }, tx);
 
   return { insumo: insumoActualizado, movimiento: mov, varianza };
+}
+
+
+/** Sucursal principal, usada cuando quien llama no indica una explícitamente. */
+async function sucursalRecetaPorDefecto(tx: Prisma.TransactionClient | typeof prisma): Promise<number> {
+  const sucursal = await tx.sucursal.findFirst({ orderBy: { id: 'asc' }, select: { id: true } });
+  return sucursal?.id ?? 0;
 }
 
 // ─────────────────────────────────────────────
@@ -248,9 +279,14 @@ export async function resolverConsumoInsumos(
   productoId: number,
   cantidad: number,
   tx: Prisma.TransactionClient = prisma,
+  // Ficha técnica de esta sucursal. Sin ella se toma la de la sucursal más
+  // antigua, que es la principal: cada local puede tener gramajes distintos y
+  // resolver el consumo mezclando recetas daría costos y descuentos erróneos.
+  sucursalId?: number,
 ): Promise<Map<number, number>> {
+  const sucursal = sucursalId ?? (await sucursalRecetaPorDefecto(tx));
   const receta = await tx.recetasProducto.findMany({
-    where: { producto_id: productoId },
+    where: { producto_id: productoId, sucursal_id: sucursal },
     include: {
       insumo: {
         include: {
@@ -312,16 +348,29 @@ export async function resolverConsumoInsumos(
 export async function costoFichaTecnica(
   productoId: number,
   tx: Prisma.TransactionClient = prisma,
+  sucursalId?: number,
 ): Promise<number> {
-  const consumo = await resolverConsumoInsumos(productoId, 1, tx);
+  const consumo = await resolverConsumoInsumos(productoId, 1, tx, sucursalId);
   if (consumo.size === 0) return 0;
 
   const ids = Array.from(consumo.keys());
+  const sucursal = sucursalId ?? (await sucursalRecetaPorDefecto(tx));
+  // El costo es el que pagó ESTE local: dos sucursales pueden comprarle el mismo
+  // insumo a proveedores distintos, y su food cost debe reflejarlo.
+  const costosLocales = await tx.stockSucursal.findMany({
+    where: { insumo_id: { in: ids }, sucursal_id: sucursal },
+    select: { insumo_id: true, costo_promedio: true },
+  });
+  const porInsumo = new Map(costosLocales.map(c => [c.insumo_id, c.costo_promedio]));
+
+  // Si el local todavía no maneja el insumo se usa el costo del catálogo como
+  // referencia: un food cost aproximado informa más que uno en 0%.
   const insumos = await tx.insumo.findMany({ where: { id: { in: ids } } });
 
   let costo = 0;
   for (const ins of insumos) {
-    costo += ins.costo_promedio * (consumo.get(ins.id) ?? 0);
+    const costoUnitario = porInsumo.get(ins.id) ?? ins.costo_promedio;
+    costo += costoUnitario * (consumo.get(ins.id) ?? 0);
   }
   return costo;
 }
@@ -332,11 +381,24 @@ export async function costoFichaTecnica(
 export async function foodCostPct(
   productoId: number,
   tx: Prisma.TransactionClient = prisma,
+  sucursalId?: number,
 ): Promise<number> {
   const producto = await tx.producto.findUnique({ where: { id: productoId } });
-  if (!producto || Number(producto.precio) <= 0) return 0;
-  const costo = await costoFichaTecnica(productoId, tx);
-  return (costo / Number(producto.precio)) * 100;
+  if (!producto) return 0;
+
+  // El precio es el del local cuando se pide por sucursal: con el del catálogo,
+  // un plato que acá se cobra más caro mostraría el food cost de otra sucursal.
+  const enSucursal = sucursalId != null
+    ? await tx.productoSucursal.findUnique({
+        where: { producto_id_sucursal_id: { producto_id: productoId, sucursal_id: sucursalId } },
+        select: { precio: true },
+      })
+    : null;
+  const precio = Number(enSucursal?.precio ?? producto.precio);
+  if (precio <= 0) return 0;
+
+  const costo = await costoFichaTecnica(productoId, tx, sucursalId);
+  return (costo / precio) * 100;
 }
 
 // ─────────────────────────────────────────────
@@ -345,18 +407,26 @@ export async function foodCostPct(
 export async function porcionesArmables(
   productoId: number,
   tx: Prisma.TransactionClient = prisma,
+  sucursalId?: number,
 ): Promise<number> {
-  const consumo = await resolverConsumoInsumos(productoId, 1, tx);
+  const consumo = await resolverConsumoInsumos(productoId, 1, tx, sucursalId);
   if (consumo.size === 0) return Infinity;
 
   const ids = Array.from(consumo.keys());
-  const insumos = await tx.insumo.findMany({ where: { id: { in: ids } } });
+  const sucursal = sucursalId ?? (await sucursalRecetaPorDefecto(tx));
+  // Se arma con lo que hay EN ESTE LOCAL. Un insumo sin fila de stock en la
+  // sucursal cuenta como cero: no se hereda el stock del negocio.
+  const stocks = await tx.stockSucursal.findMany({
+    where: { insumo_id: { in: ids }, sucursal_id: sucursal },
+    select: { insumo_id: true, stock_actual: true },
+  });
+  const porInsumo = new Map(stocks.map(s => [s.insumo_id, s.stock_actual]));
 
   let minPorciones = Infinity;
-  for (const ins of insumos) {
-    const cantRequerida = consumo.get(ins.id) ?? 0;
+  for (const insumoId of ids) {
+    const cantRequerida = consumo.get(insumoId) ?? 0;
     if (cantRequerida > 0) {
-      minPorciones = Math.min(minPorciones, Math.floor(ins.stock_actual / cantRequerida));
+      minPorciones = Math.min(minPorciones, Math.floor((porInsumo.get(insumoId) ?? 0) / cantRequerida));
     }
   }
   return minPorciones === Infinity ? 0 : minPorciones;
@@ -368,20 +438,46 @@ export async function porcionesArmables(
 export async function evaluarAlertas(
   insumoIds: number[],
   tx: Prisma.TransactionClient = prisma,
+  // Local en el que evaluar el faltante. Sin sucursal se revisan todas: lo que
+  // importa es que a NINGÚN local le falte, no el total del negocio — con el
+  // agregado, un local en cero quedaba tapado por el stock del otro.
+  sucursalId?: number,
 ): Promise<void> {
   if (insumoIds.length === 0) return;
 
-  const insumos = await tx.insumo.findMany({ where: { id: { in: insumoIds } } });
-  const bajoUmbral = insumos.filter(
-    (i) => estadoInsumo({ stock_actual: i.stock_actual, stock_minimo: i.stock_minimo, punto_critico: i.punto_critico }) !== 'ok',
-  );
+  const filas = await tx.stockSucursal.findMany({
+    where: {
+      insumo_id: { in: insumoIds },
+      ...(sucursalId ? { sucursal_id: sucursalId } : {}),
+      insumo: { activo: true },
+    },
+    include: {
+      insumo: { select: { id: true, nombre: true, unidad_medida: true } },
+      sucursal: { select: { nombre: true } },
+    },
+  });
+
+  const bajoUmbral = filas
+    .filter(f => estadoInsumo({
+      stock_actual: f.stock_actual,
+      stock_minimo: f.stock_minimo,
+      punto_critico: f.punto_critico,
+    }) !== 'ok')
+    // El aviso lleva la sucursal en el nombre: "Palta (Sucursal Norte)".
+    .map(f => ({
+      id: f.insumo.id,
+      nombre: `${f.insumo.nombre} (${f.sucursal.nombre})`,
+      stock_actual: f.stock_actual,
+      stock_minimo: f.stock_minimo,
+      punto_critico: f.punto_critico,
+      unidad_medida: f.insumo.unidad_medida,
+    }));
 
   if (bajoUmbral.length === 0) return;
 
   const config = await tx.configuracionAlertas.findUnique({ where: { id: 1 } });
   if (!config) return;
 
-  const ids = bajoUmbral.map((i) => i.id);
   // Llamamos al servicio real en lugar de sólo simular
   // Como hace llamadas externas, no le pasamos 'tx' (usa el cliente Prisma global)
   await enviarAlerta({ insumos: bajoUmbral, cfg: config });

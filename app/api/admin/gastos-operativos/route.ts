@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { alcanceSucursal } from '@/lib/server/sucursales/sucursal.service';
+import { parseSucursal } from '@/lib/server/finanzas/rango';
 import { requireAuth, requireRole, getClientIp } from '@/lib/server/auth/session';
 import { logAudit } from '@/lib/server/audit/audit.service';
 import { handleApiError } from '@/lib/server/errors';
@@ -12,7 +14,11 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const metodo = searchParams.get('metodo_pago');
     const q = searchParams.get('q') ?? undefined;
-    const data = await listarGastosOperativos(metodo === 'EFECTIVO' || metodo === 'QR' ? metodo : undefined, q);
+    const data = await listarGastosOperativos(
+      metodo === 'EFECTIVO' || metodo === 'QR' ? metodo : undefined,
+      q,
+      alcanceSucursal(session, parseSucursal(searchParams)),
+    );
     return NextResponse.json(data);
   } catch (e) { return handleApiError(e); }
 }

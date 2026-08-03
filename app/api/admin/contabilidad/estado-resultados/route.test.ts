@@ -3,6 +3,7 @@ import { NextRequest } from 'next/server';
 import { GET } from './route';
 import { login } from '@/lib/auth';
 import prisma from '@/lib/prisma';
+import { sucursalPorDefectoId } from '@/lib/server/sucursales/sucursal.service';
 
 // Día de negocio aislado para este archivo (no chocar con otros tests).
 const DIA = '2020-07-10';
@@ -37,7 +38,7 @@ beforeAll(async () => {
       precio: 25,
       tipo: 'ELABORADO',
       estado_publicacion: 'PUBLICADO',
-      recetaProducto_id: { create: [{ insumo_id: insumoId, cantidad_utilizada: 1 }] },
+      recetaProducto_id: { create: [{ insumo_id: insumoId, sucursal_id: await sucursalPorDefectoId(), cantidad_utilizada: 1 }] },
     },
   });
   productoId = producto.id;
@@ -47,6 +48,7 @@ beforeAll(async () => {
   for (const payment of ['PAGADO', 'PENDIENTE'] as const) {
     const venta = await prisma.transaccion.create({
       data: {
+        sucursal_id: await sucursalPorDefectoId(),
         cliente_nombre: MARCADOR,
         total: 25,
         estado: 'ENTREGADO',

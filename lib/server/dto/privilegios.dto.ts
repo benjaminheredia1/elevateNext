@@ -5,6 +5,8 @@ export const privilegioSchema = z.object({
   descripcion: z.string().trim().max(300).optional(),
   porcentaje: z.coerce.number().min(0).max(100),
   activo: z.boolean().optional(),
+  // Sucursal donde vale. Ausente o null = privilegio del negocio, vale en todas.
+  sucursal_id: z.coerce.number().int().positive().nullable().optional(),
 });
 
 export const privilegioUpdateSchema = privilegioSchema.partial().extend({

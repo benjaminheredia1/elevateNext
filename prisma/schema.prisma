@@ -160,12 +160,18 @@ model Privilegio {
   descripcion   String?
   porcentaje    Decimal             @db.Decimal(5, 2)
   activo        Boolean             @default(true)
+  // Sucursal a la que aplica. NULL = privilegio del negocio, válido en todos los
+  // locales. Con valor, solo descuenta en ese local: el "Staff Fitbull" no tiene
+  // por qué darle descuento a alguien que compra en Sur.
+  sucursal_id   Int?
+  sucursal      Sucursal?           @relation(fields: [sucursal_id], references: [id])
   creado_por_id Int
   clientes      ClientePrivilegio[]
   created_at    DateTime            @default(now())
   update_at     DateTime            @updatedAt
 
   @@index([activo])
+  @@index([sucursal_id])
 }
 
 model ClientePrivilegio {
@@ -205,11 +211,24 @@ model Transaccion {
   // Operación presencial / canal
   canal       CanalVenta?
   es_cortesia Boolean     @default(false)
+  // Sucursal a la que pertenece la venta. Se escribe siempre: el POS la toma del
+  // turno abierto y el checkout web de la sucursal del pedido. Antes solo se
+  // podía inferir vía turno, y las ventas web (sin turno) quedaban huérfanas.
+  sucursal_id Int
+  sucursal    Sucursal    @relation(fields: [sucursal_id], references: [id])
   turno_id    Int?
   turno       CajaTurno?  @relation(fields: [turno_id], references: [id])
   // Numeración visible por turno: #1..#n desde cada apertura de caja (el id
   // global sigue siendo el correlativo histórico). Null en pedidos sin turno.
   numero_turno Int?
+  /**
+   * Correlativo propio de la sucursal: #1, #2, #3… y no reinicia nunca.
+   *
+   * Es el número que se le dice al cliente. El `id` es un contador compartido
+   * por todo el negocio, así que una sucursal nueva arrancaba mostrando #2101
+   * solo porque las otras ya habían vendido 2100 veces.
+   */
+  numero_sucursal Int?
   cajero_id   Int?
   cajero      Usuario?    @relation("CajeroTransacciones", fields: [cajero_id], references: [id])
 
@@ -228,6 +247,10 @@ model Transaccion {
 
   // Un mismo turno no puede repetir número de pedido (los NULL no chocan)
   @@unique([turno_id, numero_turno])
+  // Ni una sucursal su correlativo: es la red que atrapa dos ventas simultáneas
+  // que hubieran calculado el mismo número.
+  @@unique([sucursal_id, numero_sucursal])
+  @@index([sucursal_id, created_at])
 }
 
 model Categoria {
@@ -269,6 +292,8 @@ model Producto {
   promocionProducto_id     PromocionProducto[]
   transaccionesDetalles_id TransaccionesDetalles[]
   marcas                   ProductoMarca[]
+  sucursales               ProductoSucursal[]
+  combos                   ComboItem[]
 }
 
 model TransaccionesDetalles {
@@ -278,18 +303,38 @@ model TransaccionesDetalles {
   descuentoAplicado Decimal     @default(0) @db.Decimal(12, 2)
   producto_id       Int
   cantidad          Float
+  /**
+   * Combo del que salió esta línea. Un combo se guarda como una línea por
+   * producto componente, con el precio prorrateado y todas marcadas acá: así el
+   * descuento de stock y la analítica por producto siguen andando, y se puede
+   * agrupar para ver cuánto vendió cada combo.
+   */
+  combo_id          Int?
+  combo             PromocionesDescuentos? @relation(fields: [combo_id], references: [id])
   transaccion       Transaccion @relation(fields: [transaccion_id], references: [id], onDelete: Cascade)
   producto          Producto    @relation(fields: [producto_id], references: [id])
+
+  @@index([combo_id])
 }
 
+/**
+ * Categorías de un producto. `sucursal_id` en null son las del catálogo, que
+ * heredan todos los locales; si una sucursal define las suyas, esas reemplazan
+ * a las del catálogo solo para ese local.
+ */
 model CategoriasProducto {
   id           Int       @id @default(autoincrement())
   categoria_id Int
   producto_id  Int
+  sucursal_id  Int?
   categoria    Categoria @relation(fields: [categoria_id], references: [id])
   producto     Producto  @relation(fields: [producto_id], references: [id])
+  sucursal     Sucursal? @relation(fields: [sucursal_id], references: [id])
   created_at   DateTime  @default(now())
   update_at    DateTime  @updatedAt
+
+  @@unique([producto_id, categoria_id, sucursal_id])
+  @@index([producto_id, sucursal_id])
 }
 
 model UnidadMedida {
@@ -327,6 +372,9 @@ model Insumo {
   insumos_mixtos_padre InsumoMixtoDetalle[] @relation("InsumoPadre")
   insumos_mixtos_hijo  InsumoMixtoDetalle[] @relation("InsumoHijo")
   productos_reventa    Producto[]           @relation("InsumoReventa")
+  // Detalle por sucursal. stock_actual/costo_promedio de arriba quedan como
+  // agregado del negocio (suma de todas las sucursales).
+  stocks               StockSucursal[]
   created_at           DateTime             @default(now())
   update_at            DateTime             @updatedAt
 }
@@ -344,11 +392,61 @@ model RecetasProducto {
   id                 Int      @id @default(autoincrement())
   producto_id        Int
   insumo_id          Int
+  // Cada sucursal tiene su propia ficha técnica: mismos insumos pueden llevar
+  // gramajes distintos. Al habilitar un producto en otra sucursal se copia la
+  // receta de origen como punto de partida, y desde ahí es independiente.
+  sucursal_id        Int
   cantidad_utilizada Float
   producto           Producto @relation(fields: [producto_id], references: [id])
   insumo             Insumo   @relation(fields: [insumo_id], references: [id])
+  sucursal           Sucursal @relation(fields: [sucursal_id], references: [id])
   created_at         DateTime @default(now())
   update_at          DateTime @updatedAt
+
+  @@unique([producto_id, insumo_id, sucursal_id])
+  @@index([sucursal_id])
+}
+
+/**
+ * Habilitación de un producto en una sucursal: qué vende cada local, a qué
+ * precio y con qué presentación. El producto en sí (identidad y categoría) es
+ * uno solo, para poder comparar su rendimiento entre sucursales.
+ */
+model ProductoSucursal {
+  id          Int      @id @default(autoincrement())
+  producto_id Int
+  sucursal_id Int
+  precio      Decimal  @db.Decimal(12, 2)
+  disponible  Boolean  @default(true)
+  // Baja lógica DE ESTE LOCAL: el producto sale de su menú sin afectar a los
+  // demás, y se puede restaurar. La baja global (Producto.estado_publicacion)
+  // queda para retirar el producto de todo el negocio.
+  motivo_baja String?
+  fecha_baja  DateTime?
+  // Overrides opcionales: en null el local hereda el valor del catálogo, y si
+  // más adelante se edita el catálogo el cambio le llega. En cuanto el local
+  // escribe uno, ese campo queda fijo acá y ninguna edición de otra sucursal
+  // (ni del catálogo) lo vuelve a tocar.
+  nombre             String?
+  imagen_url         String?
+  descripcion        String?
+  calorias           Int?
+  proteina           String?
+  estado_publicacion EstadoPublicacion?
+  // Revisión DE ESTE LOCAL: se enciende cuando un insumo de SU receta se da de
+  // baja acá. La receta es de la sucursal, así que la revisión también: que en
+  // Sur falte un insumo no dice nada de la ficha de Fitbull.
+  en_revision              Boolean   @default(false)
+  revision_desde           DateTime?
+  motivo_revision          String?
+  insumo_causa_revision_id Int?
+  producto    Producto @relation(fields: [producto_id], references: [id], onDelete: Cascade)
+  sucursal    Sucursal @relation(fields: [sucursal_id], references: [id])
+  created_at  DateTime @default(now())
+  update_at   DateTime @updatedAt
+
+  @@unique([producto_id, sucursal_id])
+  @@index([sucursal_id, disponible])
 }
 
 enum Tipo_movimiento {
@@ -373,6 +471,38 @@ enum EstadoPublicacion {
   BAJA
 }
 
+/**
+ * Stock de un insumo en una sucursal. El insumo es un catálogo compartido
+ * (nombre, unidad de medida) para que las recetas apunten al mismo ingrediente
+ * en todos los locales; lo que es de cada local es cuánto tiene, a qué costo lo
+ * compró y sus niveles de alerta.
+ *
+ * Insumo.stock_actual se mantiene como agregado de todas las sucursales: los
+ * reportes globales que aún no distinguen sucursal siguen leyendo de ahí.
+ */
+model StockSucursal {
+  id             Int      @id @default(autoincrement())
+  insumo_id      Int
+  sucursal_id    Int
+  stock_actual   Float    @default(0)
+  costo_promedio Float    @default(0)
+  stock_minimo   Float    @default(0)
+  punto_critico  Float    @default(0)
+  // Baja DEL INSUMO EN ESTE LOCAL: deja de usarse acá sin desaparecer del
+  // negocio. `Insumo.activo` queda como agregado (falso cuando ya no lo usa
+  // ninguna sucursal), pero para operar manda esta fila.
+  activo         Boolean  @default(true)
+  fecha_baja     DateTime?
+  motivo_baja    String?
+  insumo         Insumo   @relation(fields: [insumo_id], references: [id], onDelete: Cascade)
+  sucursal       Sucursal @relation(fields: [sucursal_id], references: [id])
+  created_at     DateTime @default(now())
+  update_at      DateTime @updatedAt
+
+  @@unique([insumo_id, sucursal_id])
+  @@index([sucursal_id])
+}
+
 model MovimientoInterno {
   id              Int             @id @default(autoincrement())
   insumo_id       Int
@@ -383,10 +513,15 @@ model MovimientoInterno {
   costo_unitario  Float?
   responsable     String?
   transaccion_id  Int?
+  // Todo movimiento de inventario ocurre en un local concreto.
+  sucursal_id     Int
   insumo          Insumo          @relation(fields: [insumo_id], references: [id])
   transaccion     Transaccion?    @relation(fields: [transaccion_id], references: [id])
+  sucursal        Sucursal        @relation(fields: [sucursal_id], references: [id])
   created_at      DateTime        @default(now())
   update_at       DateTime        @updatedAt
+
+  @@index([sucursal_id, created_at])
 }
 
 model PromocionProducto {
@@ -394,24 +529,118 @@ model PromocionProducto {
   producto_id             Int
   key                     String
   promocion_descuentos_id Int
-  promocionDescuentos     PromocionesDescuentos @relation(fields: [promocion_descuentos_id], references: [id])
+  // En cascada como los items de combo: borrar la promoción debe llevarse sus
+  // vínculos, que no significan nada sin ella.
+  promocionDescuentos     PromocionesDescuentos @relation(fields: [promocion_descuentos_id], references: [id], onDelete: Cascade)
   producto                Producto              @relation(fields: [producto_id], references: [id])
+
+  @@index([promocion_descuentos_id])
 }
 
+/**
+ * Promoción. Dos formas, misma maquinaria de vigencia:
+ *
+ * - DESCUENTO: abarata productos sueltos (los de `promocionProducto_id`).
+ * - COMBO: paquete vendible con sus propios items, que el cajero cobra como
+ *   una sola línea. Al cobrarse se explota en sus productos, así el descuento
+ *   de insumos y la analítica por producto siguen funcionando.
+ */
 model PromocionesDescuentos {
-  id                   Int                 @id @default(autoincrement())
-  nombre               String
-  valor                String
+  id     Int    @id @default(autoincrement())
+  nombre String
+  /**
+   * Valor histórico como texto ("20%", "5"). Se conserva porque hay filas
+   * viejas; lo que manda es `tipo` + `monto`, que salieron de parsearlo.
+   */
+  valor  String
+
+  tipo        TipoPromocion @default(DESCUENTO)
+  modo_precio ModoPrecio    @default(PORCENTAJE)
+  /** % cuando PORCENTAJE, Bs cuando MONTO_DESCUENTO o PRECIO_FIJO. */
+  monto       Decimal       @default(0) @db.Decimal(12, 2)
+
+  descripcion String?
+  imagen_url  String?
+  activo      Boolean @default(true)
+
   promocionProducto_id PromocionProducto[]
   reglasHorarias_id    ReglasHorarias[]
+  items                ComboItem[]
+  sucursales           PromocionSucursal[]
+  detallesVenta        TransaccionesDetalles[]
+  created_at           DateTime            @default(now())
+  update_at            DateTime            @updatedAt @default(now())
+
+  @@index([tipo, activo])
 }
 
+enum TipoPromocion {
+  DESCUENTO
+  COMBO
+}
+
+enum ModoPrecio {
+  /** Descuenta un % del precio. */
+  PORCENTAJE
+  /** Resta un monto fijo en Bs (comportamiento de las promos viejas sin %). */
+  MONTO_DESCUENTO
+  /** El precio final es este monto, sin importar cuánto sumen los productos. */
+  PRECIO_FIJO
+}
+
+/** Qué lleva un combo y en qué cantidad. */
+model ComboItem {
+  id           Int                   @id @default(autoincrement())
+  promocion_id Int
+  producto_id  Int
+  cantidad     Float                 @default(1)
+  promocion    PromocionesDescuentos @relation(fields: [promocion_id], references: [id], onDelete: Cascade)
+  producto     Producto              @relation(fields: [producto_id], references: [id])
+
+  @@unique([promocion_id, producto_id])
+  @@index([producto_id])
+}
+
+/**
+ * Dónde está habilitada la promoción y con qué precio. Igual que los productos
+ * y los insumos: un combo de Fitbull no se vende en Sur salvo que se habilite.
+ */
+model PromocionSucursal {
+  id           Int                   @id @default(autoincrement())
+  promocion_id Int
+  sucursal_id  Int
+  /** Precio propio del local. En null usa el `monto` de la promoción. */
+  monto        Decimal?              @db.Decimal(12, 2)
+  disponible   Boolean               @default(true)
+  promocion    PromocionesDescuentos @relation(fields: [promocion_id], references: [id], onDelete: Cascade)
+  sucursal     Sucursal              @relation(fields: [sucursal_id], references: [id])
+  created_at   DateTime              @default(now())
+  update_at    DateTime              @updatedAt @default(now())
+
+  @@unique([promocion_id, sucursal_id])
+  @@index([sucursal_id, disponible])
+}
+
+/**
+ * Cuándo vale una promoción: un rango de fechas MÁS una franja horaria y los
+ * días de la semana. Sin franja vale todo el día, que es como se comportaban
+ * las reglas anteriores a esto.
+ *
+ * "Todo agosto de 7:00 a 12:00" es UNA fila: antes habría necesitado 31.
+ */
 model ReglasHorarias {
   id                       Int                   @id @default(autoincrement())
   promocionesDescuentos_id Int
   fecha_inicio             DateTime
   fecha_fin                DateTime
-  promocionesDescuentos    PromocionesDescuentos @relation(fields: [promocionesDescuentos_id], references: [id])
+  /** "HH:MM" en hora de Bolivia. null = todo el día. */
+  hora_inicio              String?
+  hora_fin                 String?
+  /** 1=lunes … 7=domingo (ISO 8601). Vacío = todos los días. */
+  dias_semana              Int[]                 @default([])
+  promocionesDescuentos    PromocionesDescuentos @relation(fields: [promocionesDescuentos_id], references: [id], onDelete: Cascade)
+
+  @@index([promocionesDescuentos_id])
 }
 
 model Configuracion {
@@ -465,6 +694,19 @@ model Sucursal {
   cuentas      CuentaFinanciera[]
   turnos       CajaTurno[]
   diasFeriados DiaFeriado[]
+  transacciones Transaccion[]
+  movimientosCaja MovimientoCaja[]
+  recetas      RecetasProducto[]
+  productos    ProductoSucursal[]
+  categoriasProducto CategoriasProducto[]
+  marcasProducto     ProductoMarca[]
+  promociones        PromocionSucursal[]
+  stocks       StockSucursal[]
+  movimientosInternos MovimientoInterno[]
+  gastosFijos     GastoFijo[]
+  gastosOperativos GastoOperativo[]
+  activosFijos    ActivoFijo[]
+  privilegios     Privilegio[]
   created_at   DateTime           @default(now())
   update_at    DateTime           @updatedAt
 }
@@ -494,6 +736,9 @@ model RegistroAuditoria {
 
 model GastoFijo {
   id            Int        @id @default(autoincrement())
+  // Gasto fijo del local (alquiler, servicios). Cada sucursal lleva los suyos.
+  sucursal_id   Int
+  sucursal      Sucursal   @relation(fields: [sucursal_id], references: [id])
   concepto      String
   categoria     String
   monto         Decimal    @db.Decimal(12, 2)
@@ -503,12 +748,15 @@ model GastoFijo {
   created_at    DateTime   @default(now())
   update_at     DateTime   @updatedAt
 
+  @@index([sucursal_id])
   @@index([activo])
   @@index([categoria])
 }
 
 model GastoOperativo {
   id            Int        @id @default(autoincrement())
+  sucursal_id   Int
+  sucursal      Sucursal   @relation(fields: [sucursal_id], references: [id])
   concepto      String
   categoria     String
   monto         Decimal    @db.Decimal(12, 2)
@@ -519,6 +767,7 @@ model GastoOperativo {
   created_at    DateTime   @default(now())
   update_at     DateTime   @updatedAt
 
+  @@index([sucursal_id])
   @@index([fecha])
   @@index([categoria])
   @@index([metodo_pago])
@@ -628,6 +877,8 @@ model CuentaCorrientePago {
 
 model ActivoFijo {
   id               Int      @id @default(autoincrement())
+  sucursal_id      Int
+  sucursal         Sucursal @relation(fields: [sucursal_id], references: [id])
   nombre           String
   categoria        String
   fecha_compra     DateTime
@@ -640,12 +891,17 @@ model ActivoFijo {
   created_at       DateTime @default(now())
   update_at        DateTime @updatedAt
 
+  @@index([sucursal_id])
   @@index([activo])
   @@index([categoria])
 }
 
 model MovimientoCaja {
   id             Int                @id @default(autoincrement())
+  // Sucursal del movimiento. Se guarda explícita porque no todo movimiento
+  // tiene turno (gastos y ajustes fuera de caja), y sin ella el flujo de caja
+  // filtrado por sucursal los perdía.
+  sucursal_id    Int
   turno_id       Int?
   cuenta_id      Int
   tipo           TipoMovimientoCaja
@@ -658,6 +914,7 @@ model MovimientoCaja {
   creado_por_id  Int
   created_at     DateTime           @default(now())
 
+  sucursal    Sucursal         @relation(fields: [sucursal_id], references: [id])
   turno       CajaTurno?       @relation(fields: [turno_id], references: [id])
   cuenta      CuentaFinanciera @relation(fields: [cuenta_id], references: [id])
   transaccion Transaccion?     @relation(fields: [transaccion_id], references: [id])
@@ -667,6 +924,7 @@ model MovimientoCaja {
   @@index([turno_id])
   @@index([created_at])
   @@index([tipo, metodo_pago])
+  @@index([sucursal_id, created_at])
 }
 
 // ===== FASE 5A — Inventario avanzado =====
@@ -681,14 +939,18 @@ model Marca {
   update_at  DateTime        @updatedAt
 }
 
+/** Marcas del producto. Misma regla que las categorías: null = catálogo. */
 model ProductoMarca {
   id          Int      @id @default(autoincrement())
   producto_id Int
   marca_id    Int
+  sucursal_id Int?
   producto    Producto @relation(fields: [producto_id], references: [id], onDelete: Cascade)
   marca       Marca    @relation(fields: [marca_id], references: [id], onDelete: Cascade)
+  sucursal    Sucursal? @relation(fields: [sucursal_id], references: [id])
 
-  @@unique([producto_id, marca_id])
+  @@unique([producto_id, marca_id, sucursal_id])
+  @@index([producto_id, sucursal_id])
 }
 
 model ConfiguracionAlertas {

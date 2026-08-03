@@ -26,8 +26,9 @@ export interface ResultadoBajaInsumo {
 export function useDarDeBajaInsumo() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, motivo }: { id: number; motivo: string }) => {
-      const res = await apiClient.patch(`/api/insumo/${id}/baja`, { motivo });
+    // La baja es siempre de una sucursal: el servidor rechaza el pedido sin ella.
+    mutationFn: async ({ id, motivo, sucursalId }: { id: number; motivo: string; sucursalId: number }) => {
+      const res = await apiClient.patch(`/api/insumo/${id}/baja`, { motivo, sucursal_id: sucursalId });
       return res.data as ResultadoBajaInsumo;
     },
     onSuccess: () => {
@@ -37,11 +38,11 @@ export function useDarDeBajaInsumo() {
   });
 }
 
-export function useProductosEnRevision() {
+export function useProductosEnRevision(sucursalId?: number) {
   return useQuery({
-    queryKey: ['productos-en-revision'],
+    queryKey: ['productos-en-revision', sucursalId ?? null],
     queryFn: async () => {
-      const res = await apiClient.get('/api/productos/en-revision');
+      const res = await apiClient.get(`/api/productos/en-revision${sucursalId ? `?sucursal=${sucursalId}` : ''}`);
       return res.data.data as ProductoEnRevision[];
     },
   });
@@ -50,8 +51,9 @@ export function useProductosEnRevision() {
 export function useResolverProductoEnRevision() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (id: number) => {
-      const res = await apiClient.patch(`/api/productos/${id}/resolver-revision`);
+    // La revisión se resuelve en el local donde se abrió.
+    mutationFn: async ({ id, sucursalId }: { id: number; sucursalId: number }) => {
+      const res = await apiClient.patch(`/api/productos/${id}/resolver-revision`, { sucursal_id: sucursalId });
       return res.data;
     },
     onSuccess: () => {
@@ -75,8 +77,8 @@ export interface ResultadoReactivarInsumo {
 export function useReactivarInsumo() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (id: number) => {
-      const res = await apiClient.patch(`/api/insumo/${id}/reactivar`);
+    mutationFn: async ({ id, sucursalId }: { id: number; sucursalId: number }) => {
+      const res = await apiClient.patch(`/api/insumo/${id}/reactivar`, { sucursal_id: sucursalId });
       return res.data as ResultadoReactivarInsumo;
     },
     onSuccess: () => {

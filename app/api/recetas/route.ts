@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { guard, ADMIN, STAFF } from '@/lib/server/auth/guard';
+import { resolverSucursal } from '@/lib/server/sucursales/sucursal.service';
 
 // Lectura de recetas: también el cajero (vista solo lectura en /caja/insumos)
 export async function GET(req: NextRequest) {
@@ -27,10 +28,12 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { producto_id, insumo_id, cantidad_utilizada } = body;
+    const { producto_id, insumo_id, cantidad_utilizada, sucursal_id } = body;
     const receta = await prisma.recetasProducto.create({
       data: {
         producto_id: parseInt(producto_id),
+        // La ficha técnica pertenece a una sucursal; sin indicarla va a la principal.
+        sucursal_id: await resolverSucursal(sucursal_id),
         insumo_id: parseInt(insumo_id),
         cantidad_utilizada: Number(cantidad_utilizada),
       },
