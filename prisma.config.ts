@@ -29,7 +29,7 @@ try {
 export default defineConfig({
   schema: path.join('prisma', 'schema.prisma'),
   datasource: {
-    url: env('DATABASE_URL_PRISMA_DATABASE_URL'),
+    url: env('DATABASE_URL'),
   },
   migrations: {
     seed: 'npx tsx prisma/seed.ts',

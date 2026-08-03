@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import prisma from '@/lib/prisma';
 import { TipoCuenta, TipoEntrega, EstadoPago } from '@prisma/client';
 import { calcularRinde } from '@/lib/server/inventario/disponibilidad';
@@ -11,6 +11,7 @@ import { customAlphabet } from 'nanoid';
 import { guard, STAFF } from '@/lib/server/auth/guard';
 import { rangoDiaNegocio } from '@/lib/server/fechas';
 import { siguienteNumeroSucursal } from '@/lib/server/ventas/numeracion';
+import { notificarPedidoWhatsapp } from '@/lib/server/whatsapp/pedido.service';
 
 // Código de retiro/handoff legible (sin caracteres ambiguos)
 const genCodigo = customAlphabet('ABCDEFGHJKLMNPQRSTUVWXYZ23456789', 5);
@@ -257,6 +258,23 @@ export async function POST(req: NextRequest) {
         cantidad: l.cantidad,
       })),
     });
+
+    // Aviso al grupo de WhatsApp, después de responder: no bloquea el checkout
+    // y nunca lo hace fallar. `after` lanza si se llama fuera de un request real
+    // de Next (los tests invocan el handler directo), por eso el try/catch.
+    try {
+      after(() =>
+        notificarPedidoWhatsapp({
+          codigo: transaccion.codigo,
+          tipo_entrega: transaccion.tipo_entrega,
+          cliente_direccion: transaccion.cliente_direccion,
+          cliente_lat: transaccion.cliente_lat,
+          cliente_lng: transaccion.cliente_lng,
+        }),
+      );
+    } catch {
+      // Fuera del ciclo de request de Next: sin aviso, el pedido igual se creó.
+    }
 
     return NextResponse.json(
       {

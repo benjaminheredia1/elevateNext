@@ -8,6 +8,7 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+  
 }
 
 enum EstadoTransaccion {
@@ -648,6 +649,10 @@ model Configuracion {
   sucursal_lat    Float
   sucursal_lng    Float
   sucursal_nombre String
+  // Grupo/chat de WhatsApp al que se avisan los pedidos nuevos.
+  // Si whatsapp_grupo_jid es null no se notifica nada.
+  whatsapp_grupo_jid    String?
+  whatsapp_grupo_nombre String?
   created_at      DateTime @default(now())
   update_at       DateTime @updatedAt
 }
@@ -997,4 +1002,12 @@ model DiaFeriado {
   created_at  DateTime  @default(now())
 
   @@unique([fecha, sucursal_id])
+}
+
+model WhatsappMessage { 
+  id          Int       @id @default(autoincrement())
+  phoneNumber String
+  content     String
+  timestamp   DateTime  @default(now())
+  created_at  DateTime  @default(now())
 }

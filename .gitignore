@@ -58,3 +58,6 @@ next-env.d.ts
 
 # Backups de base de datos (datos sensibles, no versionar)
 /backups/
+
+# Sesión de WhatsApp (Baileys): credenciales del número vinculado, nunca versionar
+/.whatsapp-auth/
