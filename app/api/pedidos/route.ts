@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { TipoCuenta, TipoEntrega, EstadoPago } from '@prisma/client';
-import { calcularRinde } from '@/lib/server/inventario/disponibilidad';
 import { resolverCliente } from '@/lib/server/clientes/clientes.service';
 import { resolverSucursal, alcanceSucursal } from '@/lib/server/sucursales/sucursal.service';
 import { parseSucursal } from '@/lib/server/finanzas/rango';
@@ -97,7 +96,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     // NOTA: total y precios enviados por el cliente se IGNORAN; se recalculan desde la BD.
-    const { cliente_nombre, cliente_telefono, cliente_direccion, cliente_lat, cliente_lng, cliente_nit, cliente_email, tipo_entrega, codigo_descuento, metodo_pago, items, sucursal_id } = body;
+    const { cliente_nombre, cliente_telefono, cliente_direccion, cliente_lat, cliente_lng, cliente_nit, cliente_email, tipo_entrega, codigo_descuento, metodo_pago, items, sucursal_id, notas } = body;
 
     if (!Array.isArray(items) || items.length === 0) {
       return NextResponse.json({ error: 'El pedido debe tener al menos un item' }, { status: 400 });
@@ -162,48 +161,11 @@ export async function POST(req: NextRequest) {
     }
     const totalCalculado = Math.round(lineas.reduce((s, l) => s + l.precio_unitario * l.cantidad, 0) * 100) / 100;
 
-    // Bloqueo duro por stock: rechazar items agotados o con cantidad mayor al RINDE.
-    const sinStock: string[] = [];
-    for (const linea of lineas) {
-      const prod = await prisma.producto.findFirst({
-        // Por id: el nombre puede ser el propio del local y no el del catálogo.
-        where: { id: linea.producto_id },
-        include: {
-          // Receta y stock DEL LOCAL: el bloqueo debe mirar lo que hay en la
-          // sucursal que va a preparar el pedido, no el total del negocio.
-          recetaProducto_id: {
-            where: { sucursal_id: sucursalId },
-            include: {
-              insumo: {
-                select: {
-                  stock_actual: true,
-                  activo: true,
-                  stocks: { where: { sucursal_id: sucursalId }, select: { stock_actual: true, activo: true } },
-                },
-              },
-            },
-          },
-          insumo_reventa: {
-            select: {
-              stock_actual: true,
-              activo: true,
-              stocks: { where: { sucursal_id: sucursalId }, select: { stock_actual: true, activo: true } },
-            },
-          },
-        },
-      });
-      if (!prod) continue; // producto no rastreado en inventario
-      const { stockTracked, rinde } = calcularRinde(prod);
-      if (stockTracked && (rinde ?? 0) < linea.cantidad) {
-        sinStock.push(linea.nombre);
-      }
-    }
-    if (sinStock.length > 0) {
-      return NextResponse.json(
-        { error: `Sin stock suficiente para: ${sinStock.join(', ')}. Estos productos se agotaron, intenta más tarde.` },
-        { status: 409 },
-      );
-    }
+    // Sin bloqueo por stock, igual que la venta de mostrador: el inventario no
+    // siempre está cargado al día y un "agotado" que en realidad hay tira el
+    // pedido a la basura. Lo que decide si se vende es la publicación del
+    // producto en el local, no sus existencias. El stock se descuenta igual y
+    // puede quedar negativo, que es la señal de que hay que reponer.
 
     const tipoEntrega = normalizeTipoEntrega(tipo_entrega);
     const metodoPago = normalizeMetodoPago(metodo_pago);
@@ -237,6 +199,9 @@ export async function POST(req: NextRequest) {
         cliente_email: cliente_email || null,
         tipo_entrega: tipoEntrega,
         codigo_descuento: codigo_descuento || null,
+        // Nota del cliente. Se recorta para que un pedido no traiga un texto
+        // interminable a la comanda de cocina.
+        notas: typeof notas === 'string' && notas.trim() ? notas.trim().slice(0, 300) : null,
         canal: tipoEntrega === 'RECOJO' ? 'PICKUP' : 'WEB',
         metodo_pago: metodoPago,
         payment_status: estadoPagoInicial(metodoPago, tipoEntrega),

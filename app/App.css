@@ -3101,8 +3101,34 @@ section[id] { scroll-margin-top: 96px; }
   opacity: 0.4;
 }
 
+/* Menús creados desde el admin: el glow y el ícono toman el color que eligió el
+   dueño. Va antes que las dos reglas específicas a propósito: a igual
+   especificidad gana la última, y fitbull y elevate no deben cambiar. */
+.collab-visual .collab-visual-glow {
+  background: var(--menu-color, var(--orange));
+}
+
+.collab-visual .collab-visual-icon svg {
+  stroke: var(--menu-color, var(--orange));
+}
+
+/* Si la carta tiene foto, reemplaza al ícono ocupando toda la tarjeta. */
+.collab-visual-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .collab-visual-fitbull .collab-visual-glow {
   background: var(--orange);
+}
+
+/* Fitbull venía con el ícono naranja de la marca Elevate, no con su propio
+   color: se deja fijo para que la sección se vea igual que antes. */
+.collab-visual-fitbull .collab-visual-icon svg {
+  stroke: var(--orange);
 }
 
 .collab-visual-elevate .collab-visual-glow {
@@ -3307,6 +3333,43 @@ section[id] { scroll-margin-top: 96px; }
   line-height: 1.5;
 }
 
+/**
+ * Pie fijo del checkout: subtotal, envío y total quedan siempre a la vista
+ * mientras se llena el formulario, que ahora es una sola pantalla larga. Los
+ * márgenes negativos compensan el padding del modal para que la banda llegue de
+ * borde a borde y tape el contenido que pasa por debajo.
+ */
+.checkout-footer {
+  position: sticky;
+  bottom: 0;
+  margin: 18px -36px -36px;
+  padding: 14px 36px 20px;
+  background: var(--black-soft);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+@media (max-width: 600px) {
+  .checkout-footer {
+    margin: 14px -20px -24px;
+    padding: 12px 20px 16px;
+  }
+}
+
+/* Separador de bloques del checkout, que ahora es una sola pantalla larga:
+   sin estos títulos las tres secciones se leían como una lista sin fin. */
+.checkout-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #ff5c19;
+  margin: 22px 0 10px;
+}
+
+.checkout-section-title:first-of-type {
+  margin-top: 6px;
+}
+
 .modal-actions {
   display: flex;
   gap: 10px;
@@ -3479,6 +3542,40 @@ section[id] { scroll-margin-top: 96px; }
 .shop-sucursal-block.is-compacto .shop-sucursal-tab.is-proxima { font-size: 0.68rem; }
 
 .shop-sucursal-dir { font-size: 0.78rem; opacity: 0.6; }
+
+/* Contacto de la sucursal seleccionada: teléfono y ubicación del local. */
+.shop-sucursal-contacto {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.shop-sucursal-accion {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  /* Alto cómodo para el dedo en móvil. */
+  min-height: 40px;
+  padding: 0 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(0, 0, 0, 0.24);
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 0.82rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background 0.25s, color 0.25s;
+}
+.shop-sucursal-accion:hover {
+  background: rgba(0, 0, 0, 0.4);
+  color: #fff;
+}
+.shop-sucursal-accion:focus-visible {
+  outline: 2px solid var(--cream-light);
+  outline-offset: 2px;
+}
 
 @media (max-width: 560px) {
   /* En móvil la fila sigue horizontal: se recorre deslizando, que es el gesto

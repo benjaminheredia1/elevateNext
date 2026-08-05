@@ -134,6 +134,14 @@
   pointer-events: none;
 }
 
+/* Menús creados desde el admin: el glow sale del color que eligió el dueño, así
+   una carta nueva no nace sin identidad. Va antes que las dos reglas de abajo
+   a propósito: con la misma especificidad gana la última, y fitbull y elevate
+   tienen que seguir viéndose exactamente igual que siempre. */
+.menu-hero .menu-hero-glow {
+  background: radial-gradient(circle, var(--menu-color, var(--orange)) 0%, transparent 65%);
+}
+
 .menu-hero-fitbull .menu-hero-glow {
   background: radial-gradient(circle, var(--orange) 0%, transparent 65%);
 }

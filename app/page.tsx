@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type CSSProperties } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { useRouter } from 'next/navigation';
 
@@ -20,7 +20,7 @@ import {
   staggerItem,
   slideFromLeft,
 } from '@/components/shop/motion';
-import { BRANDS } from '@/data/menus';
+import type { Menu } from '@/lib/menus';
 import SucursalPicker from '@/components/shop/SucursalPicker';
 import { useSucursalTienda } from '@/hooks/sucursal-tienda';
 
@@ -40,28 +40,33 @@ const testimonials = [
   { name: 'Ana Sofía R.', role: 'Nutricionista', text: '"Como profesional de la nutrición, valoro mucho la transparencia en los ingredientes. Elevate cumple con los más altos estándares."', initials: 'AS' },
 ];
 
-const collaborations = [
-  {
-    brand: BRANDS.fitbull,
-    imageSide: 'left' as const,
-    kicker: 'Colaboración oficial',
-    heading: 'Elevate × Fitbull',
-    body: 'Nos aliamos con Fitbull, el gimnasio que entrena a la comunidad fitness de Santa Cruz, para crear un menú pensado para tu rendimiento. Pre-entreno, recovery y alto en proteína: cada plato apoya tus objetivos dentro y fuera del gym.',
-    bullets: ['Recetas aprobadas por entrenadores', 'Macros calculados por porción', 'Ideal pre y post entreno'],
-    cta: 'Menú Elevate × Fitbull',
-    visualIcon: Icons.dumbbell,
-  },
-  {
-    brand: BRANDS.elevate,
-    imageSide: 'right' as const,
-    kicker: 'Nuestra casa',
-    heading: 'Catering Elevate',
-    body: 'El corazón de Elevate: nuestro catering de comida saludable. Bowls, ensaladas, wraps y bebidas frescas preparadas cada día con ingredientes locales. Comida que disfrutas sin culpa, para cualquier momento del día.',
-    bullets: ['Hecho fresco cada día', 'Ingredientes locales bolivianos', 'Opciones para todos los gustos'],
-    cta: 'Menú Elevate',
-    visualIcon: Icons.bowl,
-  },
-];
+/**
+ * "Dos experiencias, un mismo estándar" dejó de ser cierto en cuanto los menús
+ * se pueden crear desde el admin, así que el título cuenta cuántos hay.
+ */
+const CARDINALES = ['cero', 'una', 'dos', 'tres', 'cuatro', 'cinco', 'seis'];
+function tituloMenus(cantidad: number): string {
+  if (cantidad === 1) return 'Un menú, un mismo estándar';
+  const palabra = CARDINALES[cantidad] ?? String(cantidad);
+  return `${palabra.charAt(0).toUpperCase()}${palabra.slice(1)} experiencias, un mismo estándar`;
+}
+
+/** El ícono que eligió el dueño para la carta; bowl si quedó sin elegir. */
+function iconoDeMenu(nombre: string | null) {
+  return Icons[(nombre ?? '') as keyof typeof Icons] ?? Icons.bowl;
+}
+
+/** Renderiza el × de "Elevate × Fitbull" con su estilo, venga en cualquier título. */
+function tituloConX(titulo: string) {
+  if (!titulo.includes('×')) return titulo;
+  const partes = titulo.split('×');
+  return partes.map((parte, i) => (
+    <span key={i}>
+      {i > 0 && <span className="collab-x">×</span>}
+      {parte}
+    </span>
+  ));
+}
 
 const heroParticles = [
   { left: '7%', size: 4, dur: 9, delay: 0 },
@@ -132,6 +137,8 @@ export default function Home() {
   const [scrolled, setScrolled] = useState(false);
   const [menuAbierto, setMenuAbierto] = useState(false);
   const [featuredProducts, setFeaturedProducts] = useState<any[]>([]);
+  /** Las cartas publicadas, en el orden que fijó el dueño en /admin/menus. */
+  const [menus, setMenus] = useState<Menu[]>([]);
   const { sucursalId } = useSucursalTienda();
   const sufijoSucursal = sucursalId ? `&sucursal=${sucursalId}` : '';
   const shop = useShop();
@@ -140,19 +147,33 @@ export default function Home() {
   useEffect(() => {
     const handleScroll = () => setScrolled(window.scrollY > 50);
     window.addEventListener('scroll', handleScroll);
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
 
-    // Fetch from both brands in parallel, interleave hasta completar 6 destacados
-    Promise.all([
+  useEffect(() => {
+    fetch('/api/menus')
+      .then(r => r.json())
+      .then(res => setMenus(Array.isArray(res.data) ? res.data : []))
+      .catch(() => setMenus([]));
+  }, []);
+
+  useEffect(() => {
+    if (menus.length === 0) return;
+
+    // Un pedido por carta y se van intercalando: así los destacados representan
+    // a todos los menús publicados y no solo al primero.
+    Promise.all(
       // Los destacados son los del local elegido: precio y disponibilidad propios.
-      fetch(`/api/productos?marca=elevate${sufijoSucursal}`).then(r => r.json()),
-      fetch(`/api/productos?marca=fitbull${sufijoSucursal}`).then(r => r.json()),
-    ])
-      .then(([elevateRes, fitbullRes]) => {
-        const elevateItems: any[] = elevateRes.data ?? [];
-        const fitbullItems: any[] = fitbullRes.data ?? [];
-
-        // Un producto puede estar publicado en las dos marcas (AMERICANO, los
-        // paninis, las barras...), asi que viene en ambas respuestas. Sin
+      menus.map(m =>
+        fetch(`/api/productos?marca=${encodeURIComponent(m.key)}${sufijoSucursal}`)
+          .then(r => r.json())
+          .then(res => (res.data ?? []) as any[])
+          .catch(() => [] as any[]),
+      ),
+    )
+      .then(listas => {
+        // Un producto puede estar publicado en varias cartas (AMERICANO, los
+        // paninis, las barras...), asi que viene en varias respuestas. Sin
         // descartar el repetido se renderizan dos tarjetas con la misma key.
         const DESTACADOS = 6;
         const combined: any[] = [];
@@ -162,12 +183,11 @@ export default function Home() {
           vistos.add(p.id);
           combined.push(p);
         };
-        // Se avanza mas alla del tercer producto de cada marca solo si hizo
+        // Se avanza mas alla del primer producto de cada carta solo si hizo
         // falta descartar repetidos: la grilla siempre queda con 6.
-        const maxLen = Math.max(elevateItems.length, fitbullItems.length);
+        const maxLen = Math.max(0, ...listas.map(l => l.length));
         for (let i = 0; i < maxLen && combined.length < DESTACADOS; i++) {
-          agregar(elevateItems[i]);
-          agregar(fitbullItems[i]);
+          for (const lista of listas) agregar(lista[i]);
         }
 
         const mapProduct = (p: any) => {
@@ -193,9 +213,7 @@ export default function Home() {
         setFeaturedProducts(combined.map(mapProduct));
       })
       .catch(console.error);
-
-    return () => window.removeEventListener('scroll', handleScroll);
-  }, [sufijoSucursal]);
+  }, [menus, sufijoSucursal]);
 
   // El menu de celular se cierra con Escape y al volver al ancho de escritorio,
   // donde el boton de las tres lineas ya no existe y quedaria abierto invisible.
@@ -365,51 +383,63 @@ export default function Home() {
           <motion.div className="menus-header" initial="hidden" whileInView="visible" viewport={{ once: true, amount: 0.5 }}>
             <TextReveal delay={0} direction="left"><span className="section-label">Nuestros menús</span></TextReveal>
             <motion.h2 className="section-title" variants={fadeUp} custom={0.1}>
-              <AnimatedWords text="Dos experiencias, un mismo estándar" delay={0.2} animationType="wave" />
+              <AnimatedWords text={tituloMenus(menus.length)} delay={0.2} animationType="wave" />
             </motion.h2>
           </motion.div>
 
-          {collaborations.map((collab) => (
-            <motion.div key={collab.brand.key} className={`collab collab-${collab.imageSide}`} initial="hidden" whileInView="visible" viewport={{ once: true, amount: 0.3 }}>
-              <TiltCard
-                className={`collab-visual collab-visual-${collab.brand.key}`}
-                lift={-6}
-                variants={collab.imageSide === 'left' ? slideFromLeft : { hidden: { opacity: 0, x: 60 }, visible: { opacity: 1, x: 0, transition: { duration: 0.7, ease: [0.16, 1, 0.3, 1] } } }}
-              >
-                <div className="collab-visual-glow" />
-                <motion.div className="collab-visual-icon" animate={{ y: [0, -14, 0], rotate: [0, 4, 0] }} transition={{ duration: 5, repeat: Infinity, ease: 'easeInOut' }}>
-                  {collab.visualIcon}
-                </motion.div>
-                <span className="collab-visual-tag">{collab.brand.title}</span>
-                <span className="collab-visual-hint">{Icons.camera} Imagen {collab.heading}</span>
-              </TiltCard>
-
-              <motion.div className="collab-content" variants={staggerContainer}>
-                <motion.span className="collab-kicker" variants={staggerItem}>{collab.kicker}</motion.span>
-                <motion.h3 className="collab-heading" variants={staggerItem}>
-                  {collab.heading.includes('×') ? (<>Elevate <span className="collab-x">×</span> Fitbull</>) : collab.heading}
-                </motion.h3>
-                <motion.p className="collab-body" variants={staggerItem}>{collab.body}</motion.p>
-                <motion.ul className="collab-bullets" variants={staggerItem}>
-                  {collab.bullets.map((b) => (
-                    <li key={b}><span className="collab-bullet-check">{Icons.checkCircle}</span>{b}</li>
-                  ))}
-                </motion.ul>
-                <motion.button
-                  className="collab-btn"
-                  variants={staggerItem}
-                  whileHover={{ scale: 1.04, boxShadow: '0 16px 40px rgba(255, 92, 25, 0.3)' }}
-                  whileTap={{ scale: 0.96 }}
-                  onClick={() => router.push(`/menu/${collab.brand.slug}`)}
+          {menus.map((menu, index) => {
+            // Las secciones alternan de qué lado va la imagen, como estaban
+            // escritas a mano cuando eran dos.
+            const imageSide = index % 2 === 0 ? 'left' : 'right';
+            return (
+              <motion.div key={menu.id} className={`collab collab-${imageSide}`} initial="hidden" whileInView="visible" viewport={{ once: true, amount: 0.3 }}>
+                <TiltCard
+                  className={`collab-visual collab-visual-${menu.key}`}
+                  lift={-6}
+                  variants={imageSide === 'left' ? slideFromLeft : { hidden: { opacity: 0, x: 60 }, visible: { opacity: 1, x: 0, transition: { duration: 0.7, ease: [0.16, 1, 0.3, 1] } } }}
+                  style={menu.color ? ({ '--menu-color': menu.color } as CSSProperties) : undefined}
                 >
-                  {collab.cta}
-                  <motion.span style={{ display: 'inline-flex' }} animate={{ x: [0, 5, 0] }} transition={{ duration: 1.5, repeat: Infinity, ease: 'easeInOut' as const }}>
-                    {Icons.arrowRight}
-                  </motion.span>
-                </motion.button>
+                  <div className="collab-visual-glow" />
+                  {menu.imagen_url ? (
+                    <img className="collab-visual-img" src={menu.imagen_url} alt={menu.titulo} />
+                  ) : (
+                    <motion.div className="collab-visual-icon" animate={{ y: [0, -14, 0], rotate: [0, 4, 0] }} transition={{ duration: 5, repeat: Infinity, ease: 'easeInOut' }}>
+                      {iconoDeMenu(menu.icono)}
+                    </motion.div>
+                  )}
+                  <span className="collab-visual-tag">{menu.titulo}</span>
+                  {!menu.imagen_url && (
+                    <span className="collab-visual-hint">{Icons.camera} Imagen {menu.titulo}</span>
+                  )}
+                </TiltCard>
+
+                <motion.div className="collab-content" variants={staggerContainer}>
+                  {menu.kicker && <motion.span className="collab-kicker" variants={staggerItem}>{menu.kicker}</motion.span>}
+                  <motion.h3 className="collab-heading" variants={staggerItem}>
+                    {tituloConX(menu.titulo)}
+                  </motion.h3>
+                  {menu.descripcion && <motion.p className="collab-body" variants={staggerItem}>{menu.descripcion}</motion.p>}
+                  <motion.ul className="collab-bullets" variants={staggerItem}>
+                    {menu.bullets.map((b) => (
+                      <li key={b}><span className="collab-bullet-check">{Icons.checkCircle}</span>{b}</li>
+                    ))}
+                  </motion.ul>
+                  <motion.button
+                    className="collab-btn"
+                    variants={staggerItem}
+                    whileHover={{ scale: 1.04, boxShadow: '0 16px 40px rgba(255, 92, 25, 0.3)' }}
+                    whileTap={{ scale: 0.96 }}
+                    onClick={() => router.push(`/menu/${menu.slug}`)}
+                  >
+                    {menu.cta_texto}
+                    <motion.span style={{ display: 'inline-flex' }} animate={{ x: [0, 5, 0] }} transition={{ duration: 1.5, repeat: Infinity, ease: 'easeInOut' as const }}>
+                      {Icons.arrowRight}
+                    </motion.span>
+                  </motion.button>
+                </motion.div>
               </motion.div>
-            </motion.div>
-          ))}
+            );
+          })}
         </div>
       </section>
 

@@ -17,11 +17,14 @@ export function TiltCard({
   className = '',
   lift = -6,
   variants,
+  style,
 }: {
   children: React.ReactNode
   className?: string
   lift?: number
   variants?: Variants
+  /** Para pasar variables CSS de la tarjeta (ej. el color del menú). */
+  style?: React.CSSProperties
 }) {
   const reduced = useReducedMotion()
   return (
@@ -30,7 +33,7 @@ export function TiltCard({
       variants={variants}
       whileHover={reduced ? undefined : { scale: 1.035, y: lift }}
       transition={{ type: 'spring', stiffness: 320, damping: 22 }}
-      style={{ willChange: 'transform' }}
+      style={{ willChange: 'transform', ...style }}
     >
       {children}
     </motion.div>

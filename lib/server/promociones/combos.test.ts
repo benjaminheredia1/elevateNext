@@ -158,3 +158,52 @@ describe('venta', () => {
     await prisma.promocionesDescuentos.update({ where: { id: comboId }, data: { activo: true } });
   });
 });
+
+/**
+ * Sin stock el combo se sigue vendiendo, igual que los productos sueltos: en el
+ * mostrador el cajero tiene la mercadería delante aunque el inventario esté sin
+ * cargar. Antes el combo desaparecía de la caja y el cobro se rechazaba, que es
+ * un criterio de la tienda web (ahí sí bloquea /api/pedidos).
+ */
+describe('stock agotado', () => {
+  let insumoId: number;
+
+  beforeAll(async () => {
+    // El bowl pasa a tener receta, con un insumo sin existencias en este local.
+    const insumo = await prisma.insumo.create({
+      data: { nombre: `${MARCADOR} insumo`, unidad_medida: 'UNIDAD', stock_actual: 0, stock_minimo: 0, costo_promedio: 1 },
+    });
+    insumoId = insumo.id;
+    await prisma.stockSucursal.create({
+      data: { insumo_id: insumoId, sucursal_id: sucursal, stock_actual: 0 },
+    });
+    await prisma.recetasProducto.create({
+      data: { producto_id: bowlId, insumo_id: insumoId, sucursal_id: sucursal, cantidad_utilizada: 1 },
+    });
+  });
+
+  afterAll(async () => {
+    await prisma.recetasProducto.deleteMany({ where: { insumo_id: insumoId } });
+    await prisma.stockSucursal.deleteMany({ where: { insumo_id: insumoId } });
+    await prisma.movimientoInterno.deleteMany({ where: { insumo_id: insumoId } });
+    await prisma.insumo.deleteMany({ where: { id: insumoId } });
+  });
+
+  it('sigue apareciendo en la caja, marcado como agotado', async () => {
+    const vigentes = await combosVigentes(sucursal, DENTRO);
+    const combo = vigentes.find(c => c.id === comboId);
+
+    expect(combo).toBeDefined();
+    expect(combo!.rinde).toBe(0);
+    expect(combo!.agotado).toBe(true);
+  });
+
+  it('se puede cobrar aunque no haya stock para armarlo', async () => {
+    const { lineas } = await lineasDeCombo(comboId, 2, sucursal, DENTRO);
+    expect(lineas).toHaveLength(2);
+  });
+
+  it('pero sigue bloqueado fuera de su franja horaria', async () => {
+    await expect(lineasDeCombo(comboId, 1, sucursal, FUERA)).rejects.toThrow(/horario/i);
+  });
+});

@@ -36,8 +36,16 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
       data: {
         nombre:    input.nombre,
         direccion: input.direccion ?? null,
+        telefono:  input.telefono ?? null,
+        maps_url:  input.maps_url ?? null,
         lat:       input.lat ?? null,
         lng:       input.lng ?? null,
+          // Sin valores explícitos quedan los defaults del schema (Bs 8 / 2,5 km / Bs 2,50).
+          ...(input.envio_base !== undefined ? { envio_base: input.envio_base } : {}),
+          ...(input.envio_km_incluidos !== undefined ? { envio_km_incluidos: input.envio_km_incluidos } : {}),
+          ...(input.envio_por_km !== undefined ? { envio_por_km: input.envio_por_km } : {}),
+          ...(input.envio_maximo !== undefined ? { envio_maximo: input.envio_maximo } : {}),
+          ...(input.envio_radio_km !== undefined ? { envio_radio_km: input.envio_radio_km } : {}),
       },
     });
     await logAudit({

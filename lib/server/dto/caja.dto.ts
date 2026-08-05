@@ -60,6 +60,20 @@ export const VentaFisicaDTO = z.object({
   cliente_email: z.string().trim().max(120).optional(),
   cliente_nit: z.string().trim().max(30).optional(),
   cliente_anonimo: z.boolean().optional().default(false),
+  /**
+   * La venta entró como pedido de la web (por WhatsApp) y no por el mostrador.
+   * Sirve para medir cuánto se pide por la web: la web no registra pedidos, los
+   * registra el cajero cuando cobra.
+   */
+  es_pedido_web: z.boolean().optional().default(false),
+  /**
+   * Entrega del pedido web. Sin esto se asume consumo en el local.
+   *
+   * El costo del envío NO viaja acá y la venta no lo cobra: esa plata es del
+   * repartidor, no ingreso del negocio. Cuando el repartidor rinde cuentas, el
+   * dueño la registra como Ingreso extra del turno.
+   */
+  tipo_entrega: z.enum(['RECOJO', 'DELIVERY']).optional(),
 }).superRefine((dto, ctx) => {
   if (dto.metodo_pago === 'MIXTO' && !dto.pago_mixto) {
     ctx.addIssue({ code: 'custom', path: ['pago_mixto'], message: 'El pago mixto requiere el desglose efectivo/qr' });

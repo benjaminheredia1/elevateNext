@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
@@ -8,23 +8,39 @@ import { Icons } from '@/components/shop/icons';
 import { useShop, ShopOverlays } from '@/components/shop/order';
 import { TiltCard } from '@/components/shop/interactions';
 import { AnimatedChars, AnimatedWords, staggerContainer, staggerItem } from '@/components/shop/motion';
-import { BRANDS, type BrandKey } from '@/data/menus';
+import type { Menu } from '@/lib/menus';
 import SucursalPicker from '@/components/shop/SucursalPicker';
 import { useSucursalTienda } from '@/hooks/sucursal-tienda';
 
 export default function MenuPage() {
   const params = useParams();
-  const brand = params?.brand as string;
+  // El segmento se llama [brand] por historia; hoy es el slug del menú.
+  const slug = params?.brand as string;
   const router = useRouter();
   const shop = useShop();
   const [activeCat, setActiveCat] = useState('Todos');
   const { sucursalId, cargando: cargandoSucursal } = useSucursalTienda();
   const [dbProducts, setDbProducts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  /** Los menús publicados: uno es esta carta y el resto van al selector de arriba. */
+  const [menus, setMenus] = useState<Menu[] | null>(null);
 
   useEffect(() => {
-    const brandKey = (brand === 'fitbull' || brand === 'elevate' ? brand : null);
-    if (!brandKey) return;
+    fetch('/api/menus')
+      .then(r => r.json())
+      .then(res => setMenus(Array.isArray(res.data) ? res.data : []))
+      .catch(() => setMenus([]));
+  }, []);
+
+  // `key` además de `slug` para que los enlaces viejos (/menu/fitbull) sigan
+  // funcionando aunque el dueño le cambie la dirección a la carta.
+  const data = useMemo(
+    () => menus?.find(m => m.slug === slug || m.key === slug) ?? null,
+    [menus, slug],
+  );
+
+  useEffect(() => {
+    if (!data) return;
     // El menú y los precios son los del local elegido.
     if (cargandoSucursal) return;
 
@@ -32,7 +48,7 @@ export default function MenuPage() {
     setActiveCat('Todos');
     setLoading(true);
 
-    fetch(`/api/productos?marca=${brandKey}${sucursalId ? `&sucursal=${sucursalId}` : ''}`)
+    fetch(`/api/productos?marca=${encodeURIComponent(data.key)}${sucursalId ? `&sucursal=${sucursalId}` : ''}`)
       .then(r => r.json())
       .then(res => {
         const items: any[] = res.data ?? [];
@@ -64,17 +80,13 @@ export default function MenuPage() {
             calories: p.calorias ?? null,
             protein: p.proteina ?? null,
             imageUrl: p.imagen_url,
-            agotado: p.agotado ?? false,
           };
         });
         setDbProducts(mapped);
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [brand, sucursalId, cargandoSucursal]);
-
-  const brandKey = (brand === 'fitbull' || brand === 'elevate' ? brand : null) as BrandKey | null;
-  const data = brandKey ? BRANDS[brandKey] : null;
+  }, [data, sucursalId, cargandoSucursal]);
 
   const isEmpty = !loading && dbProducts.length === 0;
 
@@ -88,19 +100,25 @@ export default function MenuPage() {
     return dbProducts.filter((p: any) => p.category === activeCat);
   }, [dbProducts, activeCat]);
 
+  // Hasta que se sepa qué menús hay, no se puede decir que este no existe.
+  if (menus === null) {
+    return <div className="menu-page" />;
+  }
+
   if (!data) {
     return (
       <div className="menu-page">
         <div className="menu-notfound">
           <h1>Menú no encontrado</h1>
-          <p>El menú que buscas no existe.</p>
+          <p>El menú que buscas no existe o ya no está publicado.</p>
           <Link href="/" className="menu-back-link">{Icons.arrowLeft} Volver al inicio</Link>
         </div>
       </div>
     );
   }
 
-  const isFitbull = data.key === 'fitbull';
+  /** Las otras cartas publicadas, para poder saltar entre menús. */
+  const otrosMenus = menus.filter(m => m.id !== data.id);
 
   return (
     <div className={`menu-page brand-${data.key}`}>
@@ -116,9 +134,11 @@ export default function MenuPage() {
             <img src="/elevate.png" alt="Elevate" />
           </Link>
           <div className="menu-navbar-actions">
-            <Link href={`/menu/${isFitbull ? 'elevate' : 'fitbull'}`} className="menu-switch-link">
-              {isFitbull ? 'Ver menú Elevate' : 'Ver menú Fitbull'}
-            </Link>
+            {otrosMenus.map(m => (
+              <Link key={m.id} href={`/menu/${m.slug}`} className="menu-switch-link">
+                Ver menú {m.nombre}
+              </Link>
+            ))}
             <button className="menu-cart-btn" onClick={shop.openCart}>
               {Icons.shoppingCart}
               {shop.cartCount > 0 && <span className="menu-cart-count">{shop.cartCount}</span>}
@@ -128,18 +148,27 @@ export default function MenuPage() {
       </nav>
 
       {/* ===== MENU HERO ===== */}
-      <header className={`menu-hero ${isFitbull ? 'menu-hero-fitbull' : 'menu-hero-elevate'}`}>
+      {/* El color del menú alimenta el glow; las dos cartas históricas tienen
+          además su propia regla en menu.css, que sigue mandando. */}
+      <header
+        className={`menu-hero menu-hero-${data.key}`}
+        style={data.color ? ({ '--menu-color': data.color } as CSSProperties) : undefined}
+      >
         <div className="menu-hero-glow" />
         <div className="container">
-          <motion.span className="menu-hero-eyebrow" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
-            {data.eyebrow}
-          </motion.span>
+          {data.eyebrow && (
+            <motion.span className="menu-hero-eyebrow" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
+              {data.eyebrow}
+            </motion.span>
+          )}
           <h1 className="menu-hero-title">
-            <AnimatedChars text={data.title} delay={0.15} staggerDelay={0.04} />
+            <AnimatedChars text={data.titulo} delay={0.15} staggerDelay={0.04} />
           </h1>
-          <motion.p className="menu-hero-tagline" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.6, duration: 0.6 }}>
-            <AnimatedWords text={data.tagline} delay={0.7} animationType="blur" />
-          </motion.p>
+          {data.tagline && (
+            <motion.p className="menu-hero-tagline" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.6, duration: 0.6 }}>
+              <AnimatedWords text={data.tagline} delay={0.7} animationType="blur" />
+            </motion.p>
+          )}
           <motion.div className="menu-hero-meta" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 1, duration: 0.5 }}>
             <span>{Icons.clock} 30-45 min</span>
             <span className="menu-hero-dot" />
@@ -190,8 +219,8 @@ export default function MenuPage() {
           )}
           <motion.div className="products-grid" key={activeCat} initial="hidden" animate="visible" variants={staggerContainer}>
             {filtered.map(product => (
-              <TiltCard key={product.id} className={`product-card ${product.agotado ? 'agotado' : ''}`} variants={staggerItem}>
-                <div className="product-image-container" style={product.agotado ? { filter: 'grayscale(1)', opacity: 0.55 } : undefined}>
+              <TiltCard key={product.id} className="product-card" variants={staggerItem}>
+                <div className="product-image-container">
                   {product.imageUrl ? (
                     <img src={product.imageUrl} alt={product.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                   ) : (
@@ -202,11 +231,10 @@ export default function MenuPage() {
                       <div className="placeholder-text">Imagen producto</div>
                     </div>
                   )}
-                  {product.agotado ? (
-                    <span className="product-tag" style={{ background: 'rgba(0,0,0,0.75)', color: '#fff' }}>
-                      Agotado
-                    </span>
-                  ) : product.tag && (
+                  {/* Ya no se muestra "Agotado": el cliente puede pedirlo, y un
+                      cartel de agotado sobre algo que se puede comprar espanta
+                      la venta. La etiqueta vuelve a ser la del descuento. */}
+                  {product.tag && (
                     <motion.span className="product-tag" initial={{ opacity: 0, scale: 0 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.3, type: 'spring', stiffness: 400, damping: 15 }}>
                       {product.tag}
                     </motion.span>
@@ -231,25 +259,23 @@ export default function MenuPage() {
                       )}
                       <span className="currency">Bs. </span>{product.price}
                     </div>
-                    {product.agotado ? (
-                      <span style={{ fontSize: 12, fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                        No disponible
-                      </span>
-                    ) : (
-                      <motion.button
-                        className={`product-add-btn ${shop.addedProductId === product.id ? 'added' : ''}`}
-                        whileHover={{ scale: 1.2 }} whileTap={{ scale: 0.9 }}
-                        animate={shop.addedProductId === product.id ? { scale: [1, 1.3, 1], rotate: [0, 15, 0], transition: { duration: 0.4, ease: 'easeInOut' } } : {}}
-                        transition={{ type: 'spring', stiffness: 400 }}
-                        onClick={() => shop.addToCart({ id: product.id, name: product.name, price: product.price, precio_original: product.precio_original, descuentoAplicado: product.descuentoAplicado, icon: product.icon, category: product.category })} title="Agregar al carrito"
-                      >
-                        {shop.addedProductId === product.id ? (
-                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                            <polyline points="20 6 9 17 4 12" />
-                          </svg>
-                        ) : Icons.plus}
-                      </motion.button>
-                    )}
+                    {/* El botón está siempre: sin stock se pide igual, como en
+                        la caja. El inventario no siempre está al día y bloquear
+                        por existencias hacía perder pedidos de cosas que sí
+                        había. */}
+                    <motion.button
+                      className={`product-add-btn ${shop.addedProductId === product.id ? 'added' : ''}`}
+                      whileHover={{ scale: 1.2 }} whileTap={{ scale: 0.9 }}
+                      animate={shop.addedProductId === product.id ? { scale: [1, 1.3, 1], rotate: [0, 15, 0], transition: { duration: 0.4, ease: 'easeInOut' } } : {}}
+                      transition={{ type: 'spring', stiffness: 400 }}
+                      onClick={() => shop.addToCart({ id: product.id, name: product.name, price: product.price, precio_original: product.precio_original, descuentoAplicado: product.descuentoAplicado, icon: product.icon, category: product.category })} title="Agregar al carrito"
+                    >
+                      {shop.addedProductId === product.id ? (
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                      ) : Icons.plus}
+                    </motion.button>
                   </div>
                 </div>
               </TiltCard>

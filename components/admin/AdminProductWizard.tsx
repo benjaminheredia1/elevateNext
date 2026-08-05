@@ -38,7 +38,11 @@ export type CampoHeredable =
 
 interface InsumoOpt { id: number; nombre: string; unidad_medida: string; costo_promedio: number; stock_actual: number; stock_minimo?: number; punto_critico?: number; proveedor?: string | null; activo: boolean; }
 interface CategoriaOpt { id: number; nombre: string; }
-interface MarcaOpt { id: number; nombre: string; key?: string; color?: string; }
+interface MarcaOpt {
+  id: number; nombre: string; key?: string; color?: string;
+  /** Presentación del menú, editable en /admin/menus. */
+  titulo?: string; tagline?: string; estado?: 'BORRADOR' | 'PUBLICADO' | 'ARCHIVADO';
+}
 
 type UnidadMedida = 'KG' | 'GR' | 'UNIDAD' | 'LT' | 'ML';
 const UNIDADES: UnidadMedida[] = ['UNIDAD', 'KG', 'GR', 'LT', 'ML'];
@@ -203,6 +207,15 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, sucur
   const set = (patch: Partial<WizardInitial>) => setP(prev => ({ ...prev, ...patch }));
   const insumoOf = (id: number) => insumos.find(i => i.id === id);
   const insumosActivos = useMemo(() => insumos.filter(i => i.activo !== false), [insumos]);
+  /**
+   * Menús a los que se puede mandar el producto. Una carta archivada ya no
+   * recibe productos nuevos, pero sigue apareciendo si este producto está
+   * adentro: si no, al guardar se lo sacaría sin que nadie lo haya pedido.
+   */
+  const marcasElegibles = useMemo(
+    () => marcas.filter(m => m.estado !== 'ARCHIVADO' || p.marcas.includes(m.id)),
+    [marcas, p.marcas],
+  );
 
   // Datos del insumo de inventario para productos de reventa (paso 3)
   const [reventaInsumo, setReventaInsumo] = useState<ReventaInsumo>(EMPTY_REVENTA);
@@ -404,32 +417,34 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, sucur
               <div className="form-group full">
                 <label>¿En qué menú aparecerá? <span style={{ color: 'var(--orange)' }}>*</span></label>
                 <div className="type-choice">
-                  {marcas.map(m => {
-                    const isElevate = m.nombre.toLowerCase().includes('elevate') || m.key?.toLowerCase() === 'elevate';
-                    return (
-                      <div
-                        key={m.id}
-                        className={`type-card ${p.marcas.includes(m.id) ? 'active' : ''}`}
-                        onClick={() => toggleMarca(m.id)}
-                        style={{ position: 'relative' }}
-                      >
-                        {p.marcas.includes(m.id) && (
-                          <span style={{ position: 'absolute', top: 8, right: 10, fontSize: 16 }}>✓</span>
-                        )}
-                        <h5>{isElevate ? '🥗 Catering Elevate' : '🏋️ Elevate × Fitbull'}</h5>
-                        <p style={{ fontSize: '0.78rem' }}>
-                          {isElevate
-                            ? 'Bowls, ensaladas, wraps y bebidas saludables del menú principal'
-                            : 'Nutrición deportiva de alto rendimiento para atletas y gym'}
-                        </p>
-                      </div>
-                    );
-                  })}
-                  {marcas.length === 0 && (
-                    <span className="form-hint">No hay marcas. Ejecuta <code>npx prisma db seed</code> para crearlas.</span>
+                  {marcasElegibles.map(m => (
+                    <div
+                      key={m.id}
+                      className={`type-card ${p.marcas.includes(m.id) ? 'active' : ''}`}
+                      onClick={() => toggleMarca(m.id)}
+                      style={{ position: 'relative' }}
+                    >
+                      {p.marcas.includes(m.id) && (
+                        <span style={{ position: 'absolute', top: 8, right: 10, fontSize: 16 }}>✓</span>
+                      )}
+                      <h5>
+                        <span style={{
+                          display: 'inline-block', width: 10, height: 10, borderRadius: '50%',
+                          background: m.color || 'var(--slate)', marginRight: 7,
+                        }} />
+                        {m.titulo?.trim() || m.nombre}
+                      </h5>
+                      <p style={{ fontSize: '0.78rem' }}>
+                        {m.tagline?.trim()
+                          || (m.estado === 'BORRADOR' ? 'Carta en borrador, todavía no publicada.' : 'Sin descripción.')}
+                      </p>
+                    </div>
+                  ))}
+                  {marcasElegibles.length === 0 && (
+                    <span className="form-hint">No hay menús. Creá uno en Menús para poder publicar productos.</span>
                   )}
                 </div>
-                <span className="form-hint">Puedes asignar el producto a uno o ambos menús a la vez.</span>
+                <span className="form-hint">Podés asignar el producto a más de un menú a la vez.</span>
                 {editandoSucursal && (
                   <Herencia heredado={esHeredado('marcas')} onVolverAHeredar={() => volverAHeredar('marcas')} />
                 )}
@@ -586,9 +601,9 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, sucur
                         />
                         {opciones.length > 1 ? (
                           <select
+                            className="recipe-unit"
                             value={uiUnidad}
                             onChange={e => cambiarCantidad(uiTxt, e.target.value)}
-                            style={{ fontSize: '0.8rem', width: 'auto' }}
                           >
                             {opciones.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
                           </select>

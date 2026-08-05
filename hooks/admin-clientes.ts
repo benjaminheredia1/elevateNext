@@ -1,20 +1,19 @@
 import { useQuery } from '@tanstack/react-query';
 import apiClient from '@/hooks/api';
 
-/** Período que filtra la lista, aparte del mes de fidelización. */
+/** Único período de la pantalla: filtra la lista y las métricas. */
 export interface PeriodoClientes {
   rango: 'hoy' | '7d' | 'mes' | 'custom' | 'todo';
   desde?: string;
   hasta?: string;
 }
 
-export function useAdminClientes(q = '', mes = '', periodo?: PeriodoClientes) {
+export function useAdminClientes(q = '', periodo?: PeriodoClientes) {
   return useQuery({
-    queryKey: ['admin', 'clientes', q, mes, periodo?.rango, periodo?.desde, periodo?.hasta],
+    queryKey: ['admin', 'clientes', q, periodo?.rango, periodo?.desde, periodo?.hasta],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (q) params.set('q', q);
-      if (mes) params.set('mes', mes);
       if (periodo) {
         params.set('rango', periodo.rango);
         // Solo el rango a medida necesita las fechas; el resto las deriva el

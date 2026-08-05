@@ -10,11 +10,7 @@ import KpiCard from '@/components/ui/KpiCard';
 import MoneyText from '@/components/ui/MoneyText';
 import DataTable from '@/components/ui/DataTable';
 import EmptyState from '@/components/ui/EmptyState';
-
-function currentMonth() {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-}
+import CustomDateRange, { hoyLocalISO } from '@/components/ui/CustomDateRange';
 
 function fmt(d: string | null | undefined) {
   if (!d) return '—';
@@ -28,12 +24,6 @@ function norm(value: string) {
 
 /** Sugerencias máximas del autocompletado. */
 const MAX_SUGERENCIAS = 8;
-
-function monthName(value: string | undefined) {
-  if (!value) return 'Mes actual';
-  const [year, month] = value.split('-').map(Number);
-  return new Date(year, month - 1, 1).toLocaleDateString('es-BO', { month: 'long', year: 'numeric' });
-}
 
 function FavoriteProduct({ product }: { product?: { nombre: string; cantidad: number; total: number } | null }) {
   if (!product) return <span className="admin-cell-muted">Sin compras</span>;
@@ -319,7 +309,6 @@ const PERIODOS: { id: PeriodoClientes['rango']; label: string }[] = [
 
 export default function ClientesAdminPage() {
   const [q, setQ] = useState('');
-  const [mes, setMes] = useState(currentMonth());
   const [periodo, setPeriodo] = useState<PeriodoClientes>({ rango: 'mes' });
   const [mergeOpen, setMergeOpen] = useState(false);
   const [nuevoOpen, setNuevoOpen] = useState(false);
@@ -329,8 +318,10 @@ export default function ClientesAdminPage() {
   const [resaltada, setResaltada] = useState(0);
   const buscadorRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
-  // La búsqueda es local: el servidor solo depende del mes, así no se recarga en cada tecla.
-  const { data, isLoading, isError } = useAdminClientes('', mes, periodo);
+
+  // La búsqueda es local: el servidor solo depende del período, así no se
+  // recarga en cada tecla.
+  const { data, isLoading, isError } = useAdminClientes('', periodo);
 
   const items = data?.items ?? [];
 
@@ -340,8 +331,76 @@ export default function ClientesAdminPage() {
     return items.filter((c: any) => norm(c.nombre).includes(term) || (c.telefono ?? '').includes(term));
   }, [items, q]);
 
-  // Si hay un cliente elegido se muestra solo ese; si no, lo que coincida con el texto.
-  const visibles = seleccionado ? items.filter((c: any) => c.id === seleccionado.id) : coincidencias;
+  /**
+   * ¿El cliente compró dentro del período elegido? "Todo" no filtra nada.
+   *
+   * Sin esto el filtro no filtraba: cambiaba los números de las columnas del
+   * período pero la lista seguía mostrando a todos los clientes, así que tocar
+   * "Hoy" parecía no hacer nada.
+   */
+  /**
+   * Cambia de período. "Rango" arranca con hoy–hoy en vez de vacío: sin fechas
+   * el servidor caía al día de hoy y el filtro parecía no responder, igual que
+   * en analítica, donde el rango a medida siempre nace con fechas puestas.
+   */
+  const elegirRango = (rango: PeriodoClientes['rango']) => {
+    if (rango !== 'custom') {
+      setPeriodo({ rango, desde: periodo.desde, hasta: periodo.hasta });
+      return;
+    }
+    const hoy = hoyLocalISO();
+    setPeriodo({ rango: 'custom', desde: periodo.desde ?? hoy, hasta: periodo.hasta ?? hoy });
+  };
+
+  const enPeriodo = (c: any) => periodo.rango === 'todo' || (c.pedidos_periodo ?? 0) > 0;
+  const etiquetaPeriodo = (PERIODOS.find(p => p.id === periodo.rango)?.label ?? '').toLowerCase();
+  /** Sufijo de los KPI: "Clientes de hoy", "Ingresos de la semana"… */
+  const etiquetaKpi = periodo.rango === 'todo'
+    ? 'con compras'
+    : periodo.rango === 'hoy' ? 'de hoy'
+    : periodo.rango === '7d' ? 'de la semana'
+    : periodo.rango === 'mes' ? 'del mes'
+    : 'del rango';
+  /**
+   * Cómo se nombra el período en los subtítulos de las tarjetas. Con un rango a
+   * medida se dicen las fechas, que es la única forma de que el usuario sepa de
+   * qué período le están hablando.
+   */
+  const descripcionPeriodo = periodo.rango === 'custom'
+    ? (periodo.desde || periodo.hasta
+        ? `del ${fmt(periodo.desde) } al ${fmt(periodo.hasta)}`
+        : 'del rango elegido')
+    : periodo.rango === 'todo' ? 'de todo el historial'
+    : periodo.rango === 'hoy' ? 'de hoy'
+    : periodo.rango === '7d' ? 'de la última semana'
+    : 'de este mes';
+
+  /**
+   * KPI del período elegido, calculados con lo que ya manda el servidor por
+   * cliente (`pedidos_periodo` / `gastado_periodo`). En "Todo" el período es
+   * todo el historial, así que estos números coinciden con los totales.
+   */
+  const kpis = useMemo(() => {
+    const activos = items.filter((c: any) => (c.pedidos_periodo ?? 0) > 0);
+    const ingresos = activos.reduce((s: number, c: any) => s + (c.gastado_periodo ?? 0), 0);
+    return {
+      clientes: activos.length,
+      ingresos: Number(ingresos.toFixed(2)),
+      // Cuánto gastó en promedio cada cliente que compró en el período.
+      gastoPromedio: activos.length > 0 ? Number((ingresos / activos.length).toFixed(2)) : 0,
+    };
+  }, [items]);
+
+  /**
+   * Filas de la tabla. Con un cliente elegido, solo ese; buscando por texto, lo
+   * que coincida sin importar el período (buscar a alguien por nombre tiene que
+   * encontrarlo aunque no haya comprado hoy); sin búsqueda, los del período.
+   */
+  const visibles = seleccionado
+    ? items.filter((c: any) => c.id === seleccionado.id)
+    : q.trim()
+      ? coincidencias
+      : items.filter(enPeriodo);
   const sugerencias = coincidencias.slice(0, MAX_SUGERENCIAS);
 
   // Cierra el desplegable al hacer clic fuera del buscador.
@@ -384,8 +443,8 @@ export default function ClientesAdminPage() {
   const clienteMasComprador = resumen?.cliente_mas_comprador;
   const clienteMasFrecuente = resumen?.cliente_mas_frecuente;
   const productoMasComprado = resumen?.producto_mas_comprado;
-  const topFavoritos = resumen?.top_favoritos_mes ?? [];
-  const topClientes = resumen?.top_clientes_mes ?? [];
+  const topFavoritos = resumen?.top_favoritos_periodo ?? [];
+  const topClientes = resumen?.top_clientes_periodo ?? [];
   const maxFavClientes = topFavoritos[0]?.clientes ?? 0;
 
   return (
@@ -426,11 +485,14 @@ export default function ClientesAdminPage() {
         <EmptyState title="Error al cargar clientes" />
       ) : (
         <>
+          {/* Los KPI son del período elegido, no del historial: si el filtro no
+              los movía, la pantalla mostraba los mismos cuatro números para
+              "Hoy" que para "Todo" y el filtro parecía no hacer nada. */}
           <div className="kpi-grid">
-            <KpiCard label="Total clientes" value={resumen?.total_clientes ?? 0} />
-            <KpiCard label="Ingresos totales" value={<MoneyText value={resumen?.ingresos_totales ?? 0} />} highlight />
-            <KpiCard label="Gasto promedio" value={<MoneyText value={resumen?.gasto_promedio ?? 0} />} />
-            <KpiCard label="Activos del mes" value={resumen?.clientes_activos_mes ?? 0} accent="var(--fresh)" />
+            <KpiCard label={`Clientes ${etiquetaKpi}`} value={kpis.clientes} />
+            <KpiCard label={`Ingresos ${etiquetaKpi}`} value={<MoneyText value={kpis.ingresos} />} highlight />
+            <KpiCard label="Gasto promedio" value={<MoneyText value={kpis.gastoPromedio} />} />
+            <KpiCard label="Total registrados" value={resumen?.total_clientes ?? items.length} accent="var(--fresh)" />
           </div>
 
           <div className="admin-toolbar">
@@ -490,59 +552,54 @@ export default function ClientesAdminPage() {
                 Ver todos los clientes
               </button>
             )}
-            <div className="form-group" style={{ minWidth: 190 }}>
-              <label>Mes de fidelización</label>
-              <input type="month" value={mes} onChange={e => setMes(e.target.value || currentMonth())} />
-            </div>
           </div>
 
-          {/* Período de la LISTA, aparte del mes de fidelización: una cosa es
-              "quién compró esta semana" y otra "quién fue el mejor de julio". */}
+          {/* Único control de tiempo de la pantalla: manda sobre la lista y
+              sobre las tarjetas de fidelización. */}
           <div className="admin-cat-filters" style={{ marginTop: 12 }}>
             {PERIODOS.map(p => (
               <button
                 key={p.id}
                 type="button"
                 className={`cat-filter-btn ${periodo.rango === p.id ? 'active' : ''}`}
-                onClick={() => setPeriodo({ rango: p.id, desde: periodo.desde, hasta: periodo.hasta })}
+                onClick={() => elegirRango(p.id)}
               >
                 {p.label}
               </button>
             ))}
-            {periodo.rango === 'custom' && (
-              <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center', marginLeft: 8 }}>
-                <input
-                  type="date"
-                  value={periodo.desde ?? ''}
-                  onChange={e => setPeriodo({ ...periodo, desde: e.target.value })}
-                />
-                <span className="dim">a</span>
-                <input
-                  type="date"
-                  value={periodo.hasta ?? ''}
-                  onChange={e => setPeriodo({ ...periodo, hasta: e.target.value })}
-                />
-              </span>
-            )}
           </div>
+
+          {/* Fuera de la fila de chips, como en analítica: el control es más
+              alto y adentro deformaba la fila. Mismo componente, así que se
+              comporta igual — Desde/Hasta rotulados, sin invertir el rango ni
+              pasar de hoy. */}
+          {periodo.rango === 'custom' && (
+            <div style={{ marginTop: 12 }}>
+              <CustomDateRange
+                desde={periodo.desde ?? hoyLocalISO()}
+                hasta={periodo.hasta ?? hoyLocalISO()}
+                onChange={({ desde, hasta }) => setPeriodo({ rango: 'custom', desde, hasta })}
+              />
+            </div>
+          )}
 
           <div className="finance-grid">
             <div className="finance-panel span-4">
               <div className="finance-panel-header">
                 <div>
                   <h3>Más comprador</h3>
-                  <p>{monthName(resumen?.mes)}</p>
+                  <p>{descripcionPeriodo}</p>
                 </div>
               </div>
               {clienteMasComprador ? (
                 <div className="finance-list">
                   <div className="finance-row"><span>Cliente</span><strong>{clienteMasComprador.nombre}</strong></div>
-                  <div className="finance-row"><span>Gastó</span><strong><MoneyText value={clienteMasComprador.gastado_mes} /></strong></div>
-                  <div className="finance-row"><span>Pedidos</span><strong>{clienteMasComprador.pedidos_mes}</strong></div>
-                  <div className="finance-row"><span>Compra más</span><strong>{clienteMasComprador.producto_favorito_mes?.nombre ?? 'Sin producto'}</strong></div>
+                  <div className="finance-row"><span>Gastó</span><strong><MoneyText value={clienteMasComprador.gastado_periodo} /></strong></div>
+                  <div className="finance-row"><span>Pedidos</span><strong>{clienteMasComprador.pedidos_periodo}</strong></div>
+                  <div className="finance-row"><span>Compra más</span><strong>{clienteMasComprador.producto_favorito_periodo?.nombre ?? 'Sin producto'}</strong></div>
                 </div>
               ) : (
-                <EmptyState title="Sin compras en este mes" />
+                <EmptyState title={`Sin compras ${descripcionPeriodo}`} />
               )}
             </div>
 
@@ -556,12 +613,12 @@ export default function ClientesAdminPage() {
               {clienteMasFrecuente ? (
                 <div className="finance-list">
                   <div className="finance-row"><span>Cliente</span><strong>{clienteMasFrecuente.nombre}</strong></div>
-                  <div className="finance-row"><span>Pedidos</span><strong>{clienteMasFrecuente.pedidos_mes}</strong></div>
-                  <div className="finance-row"><span>Ticket prom.</span><strong><MoneyText value={clienteMasFrecuente.ticket_promedio_mes} /></strong></div>
-                  <div className="finance-row"><span>Compra más</span><strong>{clienteMasFrecuente.producto_favorito_mes?.nombre ?? 'Sin producto'}</strong></div>
+                  <div className="finance-row"><span>Pedidos</span><strong>{clienteMasFrecuente.pedidos_periodo}</strong></div>
+                  <div className="finance-row"><span>Ticket prom.</span><strong><MoneyText value={clienteMasFrecuente.ticket_promedio_periodo} /></strong></div>
+                  <div className="finance-row"><span>Compra más</span><strong>{clienteMasFrecuente.producto_favorito_periodo?.nombre ?? 'Sin producto'}</strong></div>
                 </div>
               ) : (
-                <EmptyState title="Sin frecuencia este mes" />
+                <EmptyState title={`Sin pedidos ${descripcionPeriodo}`} />
               )}
             </div>
 
@@ -569,7 +626,7 @@ export default function ClientesAdminPage() {
               <div className="finance-panel-header">
                 <div>
                   <h3>Productos favoritos</h3>
-                  <p>Preferidos por más clientes este mes</p>
+                  <p>Preferidos por más clientes {descripcionPeriodo}</p>
                 </div>
               </div>
               {topFavoritos.length > 0 ? (
@@ -605,7 +662,7 @@ export default function ClientesAdminPage() {
           {topClientes.length > 0 && (
             <div className="dash-card span-12" style={{ marginBottom: 18 }}>
               <div className="dash-card-header">
-                <h3>Top clientes del mes</h3>
+                <h3>Top clientes {descripcionPeriodo}</h3>
                 <span className="dash-card-sub">
                   {topClientes.length} {topClientes.length === 1 ? 'cliente' : 'clientes'} · ordenados por gasto
                 </span>
@@ -621,10 +678,10 @@ export default function ClientesAdminPage() {
                     <div className="top-cliente-body">
                       <div className="top-cliente-name">{cliente.nombre}</div>
                       <div className="top-cliente-sub">
-                        {cliente.pedidos_mes} {cliente.pedidos_mes === 1 ? 'pedido' : 'pedidos'} · {cliente.producto_favorito_mes?.nombre ?? 'Sin producto favorito'}
+                        {cliente.pedidos_periodo} {cliente.pedidos_periodo === 1 ? 'pedido' : 'pedidos'} · {cliente.producto_favorito_periodo?.nombre ?? 'Sin producto favorito'}
                       </div>
                     </div>
-                    <strong className="top-cliente-total"><MoneyText value={cliente.gastado_mes} /></strong>
+                    <strong className="top-cliente-total"><MoneyText value={cliente.gastado_periodo} /></strong>
                   </li>
                 ))}
               </ol>
@@ -633,7 +690,15 @@ export default function ClientesAdminPage() {
 
           <DataTable
             data={visibles}
-            emptyTitle={q.trim() ? 'Sin clientes que coincidan' : 'Sin clientes registrados'}
+            emptyTitle={
+              q.trim()
+                ? 'Sin clientes que coincidan'
+                // Lista vacía por el filtro y no por falta de clientes: decirlo
+                // evita que se lea como que se perdió la base.
+                : items.length > 0
+                  ? `Nadie compró en este período (${etiquetaPeriodo})`
+                  : 'Sin clientes registrados'
+            }
             rowKey={(row: any) => row.id}
             onRowClick={(row: any) => setDetalle(row)}
             columns={[
@@ -646,10 +711,10 @@ export default function ClientesAdminPage() {
               { key: 'primer_pedido', header: 'Primer pedido', render: (row: any) => fmt(row.primer_pedido) },
               { key: 'pedidos', header: 'Pedidos', className: 'num', render: (row: any) => row.pedidos },
               { key: 'total_gastado', header: 'Total gastado', className: 'num', render: (row: any) => <MoneyText value={row.total_gastado} /> },
-              // Del período elegido arriba, no del mes de fidelización.
+              // Del período elegido arriba.
               { key: 'pedidos_periodo', header: 'Pedidos período', className: 'num', render: (row: any) => row.pedidos_periodo ?? 0 },
               { key: 'gastado_periodo', header: 'Gastado período', className: 'num', render: (row: any) => <MoneyText value={row.gastado_periodo ?? 0} /> },
-              { key: 'favorito_mes', header: 'Compra más', render: (row: any) => <FavoriteProduct product={row.producto_favorito_mes} /> },
+              { key: 'favorito_periodo', header: 'Compra más', render: (row: any) => <FavoriteProduct product={row.producto_favorito_periodo} /> },
               { key: 'gasto_promedio', header: 'Gasto prom.', className: 'num', render: (row: any) => <MoneyText value={row.gasto_promedio} /> },
             ]}
           />

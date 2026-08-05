@@ -1,3 +1,139 @@
+/* ===== TOPBAR ===== */
+/* En mobile el sidebar es un drawer oculto: esta barra trae el botón que lo abre. */
+.caja-topbar {
+  gap: 12px;
+  justify-content: flex-start;
+}
+
+.caja-topbar-title {
+  font-family: var(--font-display);
+  font-size: 1.02rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+/* Mientras el drawer está abierto el contenido no debe scrollear detrás. */
+.admin-main.is-locked {
+  overflow: hidden;
+}
+
+/* ===== POS: FEEDBACK AL AGREGAR ===== */
+.pos-card {
+  position: relative;
+}
+
+/* Cuántas unidades lleva ya esta tarjeta: confirma el toque sin ir al carrito. */
+.pos-card-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 11px;
+  background: var(--orange);
+  color: #fff;
+  font-size: 0.74rem;
+  font-weight: 800;
+  line-height: 22px;
+  text-align: center;
+  /* El key={cantidad} remonta el badge en cada cambio, así el pop se repite. */
+  animation: pos-pop .28s ease;
+}
+
+/**
+ * Producto con promoción vigente. Va en el flujo, arriba del nombre, y no
+ * flotando: encimado sobre el título tapaba el nombre del producto.
+ */
+.pos-card-desc-badge {
+  display: inline-block;
+  margin-bottom: 6px;
+  padding: 1px 7px;
+  border-radius: 11px;
+  background: var(--fresh);
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: .3px;
+}
+
+.pos-card.is-descuento {
+  border-color: var(--fresh);
+}
+
+/* Después de is-descuento a propósito: al agregar al carrito el feedback naranja
+   tiene que ganarle al borde verde del descuento. */
+.pos-card.is-added {
+  border-color: var(--orange);
+  background: rgba(255, 92, 25, .08);
+}
+
+/* Combo que ya llegó a su tope de stock: sigue clickeable para explicar por qué. */
+.pos-card.is-full {
+  opacity: .55;
+}
+
+@keyframes pos-pop {
+  0% { transform: scale(.4); opacity: 0; }
+  60% { transform: scale(1.18); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* Barra flotante del carrito: solo donde el carrito cae fuera de la vista. */
+.pos-cart-bar { display: none; }
+
+@media (max-width: 1024px) {
+  .pos-cart-bar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 44;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 16px;
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
+    background: var(--kale);
+    color: #fff;
+    box-shadow: 0 -6px 20px rgba(0, 0, 0, .18);
+  }
+
+  .pos-cart-bar-info {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .pos-cart-bar-count {
+    font-size: 0.74rem;
+    font-weight: 700;
+    letter-spacing: .6px;
+    text-transform: uppercase;
+    opacity: .75;
+  }
+
+  .pos-cart-bar-total {
+    font-family: var(--font-display);
+    font-size: 1.15rem;
+    font-weight: 800;
+    animation: pos-pop .28s ease;
+  }
+
+  /* Que la barra no tape el final del contenido. */
+  .pos-page.with-cart-bar {
+    padding-bottom: 84px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pos-card-badge,
+  .pos-cart-bar-total {
+    animation: none;
+  }
+}
+
 .caja-shell {
   display: flex;
   flex-direction: column;

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import AlertPopup from '@/components/AlertPopup';
@@ -15,10 +15,18 @@ interface Producto {
   id: number;
   nombre: string;
   descripcion?: string | null;
+  /** Precio a cobrar: ya trae aplicada la promoción vigente, si hay. */
   precio: number;
+  /** Precio de lista del local, antes de la promoción. */
+  precio_original?: number;
+  /** Cuántos Bs descuenta la promoción. Ausente o 0 = sin descuento. */
+  descuentoAplicado?: number;
   disponible: boolean;
   categoria_id?: { categoria: { id: number; nombre: string } }[];
 }
+
+/** ¿El producto tiene una promoción vigente encima? */
+const tieneDescuento = (p: Producto) => (p.descuentoAplicado ?? 0) > 0;
 
 /**
  * Combo vigente en esta sucursal y a esta hora. La lista ya viene filtrada por
@@ -44,6 +52,12 @@ interface CartItem extends Producto {
 
 /** Categoría virtual del filtro: los combos no son productos del catálogo. */
 const CAT_COMBOS = -1;
+/**
+ * Otra categoría virtual: los productos con promoción vigente. No es una
+ * categoría real (un producto en descuento sigue siendo de la suya), pero es lo
+ * que el cajero necesita ver junto para poder ofrecerlo.
+ */
+const CAT_DESCUENTOS = -2;
 
 export default function VentaCajaPage() {
   const router = useRouter();
@@ -60,6 +74,9 @@ export default function VentaCajaPage() {
   const [mixtoEfectivo, setMixtoEfectivo] = useState(0);
   const [esCortesia, setEsCortesia] = useState(false);
   const [anonimo, setAnonimo] = useState(false);
+  /** La venta entró como pedido de la carta web, avisado por WhatsApp. */
+  const [esPedidoWeb, setEsPedidoWeb] = useState(false);
+  const [entregaWeb, setEntregaWeb] = useState<'RECOJO' | 'DELIVERY'>('RECOJO');
   const [cNombre, setCNombre] = useState('');
   const [cTelefono, setCTelefono] = useState('');
   const [cEmail, setCEmail] = useState('');
@@ -79,6 +96,16 @@ export default function VentaCajaPage() {
   const [abonoDeuda, setAbonoDeuda] = useState('');
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [alert, setAlert] = useState<{ title: string; description: string; type: 'success' | 'error' | 'warning' } | null>(null);
+  // Clave de la última línea agregada: destaca su tarjeta un instante para que
+  // el cajero vea que el toque entró, sin tener que bajar hasta el carrito.
+  const [pulso, setPulso] = useState<string | null>(null);
+  const carritoRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!pulso) return;
+    const t = setTimeout(() => setPulso(null), 400);
+    return () => clearTimeout(t);
+  }, [pulso]);
 
   useEffect(() => {
     const t = setTimeout(() => setBusquedaClienteDebounced(busquedaCliente), 300);
@@ -186,9 +213,18 @@ export default function VentaCajaPage() {
       .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
   }, [productos]);
 
+  const enDescuento = useMemo(() => productos.filter(tieneDescuento), [productos]);
+
   const filtrados = productos.filter(p =>
     p.nombre.toLowerCase().includes(busqueda.toLowerCase()) &&
-    (filterCat === null || (p.categoria_id ?? []).some(c => c.categoria.id === filterCat))
+    (filterCat === null
+      ? true
+      : filterCat === CAT_DESCUENTOS
+        ? tieneDescuento(p)
+        : filterCat === CAT_COMBOS
+          // En la solapa de combos no van los productos sueltos.
+          ? false
+          : (p.categoria_id ?? []).some(c => c.categoria.id === filterCat))
   );
   // Los combos se ven en "Todos" y en su propia solapa, nunca dentro de una
   // categoría de productos: no pertenecen a ninguna.
@@ -219,21 +255,30 @@ export default function VentaCajaPage() {
   // se sumarían en la misma fila.
   const claveLinea = (item: { id: number; combo_id?: number }) => `${item.combo_id ? 'c' : 'p'}${item.id}`;
 
+  /** Cuántas unidades de esta tarjeta ya están en el carrito. */
+  const enCarrito = (clave: string) => cart.find(item => claveLinea(item) === clave)?.cantidad ?? 0;
+
   const addProduct = (producto: Producto) => {
     setCart(prev => {
       const existing = prev.find(item => !item.combo_id && item.id === producto.id);
       if (existing) return prev.map(item => (!item.combo_id && item.id === producto.id) ? { ...item, cantidad: item.cantidad + 1 } : item);
       return [...prev, { ...producto, cantidad: 1 }];
     });
+    setPulso(`p${producto.id}`);
   };
 
-  /** Un combo entra al carrito como UNA línea, al precio que fijó el servidor. */
+  /**
+   * Un combo entra al carrito como UNA línea, al precio que fijó el servidor.
+   *
+   * No se topea por stock: como con los productos sueltos, el cajero tiene la
+   * mercadería delante y tiene que poder cobrar aunque el inventario esté sin
+   * cargar. El stock queda negativo y se corrige al reponer. Lo único que
+   * bloquea un combo es su franja horaria, y eso lo valida el servidor.
+   */
   const addCombo = (combo: Combo) => {
     setCart(prev => {
       const existing = prev.find(item => item.combo_id === combo.id);
       if (existing) {
-        // No se puede vender más combos de los que el local puede armar.
-        if (combo.rinde != null && existing.cantidad >= combo.rinde) return prev;
         return prev.map(item => item.combo_id === combo.id ? { ...item, cantidad: item.cantidad + 1 } : item);
       }
       return [...prev, {
@@ -246,7 +291,15 @@ export default function VentaCajaPage() {
         cantidad: 1,
       }];
     });
+    setPulso(`c${combo.id}`);
   };
+
+  /** La barra flotante de mobile lleva al carrito, que queda al final del scroll. */
+  const verCarrito = () => {
+    carritoRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  const unidadesEnCarrito = useMemo(() => cart.reduce((sum, item) => sum + item.cantidad, 0), [cart]);
 
   const changeQty = (clave: string, delta: number) => {
     setCart(prev => prev
@@ -291,11 +344,15 @@ export default function VentaCajaPage() {
         cliente_telefono: anonimo ? undefined : (cTelefono.trim() || undefined),
         cliente_email: anonimo ? undefined : (cEmail.trim() || undefined),
         cliente_nit: anonimo ? undefined : (cNit.trim() || undefined),
+        es_pedido_web: esPedidoWeb,
+        tipo_entrega: esPedidoWeb ? entregaWeb : undefined,
       });
       setConfirmOpen(false);
       setCart([]);
       setEsCortesia(false);
       setAnonimo(false);
+      setEsPedidoWeb(false);
+      setEntregaWeb('RECOJO');
       setMixtoEfectivo(0);
       limpiarCliente();
       // Nº del turno como identificador principal; el global queda de referencia
@@ -322,7 +379,7 @@ export default function VentaCajaPage() {
   };
 
   return (
-    <div>
+    <div className={`pos-page ${cart.length > 0 ? 'with-cart-bar' : ''}`}>
       <AlertPopup visible={!!alert} title={alert?.title ?? ''} description={alert?.description ?? ''} type={alert?.type ?? 'info'} onClose={() => setAlert(null)} />
       <ConfirmDialog
         isOpen={confirmOpen}
@@ -409,6 +466,17 @@ export default function VentaCajaPage() {
                 Combos ({combos.length})
               </button>
             )}
+            {/* Igual que la de combos: solo aparece si hay algo con promoción
+                vigente en este momento y en este local. */}
+            {enDescuento.length > 0 && (
+              <button
+                className={`cat-filter-btn ${filterCat === CAT_DESCUENTOS ? 'active' : ''}`}
+                type="button"
+                onClick={() => setFilterCat(CAT_DESCUENTOS)}
+              >
+                En descuento ({enDescuento.length})
+              </button>
+            )}
             {categorias.map(cat => (
               <button key={cat.id} className={`cat-filter-btn ${filterCat === cat.id ? 'active' : ''}`} type="button" onClick={() => setFilterCat(cat.id)}>{cat.nombre}</button>
             ))}
@@ -423,15 +491,21 @@ export default function VentaCajaPage() {
             )
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
-              {combosVisibles.map(combo => (
+              {combosVisibles.map(combo => {
+                const clave = `c${combo.id}`;
+                const cantidad = enCarrito(clave);
+                // Sin stock para armarlo se avisa, pero se vende igual.
+                const sinStock = combo.rinde != null && combo.rinde <= 0;
+                return (
                 <button
                   key={`combo-${combo.id}`}
-                  className="type-card"
+                  className={`type-card pos-card ${pulso === clave ? 'is-added' : ''}`}
                   type="button"
                   onClick={() => addCombo(combo)}
                   style={{ textAlign: 'left', borderColor: 'var(--orange)' }}
                   title={combo.vigencia ? `Disponible ${combo.vigencia}` : undefined}
                 >
+                  {cantidad > 0 && <span key={cantidad} className="pos-card-badge">{cantidad}</span>}
                   <h5>🎁 {combo.nombre}</h5>
                   <p>{combo.items.map(i => `${i.cantidad}× ${i.nombre}`).join(' + ')}</p>
                   <div style={{ marginTop: 12, color: 'var(--orange)', fontWeight: 800 }}>
@@ -442,23 +516,57 @@ export default function VentaCajaPage() {
                       </span>
                     )}
                   </div>
-                  {combo.rinde != null && combo.rinde <= 5 && (
+                  {sinStock ? (
+                    <span className="form-hint" style={{ color: 'var(--orange)' }}>Sin stock cargado · se vende igual</span>
+                  ) : combo.rinde != null && combo.rinde <= 5 && (
                     <span className="form-hint">Alcanza para {combo.rinde}</span>
                   )}
                 </button>
-              ))}
-              {filtrados.map(producto => (
-                <button key={producto.id} className="type-card" type="button" onClick={() => addProduct(producto)} style={{ textAlign: 'left' }}>
+                );
+              })}
+              {filtrados.map(producto => {
+                const clave = `p${producto.id}`;
+                const cantidad = enCarrito(clave);
+                // El precio que se muestra ya viene con la promoción aplicada:
+                // el cajero necesita ver de dónde salió y cuánto se descontó.
+                const rebajado = tieneDescuento(producto);
+                const original = producto.precio_original ?? producto.precio;
+                const ahorro = producto.descuentoAplicado ?? 0;
+                const pct = original > 0 ? Math.round((ahorro / original) * 100) : 0;
+                return (
+                <button
+                  key={producto.id}
+                  className={`type-card pos-card ${rebajado ? 'is-descuento' : ''} ${pulso === clave ? 'is-added' : ''}`}
+                  type="button"
+                  onClick={() => addProduct(producto)}
+                  style={{ textAlign: 'left' }}
+                  title={rebajado ? `Precio de lista Bs ${original.toFixed(2)} · promoción vigente` : undefined}
+                >
+                  {cantidad > 0 && <span key={cantidad} className="pos-card-badge">{cantidad}</span>}
+                  {rebajado && <span className="pos-card-desc-badge">−{pct}%</span>}
                   <h5>{producto.nombre}</h5>
                   <p>{producto.descripcion || 'Producto disponible'}</p>
-                  <div style={{ marginTop: 12, color: 'var(--orange)', fontWeight: 800 }}><MoneyText value={producto.precio} /></div>
+                  <div style={{ marginTop: 12, color: 'var(--orange)', fontWeight: 800 }}>
+                    <MoneyText value={producto.precio} />
+                    {rebajado && (
+                      <span style={{ marginLeft: 8, fontSize: '0.72rem', color: 'var(--slate)', textDecoration: 'line-through' }}>
+                        <MoneyText value={original} />
+                      </span>
+                    )}
+                  </div>
+                  {rebajado && (
+                    <span className="form-hint" style={{ color: 'var(--fresh)' }}>
+                      Ahorra <MoneyText value={ahorro} />
+                    </span>
+                  )}
                 </button>
-              ))}
+                );
+              })}
             </div>
           )}
         </section>
 
-        <aside className="dash-card span-4">
+        <aside className="dash-card span-4" ref={carritoRef}>
           <div className="dash-card-header">
             <h3>Carrito</h3>
             <span className="dash-card-sub">{cart.length} item(s)</span>
@@ -475,6 +583,12 @@ export default function VentaCajaPage() {
                         línea, pero conviene que vea qué está entregando. */}
                     {item.combo_id && <span className="dim" style={{ display: 'block' }}>{item.descripcion}</span>}
                     <span className="dim"><MoneyText value={item.precio * item.cantidad} /></span>
+                    {/* Para poder explicarle al cliente por qué paga menos. */}
+                    {!item.combo_id && tieneDescuento(item) && (
+                      <span className="dim" style={{ display: 'block', color: 'var(--fresh)' }}>
+                        con descuento · antes <MoneyText value={(item.precio_original ?? item.precio) * item.cantidad} />
+                      </span>
+                    )}
                   </div>
                   <button className="action-btn" type="button" onClick={() => changeQty(claveLinea(item), -1)}>-</button>
                   <span className="num">{item.cantidad}</span>
@@ -490,10 +604,12 @@ export default function VentaCajaPage() {
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span className="dim">Subtotal</span><MoneyText value={subtotal} />
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--fresh)' }}>
-                  <span>{privVenta?.nombre ?? 'Privilegio'} (-{descuentoPct}%)</span>
-                  <MoneyText value={-descuentoMonto} signed />
-                </div>
+                {descuentoPct > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--fresh)' }}>
+                    <span>{privVenta?.nombre ?? 'Privilegio'} (-{descuentoPct}%)</span>
+                    <MoneyText value={-descuentoMonto} signed />
+                  </div>
+                )}
               </div>
             )}
             <div className="review-stat">
@@ -547,6 +663,47 @@ export default function VentaCajaPage() {
               <input type="checkbox" checked={esCortesia} disabled={esFiado} onChange={e => { setEsCortesia(e.target.checked); if (e.target.checked && metodoPago === 'MIXTO') setMetodoPago('EFECTIVO'); }} />
               Cortesía <span className="dim">(no suma a ingresos)</span>
             </label>
+
+            {/* Pedido que llegó por WhatsApp desde la carta web. La web no
+                registra pedidos: los registra acá quien los cobra, y esta marca
+                es la que después dice cuánto se vende por la web. */}
+            <div style={{ borderTop: '1px solid var(--line)', paddingTop: 12 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--ink)' }}>
+                <input
+                  type="checkbox"
+                  checked={esPedidoWeb}
+                  onChange={e => {
+                    setEsPedidoWeb(e.target.checked);
+                    if (!e.target.checked) setEntregaWeb('RECOJO');
+                  }}
+                />
+                Pedido desde la web <span className="dim">(llegó por WhatsApp)</span>
+              </label>
+
+              {esPedidoWeb && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 10 }}>
+                  <div className="admin-cat-filters">
+                    {(['RECOJO', 'DELIVERY'] as const).map(t => (
+                      <button
+                        key={t}
+                        type="button"
+                        className={`cat-filter-btn ${entregaWeb === t ? 'active' : ''}`}
+                        onClick={() => setEntregaWeb(t)}
+                      >
+                        {t === 'RECOJO' ? 'Retiro en el local' : 'Delivery'}
+                      </button>
+                    ))}
+                  </div>
+                  {entregaWeb === 'DELIVERY' && (
+                    <p className="form-hint" style={{ color: 'var(--amber)' }}>
+                      El envío no se cobra acá: esa plata es del repartidor. Esta venta registra
+                      solo los productos. Cuando el repartidor rinda cuentas, el dueño lo carga
+                      como <strong>Ingreso extra</strong> del turno.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
 
             {/* Datos del cliente (base única multicanal) */}
             <div style={{ borderTop: '1px solid var(--line)', paddingTop: 12 }}>
@@ -690,6 +847,22 @@ export default function VentaCajaPage() {
           </div>
         </aside>
       </div>
+
+      {/* En mobile el carrito queda al final del scroll: esta barra mantiene el
+          total a la vista y acerca el carrito de un toque. */}
+      {cart.length > 0 && (
+        <div className="pos-cart-bar" role="status" aria-live="polite">
+          <div className="pos-cart-bar-info">
+            <span className="pos-cart-bar-count">
+              {unidadesEnCarrito} {unidadesEnCarrito === 1 ? 'ítem' : 'ítems'}
+            </span>
+            <span key={unidadesEnCarrito} className="pos-cart-bar-total">
+              <MoneyText value={total} />
+            </span>
+          </div>
+          <button type="button" className="admin-btn primary" onClick={verCarrito}>Ver carrito</button>
+        </div>
+      )}
     </div>
   );
 }

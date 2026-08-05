@@ -203,6 +203,20 @@ model Transaccion {
   tipo_entrega      TipoEntrega?
   codigo_descuento  String?
   metodo_pago       TipoCuenta?
+  /**
+   * Nota que el cliente deja con su pedido: "sin picante", "tocar timbre",
+   * "para llevar en dos bolsas". La escribe él en el checkout y la lee quien
+   * prepara y quien entrega, así que se guarda con la venta y no aparte.
+   */
+  notas             String?
+  /**
+   * Envío de la venta. HOY SIEMPRE VAN EN 0 / NULL: el envío no es ingreso del
+   * negocio, es plata del repartidor, y entra al turno como Ingreso extra
+   * cuando rinde cuentas. Las columnas quedan por si más adelante se decide
+   * cobrarlo dentro de la venta.
+   */
+  costo_envio       Decimal           @default(0) @db.Decimal(12, 2)
+  distancia_km      Float?
   total             Decimal           @db.Decimal(12, 2)
   estado            EstadoTransaccion @default(PENDIENTE)
   payment_status    EstadoPago        @default(PENDIENTE)
@@ -687,9 +701,27 @@ model Sucursal {
   id         Int                @id @default(autoincrement())
   nombre     String
   direccion  String?
+  /// Contacto del local, no de la empresa: cada sucursal atiende el suyo.
+  telefono   String?
+  /// Link de Google Maps del local, tal como lo comparte Maps.
+  maps_url   String?
   lat        Float?
   lng        Float?
   activa     Boolean            @default(true)
+  // ── Tarifa de delivery del local ──
+  // Cada sucursal reparte en su zona, así que la tarifa es suya: base con unos
+  // km incluidos más un monto por km adicional. Es el esquema que usan las
+  // plataformas y las tarifas municipales del rubro.
+  /// Cuánto cuesta el envío dentro de los km incluidos.
+  envio_base         Decimal  @default(8) @db.Decimal(12, 2)
+  /// Km que ya cubre la base.
+  envio_km_incluidos Float    @default(2.5)
+  /// Monto por cada km adicional, redondeando el km hacia arriba.
+  envio_por_km       Decimal  @default(2.5) @db.Decimal(12, 2)
+  /// Tope del envío por más lejos que sea. Null = sin tope.
+  envio_maximo       Decimal? @db.Decimal(12, 2)
+  /// Hasta dónde reparte el local. Más lejos no se cotiza. Null = sin límite.
+  envio_radio_km     Float?
   usuarios     Usuario[]
   cuentas      CuentaFinanciera[]
   turnos       CajaTurno[]
@@ -929,14 +961,54 @@ model MovimientoCaja {
 
 // ===== FASE 5A — Inventario avanzado =====
 
+/**
+ * Un menú público (la carta): "Elevate × Fitbull", "Catering Elevate". Los
+ * productos se cuelgan por ProductoMarca y el filtro de caja y de la web usa
+ * `key`, que es interno y no se toca; `slug` es lo que va en /menu/<slug> y se
+ * puede cambiar sin romper los enlaces que ya se compartieron.
+ *
+ * Los campos de presentación estaban hardcodeados en data/menus.ts y en el
+ * array `collaborations` de la landing: sin ellos acá no se puede crear un
+ * menú nuevo sin tocar código.
+ */
 model Marca {
-  id         Int             @id @default(autoincrement())
-  key        String          @unique // "elevate" | "fitbull"
+  id         Int               @id @default(autoincrement())
+  key        String            @unique // "elevate" | "fitbull"
   nombre     String
   color      String?
+  /** Identificador de la URL pública. Arranca igual que `key`. */
+  slug       String            @unique
+  /**
+   * BORRADOR se arma sin salir a la web; ARCHIVADO lo saca de la carta pero
+   * deja intacto el histórico de ventas. Un menú se archiva, no se borra: las
+   * transacciones viejas siguen apuntando a sus productos.
+   */
+  estado     EstadoPublicacion @default(PUBLICADO)
+  /** Orden en que se listan las cartas. Menor primero, luego por nombre. */
+  orden      Int               @default(0)
+  // ── Presentación de la carta ──
+  /** Línea corta sobre el título en el hero del menú: "Colaboración". */
+  eyebrow     String?
+  /** Línea corta de la sección en la landing: "Colaboración oficial". */
+  kicker      String?
+  /** Título grande; puede llevar el ×. Si es null se usa `nombre`. */
+  titulo      String?
+  /** Una línea de pitch para el hero del menú. */
+  tagline     String?
+  /** Párrafo largo de la sección en la landing. */
+  descripcion String?
+  /** Viñetas de la landing ("Hecho fresco cada día", …). */
+  bullets     String[]         @default([])
+  /** Texto del botón que lleva a la carta. Si es null: "Ver menú". */
+  cta_texto   String?
+  /** Nombre de un ícono de components/shop/icons (ej. "dumbbell", "bowl"). */
+  icono       String?
+  imagen_url  String?
   productos  ProductoMarca[]
-  created_at DateTime        @default(now())
-  update_at  DateTime        @updatedAt
+  created_at DateTime          @default(now())
+  update_at  DateTime          @updatedAt
+
+  @@index([estado, orden])
 }
 
 /** Marcas del producto. Misma regla que las categorías: null = catálogo. */

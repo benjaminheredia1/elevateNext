@@ -153,9 +153,14 @@ export async function combosVigentes(
     orderBy: { nombre: 'asc' },
   });
 
+  // Se filtra por lo que es regla del combo (activo, habilitado en el local y
+  // dentro de su franja), NO por stock: igual que con los productos, la caja
+  // puede vender lo que está agotado y el stock queda en negativo. Quien lo
+  // muestre decide qué hacer con la bandera `agotado`, y la tienda web bloquea
+  // aparte, en la ruta de pedidos.
   return combos
     .map(c => resolverCombo(c, sucursalId, ahora))
-    .filter(c => c.vigente && !c.agotado);
+    .filter(c => c.vigente);
 }
 
 /** Todos los combos de una sucursal, vigentes o no (pantalla de admin). */
@@ -274,9 +279,11 @@ export async function lineasDeCombo(
     );
   }
   if (combo.items.length === 0) throw new ValidationError(`El combo "${combo.nombre}" no tiene productos`);
-  if (combo.rinde != null && combo.rinde < cantidad) {
-    throw new ValidationError(`Solo se pueden armar ${combo.rinde} "${combo.nombre}" con el stock de esta sucursal.`);
-  }
+  // No se valida el stock: en el mostrador el cajero tiene la mercadería
+  // delante y debe poder cobrar aunque el inventario esté sin cargar, igual que
+  // con los productos sueltos. El stock queda negativo y se corrige al reponer.
+  // Esto lo usa solo la venta de caja; los pedidos de la web bloquean por stock
+  // en /api/pedidos, que es donde corresponde ese criterio.
 
   // Prorrateo por peso del producto en el precio de lista, para que la suma de
   // las líneas dé exactamente el precio del combo. El redondeo se corrige en la

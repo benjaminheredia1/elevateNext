@@ -32,6 +32,10 @@ function SucursalModal({ value, onClose, onSubmit, saving, error }: {
       ...form,
       nombre: form.nombre.trim(),
       direccion: form.direccion?.trim() || undefined,
+      // Vacío se manda como undefined: es la forma de borrar el dato sin que
+      // el schema lo rechace por longitud mínima.
+      telefono: form.telefono?.trim() || undefined,
+      maps_url: form.maps_url?.trim() || undefined,
     });
   };
 
@@ -60,6 +64,32 @@ function SucursalModal({ value, onClose, onSubmit, saving, error }: {
                 onChange={e => setForm({ ...form, direccion: e.target.value })}
               />
             </div>
+            <div className="form-group full">
+              <label>Teléfono / WhatsApp (opcional)</label>
+              <input
+                inputMode="tel"
+                value={form.telefono ?? ''}
+                onChange={e => setForm({ ...form, telefono: e.target.value })}
+                placeholder="Ej: 70012345"
+              />
+              <span className="form-hint">
+                Es el contacto de esta sucursal. En la tienda aparece como botón de WhatsApp
+                cuando el cliente la tiene seleccionada.
+              </span>
+            </div>
+            <div className="form-group full">
+              <label>Enlace de Google Maps (opcional)</label>
+              <input
+                type="url"
+                value={form.maps_url ?? ''}
+                onChange={e => setForm({ ...form, maps_url: e.target.value })}
+                placeholder="https://maps.app.goo.gl/..."
+              />
+              <span className="form-hint">
+                Pega el enlace de &quot;Compartir&quot; de Google Maps del local. Solo se aceptan
+                enlaces de Google Maps.
+              </span>
+            </div>
             <div className="form-group">
               <label>Latitud (opcional)</label>
               <input
@@ -75,6 +105,64 @@ function SucursalModal({ value, onClose, onSubmit, saving, error }: {
                 value={form.lng ?? ''}
                 onChange={e => setForm({ ...form, lng: e.target.value === '' ? undefined : Number(e.target.value) })}
               />
+            </div>
+
+            {/* Tarifa de delivery del local. El checkout la usa para cotizar el
+                envío según la distancia hasta donde el cliente marca el pin. */}
+            <div className="form-group full">
+              <span className="form-hint" style={{ fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.5px' }}>
+                Tarifa de delivery
+              </span>
+            </div>
+            <div className="form-group">
+              <label>Base (Bs)</label>
+              <input
+                type="number" step="0.5" min="0"
+                value={form.envio_base ?? ''}
+                onChange={e => setForm({ ...form, envio_base: e.target.value === '' ? undefined : Number(e.target.value) })}
+                placeholder="8"
+              />
+            </div>
+            <div className="form-group">
+              <label>Km incluidos en la base</label>
+              <input
+                type="number" step="0.5" min="0"
+                value={form.envio_km_incluidos ?? ''}
+                onChange={e => setForm({ ...form, envio_km_incluidos: e.target.value === '' ? undefined : Number(e.target.value) })}
+                placeholder="2.5"
+              />
+            </div>
+            <div className="form-group">
+              <label>Por km adicional (Bs)</label>
+              <input
+                type="number" step="0.5" min="0"
+                value={form.envio_por_km ?? ''}
+                onChange={e => setForm({ ...form, envio_por_km: e.target.value === '' ? undefined : Number(e.target.value) })}
+                placeholder="2.5"
+              />
+            </div>
+            <div className="form-group">
+              <label>Tope del envío (Bs)</label>
+              <input
+                type="number" step="0.5" min="0"
+                value={form.envio_maximo ?? ''}
+                onChange={e => setForm({ ...form, envio_maximo: e.target.value === '' ? null : Number(e.target.value) })}
+                placeholder="Sin tope"
+              />
+            </div>
+            <div className="form-group full">
+              <label>Radio de reparto (km)</label>
+              <input
+                type="number" step="0.5" min="0"
+                value={form.envio_radio_km ?? ''}
+                onChange={e => setForm({ ...form, envio_radio_km: e.target.value === '' ? null : Number(e.target.value) })}
+                placeholder="Sin límite"
+              />
+              <span className="form-hint">
+                Más lejos que esto el checkout no cotiza y le ofrece retiro en el local.
+                Referencias del rubro: PedidosYa cobra Bs 5 los primeros 5 km y Bs 1 por km extra;
+                la tarifa municipal de Cochabamba, Bs 6,50 el primer km y Bs 2 por km adicional.
+              </span>
             </div>
           </div>
           {!form.id && (
@@ -165,6 +253,16 @@ export default function SucursalesPage() {
                     {row.direccion && <div className="admin-cell-sub">{row.direccion}</div>}
                   </div>
                 )},
+                { key: 'contacto', header: 'Contacto', render: (row: Sucursal) => (
+                  <div>
+                    <div>{row.telefono || <span className="dim">Sin teléfono</span>}</div>
+                    {row.maps_url && (
+                      <a className="admin-cell-sub" href={row.maps_url} target="_blank" rel="noopener noreferrer">
+                        Ver en Maps
+                      </a>
+                    )}
+                  </div>
+                )},
                 { key: 'estado', header: 'Estado', render: (row: Sucursal) => (
                   <StatusBadge status={row.activa ? 'abierto' : 'cerrado'} label={row.activa ? 'Activa' : 'Desactivada'} />
                 )},
@@ -178,7 +276,20 @@ export default function SucursalesPage() {
                   <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                     <button
                       className="admin-btn ghost"
-                      onClick={() => { setError(''); setForm({ id: row.id, nombre: row.nombre, direccion: row.direccion ?? '', lat: row.lat ?? undefined, lng: row.lng ?? undefined }); }}
+                      onClick={() => { setError(''); setForm({
+                        id: row.id,
+                        nombre: row.nombre,
+                        direccion: row.direccion ?? '',
+                        telefono: row.telefono ?? '',
+                        maps_url: row.maps_url ?? '',
+                        lat: row.lat ?? undefined,
+                        lng: row.lng ?? undefined,
+                        envio_base: row.envio_base,
+                        envio_km_incluidos: row.envio_km_incluidos,
+                        envio_por_km: row.envio_por_km,
+                        envio_maximo: row.envio_maximo,
+                        envio_radio_km: row.envio_radio_km,
+                      }); }}
                     >
                       Editar
                     </button>

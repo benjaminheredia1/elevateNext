@@ -6,10 +6,13 @@ import { resolverSucursal } from '@/lib/server/sucursales/sucursal.service';
 /**
  * Combos que se pueden vender AHORA en una sucursal.
  *
- * Es la lista que consumen la caja y el menú web: ya viene filtrada por la
- * ventana horaria y por el stock del local, así que lo que aparece se puede
- * cobrar. Fuera de la franja la lista simplemente no lo incluye — y si alguien
- * lo manda igual, la venta lo rechaza con el mismo criterio.
+ * Es la lista que consumen la caja y el menú web: viene filtrada por la ventana
+ * horaria del combo, así que fuera de la franja no aparece — y si alguien lo
+ * manda igual, la venta lo rechaza con el mismo criterio.
+ *
+ * El stock NO filtra: un combo agotado se devuelve con `agotado: true` y se
+ * puede cobrar, como los productos sueltos. En el mostrador el cajero tiene la
+ * mercadería delante aunque el inventario esté sin cargar.
  *
  * Público como el menú: no expone recetas ni costos, solo lo que ve el cliente.
  */
@@ -31,6 +34,9 @@ export async function GET(req: NextRequest) {
         ahorro: c.ahorro,
         vigencia: c.vigencia,
         rinde: c.rinde,
+        // Informativo: el combo se puede vender igual. Sirve para avisar en
+        // pantalla que se va a descontar stock que no está cargado.
+        agotado: c.agotado,
         items: c.items.map(i => ({ producto_id: i.producto_id, nombre: i.nombre, cantidad: i.cantidad })),
       })),
       sucursal_id: sucursalId,

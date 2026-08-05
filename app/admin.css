@@ -801,6 +801,10 @@
 .ocd-meta { display: flex; flex-direction: column; gap: 12px; }
 .ocd-meta-item { display: flex; flex-direction: column; gap: 2px; font-size: 0.88rem; }
 .ocd-meta-label { font-size: 0.74rem; color: var(--slate); }
+/* Nota del cliente: instrucción para preparar el pedido, así que se lee sola y
+   no como un dato más de la grilla. */
+.ocd-nota { margin-top: 12px; background: rgba(232, 163, 23, .10); border: 1px solid rgba(232, 163, 23, .32); border-radius: 10px; padding: 10px 14px; }
+.ocd-nota p { margin: 2px 0 0; font-size: 0.88rem; white-space: pre-wrap; }
 .ocd-actions { grid-column: span 2; margin-top: 12px; padding-top: 14px; border-top: 1px solid var(--line); display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
 .ocd-actions-label { font-size: 0.88rem; font-weight: 600; }
 .ocd-status-btns { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -877,6 +881,17 @@
 .menu-check { display: flex; gap: 10px; }
 .menu-check label { display: flex; align-items: center; gap: 7px; border: 1px solid var(--line); border-radius: 10px; padding: 8px 14px; cursor: pointer; font-size: 0.88rem; }
 .recipe-builder-row { display: grid; grid-template-columns: 1fr 90px 90px 36px; gap: 10px; align-items: center; margin-bottom: 8px; }
+/* Selector de unidad de la fila de receta. Antes era estilo inline, pero así
+   el layout móvil puede sobrescribirlo (un inline gana a cualquier media query). */
+.recipe-unit { width: auto; font-size: 0.8rem; }
+/* En celular los tracks fijos (90+90+36 + gaps = 246px) no dejan ancho al
+   buscador de insumo dentro del modal, y su dropdown salía recortado. Se parte
+   en dos líneas: buscador arriba a todo el ancho, cantidad/unidad/× abajo. */
+@media (max-width: 640px) {
+  .recipe-builder-row { grid-template-columns: 1fr 96px 34px; gap: 8px; }
+  .recipe-builder-row > :first-child { grid-column: 1 / -1; }
+  .recipe-builder-row input, .recipe-builder-row .recipe-unit { width: 100%; min-width: 0; font-size: 16px; }
+}
 .review-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
 .review-stat { background: var(--canvas); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
 .review-stat-label { font-size: 0.74rem; color: var(--slate); text-transform: uppercase; }
@@ -884,6 +899,27 @@
 .gate-warning { background: rgba(229, 72, 77, .08); border: 1px solid rgba(229, 72, 77, .3); color: var(--danger); border-radius: 10px; padding: 12px 14px; font-size: 0.84rem; margin-top: 14px; }
 .photo-drop { border: 1.5px dashed var(--line); border-radius: 12px; padding: 24px; text-align: center; color: var(--slate); cursor: pointer; }
 .photo-preview { width: 100%; border-radius: 12px; border: 1px solid var(--line); aspect-ratio: 16/10; object-fit: cover; }
+
+/* ===== MENÚS (las cartas de la web) =====
+   Tarjetas y no tabla: .admin-table tiene min-width 900px y esta pantalla se
+   usa desde el celular. Con auto-fill la grilla cae a una columna sola. */
+.menus-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+.menu-admin-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; box-shadow: var(--shadow-sm); display: flex; flex-direction: column; gap: 10px; }
+/* Un borrador se lee como "todavía no está afuera"; un archivado, apagado. */
+.menu-admin-card.estado-borrador { border-style: dashed; }
+.menu-admin-card.estado-archivado { opacity: .68; }
+.menu-admin-top { display: flex; align-items: flex-start; gap: 10px; }
+.menu-admin-dot { width: 12px; height: 12px; border-radius: 50%; margin-top: 6px; flex-shrink: 0; }
+.menu-admin-title { flex: 1; min-width: 0; }
+.menu-admin-title h3 { margin: 0; font-family: var(--font-display); font-size: 1.05rem; font-weight: 600; }
+.menu-admin-title span { font-size: 0.76rem; }
+.menu-admin-estado { font-size: 0.66rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; border: 1px solid; border-radius: 12px; padding: 3px 9px; white-space: nowrap; }
+.menu-admin-tagline { margin: 0; font-size: 0.85rem; color: var(--slate); }
+.menu-admin-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 0.78rem; color: var(--slate); }
+.menu-admin-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: auto; padding-top: 6px; }
+.menu-admin-orden { display: flex; gap: 4px; margin-right: auto; }
+.menu-admin-orden .action-btn { font-size: 0.95rem; line-height: 1; }
+.menu-admin-orden .action-btn:disabled { opacity: .4; cursor: not-allowed; }
 
 /* ===== ANALYTICS ===== */
 .chart-wrap { width: 100%; }

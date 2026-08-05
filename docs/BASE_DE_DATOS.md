@@ -352,6 +352,26 @@ Usuario   1───* (creado_por) en todas las tablas financieras
 > Usar `prisma migrate dev` (con historial) a partir de aquí, no `db push`, para
 > tener migraciones reproducibles en producción.
 
+### Regla de aplicación en producción
+
+**Ninguna migración se aplica en producción hasta que el dueño lo indique
+explícitamente.** El trabajo de esquema termina en local y ahí se queda:
+
+1. `npm run db:migrate` — crea y aplica la migración **solo** contra la BD local
+   (`.env.dev`, `127.0.0.1`). Es el único comando que se corre por defecto.
+2. `npm run db:deploy` — aplica el historial a producción (`.env`). **No se
+   ejecuta nunca por iniciativa propia**, ni siquiera si la migración parece
+   trivial o si ya se validó en local.
+
+Antes de correr `db:deploy` se pide confirmación al dueño **dos veces**: una al
+proponerlo y otra inmediatamente antes de ejecutarlo. Si falta cualquiera de las
+dos, no se aplica. Una autorización sirve para esa migración y esa vez: no se
+extiende a las siguientes.
+
+La BD de producción es compartida, así que toda migración debe ser **aditiva**
+(agregar columnas/tablas anulables). Nada de `db push` contra producción ni de
+cambios que borren o renombren columnas con datos.
+
 ---
 
 ## 11. Seed mínimo requerido

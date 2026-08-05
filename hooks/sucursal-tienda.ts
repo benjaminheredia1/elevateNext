@@ -6,8 +6,17 @@ export interface SucursalPublica {
   id: number;
   nombre: string;
   direccion: string | null;
+  /** Contacto del local: cada sucursal tiene el suyo, no hay uno global. */
+  telefono: string | null;
+  maps_url: string | null;
   lat: number | null;
   lng: number | null;
+  // Tarifa de delivery del local, para cotizar el envío en el checkout.
+  envio_base: number;
+  envio_km_incluidos: number;
+  envio_por_km: number;
+  envio_maximo: number | null;
+  envio_radio_km: number | null;
 }
 
 const STORAGE_KEY = 'elevate:sucursal';

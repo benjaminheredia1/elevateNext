@@ -5,18 +5,12 @@ import { useMovimientos } from '@/hooks/caja';
 import EmptyState from '@/components/ui/EmptyState';
 import MethodPill from '@/components/ui/MethodPill';
 import MoneyText from '@/components/ui/MoneyText';
+import { armarLibro, type MovimientoLibro, type PedidoSinCobro } from '@/lib/shared/libro-caja';
 
-type Movimiento = {
-  id: number;
-  concepto: string;
-  tipo: string;
-  metodo_pago: 'EFECTIVO' | 'QR' | 'TARJETA';
-  monto: string | number;
-  created_at: string;
+type Movimiento = Omit<MovimientoLibro, 'transaccion'> & {
   transaccion?: {
     id: number;
     numero_turno: number | null;
-    numero_sucursal?: number | null;
     total?: string | number;
     cliente_nombre?: string | null;
     codigo_descuento?: string | null;
@@ -29,31 +23,20 @@ type Movimiento = {
   } | null;
 };
 
-/**
- * El concepto se guarda con el id global ("Venta #2102"), que es un contador
- * compartido por todas las sucursales. Se reescribe con el correlativo del
- * local, que es el que conoce el cliente: "Venta #2 (global #2102)".
- * Movimientos sin venta asociada quedan igual.
- */
-function conceptoConNumeroLocal(m: Movimiento) {
-  const numero = m.transaccion?.numero_sucursal ?? m.transaccion?.numero_turno;
-  if (m.transaccion == null || numero == null) return m.concepto;
-  return m.concepto.replaceAll(
-    `#${m.transaccion.id}`,
-    `#${numero} (global #${m.transaccion.id})`,
-  );
-}
-
 type Filtro = 'TODOS' | 'INGRESOS' | 'EGRESOS' | 'EFECTIVO' | 'QR';
 
 export default function MovimientosCajaPage() {
   const { data, isLoading, isError } = useMovimientos();
   const [filtro, setFiltro] = useState<Filtro>('TODOS');
-  const [abierta, setAbierta] = useState<number | null>(null);
+  const [abierta, setAbierta] = useState<string | null>(null);
 
-  const movimientos = useMemo(() => {
-    const base = (data?.movimientos ?? []) as Movimiento[];
-    return base.filter(m => {
+  const entradas = useMemo(() => {
+    const movimientos = (data?.movimientos ?? []) as Movimiento[];
+    // Fiados y cortesías solo tienen sentido en la vista completa: no son
+    // ingreso ni egreso ni tienen método de pago que filtrar.
+    const sinCobro = filtro === 'TODOS' ? ((data?.pedidos_sin_cobro ?? []) as PedidoSinCobro[]) : [];
+
+    const filtrados = movimientos.filter(m => {
       const monto = Number(m.monto);
       if (filtro === 'INGRESOS') return monto > 0;
       if (filtro === 'EGRESOS') return monto < 0;
@@ -61,14 +44,18 @@ export default function MovimientosCajaPage() {
       if (filtro === 'QR') return m.metodo_pago === 'QR';
       return true;
     });
+
+    return armarLibro(filtrados, sinCobro);
   }, [data, filtro]);
+
+  const pedidosDelTurno = (data?.pedidos_count ?? 0) as number;
 
   return (
     <div>
       <div className="admin-page-header">
         <div>
           <h1>Movimientos</h1>
-          <p>Libro de caja del turno activo.</p>
+          <p>Libro de caja del turno activo · {pedidosDelTurno} pedido(s) en el turno.</p>
         </div>
       </div>
 
@@ -84,7 +71,7 @@ export default function MovimientosCajaPage() {
         <div className="dash-card span-12" style={{ minHeight: 160 }} />
       ) : isError ? (
         <EmptyState title="No se pudieron cargar movimientos" />
-      ) : movimientos.length === 0 ? (
+      ) : entradas.length === 0 ? (
         <EmptyState title="Sin movimientos" hint="Aún no hay ingresos, gastos o ventas en este turno." />
       ) : (
         <div className="admin-table-wrap">
@@ -100,21 +87,38 @@ export default function MovimientosCajaPage() {
               </tr>
             </thead>
             <tbody>
-              {movimientos.map(m => {
+              {entradas.map(entrada => {
+                const hora = new Date(entrada.created_at).toLocaleTimeString('es-BO', { hour: '2-digit', minute: '2-digit' });
+                const desplegado = abierta === entrada.key;
+
+                if (entrada.clase === 'SIN_COBRO') {
+                  const p = entrada.pedido;
+                  return [
+                    <tr key={entrada.key} className="muted">
+                      <td aria-hidden></td>
+                      <td>{entrada.concepto}</td>
+                      <td>{entrada.etiqueta === 'Fiado' ? 'FIADO' : 'CORTESIA'}</td>
+                      <td><span className="admin-cell-sub">Sin cobro</span></td>
+                      <td className="num"><MoneyText value={p.total} /></td>
+                      <td>{hora}</td>
+                    </tr>,
+                  ];
+                }
+
+                const m = entrada.movimiento;
                 const detalles = m.transaccion?.transaccionesDetalles_id ?? [];
-                const desplegado = abierta === m.id;
                 return [
-                  <tr key={m.id} onClick={() => setAbierta(desplegado ? null : m.id)} style={{ cursor: 'pointer' }} title="Ver el detalle">
+                  <tr key={entrada.key} onClick={() => setAbierta(desplegado ? null : entrada.key)} style={{ cursor: 'pointer' }} title="Ver el detalle">
                     <td aria-hidden>{desplegado ? '▾' : '▸'}</td>
-                    <td>{conceptoConNumeroLocal(m)}</td>
+                    <td>{entrada.concepto}</td>
                     <td>{m.tipo.replaceAll('_', ' ')}</td>
                     <td><MethodPill metodo={m.metodo_pago} /></td>
                     <td className="num"><MoneyText value={m.monto} signed /></td>
-                    <td>{new Date(m.created_at).toLocaleTimeString('es-BO', { hour: '2-digit', minute: '2-digit' })}</td>
+                    <td>{hora}</td>
                   </tr>,
 
                   desplegado && (
-                    <tr key={`${m.id}-detalle`}>
+                    <tr key={`${entrada.key}-detalle`}>
                       <td colSpan={6} style={{ background: 'rgba(0,0,0,.02)' }}>
                         <div style={{ padding: '10px 6px', display: 'grid', gap: 6 }}>
                           {detalles.length > 0 ? (

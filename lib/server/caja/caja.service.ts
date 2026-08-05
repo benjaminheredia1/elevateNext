@@ -19,15 +19,51 @@ function sucursalDe(session: Session): number {
   return session.sucursal_id;
 }
 
+/**
+ * Pedidos del turno que NO dejaron rastro en el libro de caja: fiados (la plata
+ * entra después, como cobro de deuda) y cortesías (no entra nunca).
+ *
+ * Se listan aparte porque igual consumen número de pedido del turno: sin ellos
+ * el libro se ve saltado —"#7, #9"— y el cajero cree que se perdió una venta.
+ */
+async function pedidosSinCobroDelTurno(turnoId: number) {
+  return prisma.transaccion.findMany({
+    where: { turno_id: turnoId, movimientos: { none: {} } },
+    orderBy: { created_at: 'desc' },
+    select: {
+      id: true, numero_turno: true, total: true, es_cortesia: true,
+      cliente_nombre: true, created_at: true,
+      cuenta_corriente: { select: { id: true } },
+    },
+  });
+}
+
+/** Cuántos pedidos lleva el turno, cobrados o no. Es "por cuál va la caja". */
+function contarPedidosDelTurno(turnoId: number) {
+  return prisma.transaccion.count({ where: { turno_id: turnoId } });
+}
+
 export async function getTurnoActivo(session: Session) {
   const sucursal_id = sucursalDe(session);
-  return prisma.cajaTurno.findFirst({
+  const turno = await prisma.cajaTurno.findFirst({
     where: { sucursal_id, estado: 'ABIERTO' },
     include: {
-      movimientos: { orderBy: { created_at: 'desc' } },
+      // La venta se guarda en el concepto con su id global ("Venta #2393"); el
+      // número que el cajero canta es el del turno, y sale de acá.
+      movimientos: {
+        orderBy: { created_at: 'desc' },
+        include: { transaccion: { select: { id: true, numero_turno: true } } },
+      },
       sucursal: { select: { nombre: true } },
     },
   });
+  if (!turno) return null;
+
+  const [pedidos_sin_cobro, pedidos_count] = await Promise.all([
+    pedidosSinCobroDelTurno(turno.id),
+    contarPedidosDelTurno(turno.id),
+  ]);
+  return { ...turno, pedidos_sin_cobro, pedidos_count };
 }
 
 export async function abrirTurno(session: Session, dto: AperturaCajaInput, meta: Meta = {}) {
@@ -141,8 +177,8 @@ export async function getMovimientos(session: Session) {
     include: {
       transaccion: {
         select: {
-          // Para mostrar el correlativo de la sucursal junto al id global
-          id: true, numero_turno: true, numero_sucursal: true,
+          // Para mostrar el número de pedido del turno junto al id global
+          id: true, numero_turno: true,
           // Detalle que se despliega al abrir la fila.
           total: true, cliente_nombre: true, codigo_descuento: true,
           transaccionesDetalles_id: {
@@ -156,7 +192,12 @@ export async function getMovimientos(session: Session) {
       },
     },
   });
-  return { turno, movimientos };
+
+  const [pedidos_sin_cobro, pedidos_count] = await Promise.all([
+    pedidosSinCobroDelTurno(turno.id),
+    contarPedidosDelTurno(turno.id),
+  ]);
+  return { turno, movimientos, pedidos_sin_cobro, pedidos_count };
 }
 
 /**
@@ -596,7 +637,13 @@ export async function registrarVentaFisica(session: Session, dto: VentaFisicaInp
     const nombreCliente = dto.cliente_nombre?.trim() || 'Cliente mostrador';
     const venta = await tx.transaccion.create({
       data: {
-        canal: 'SALON',
+        // WEB cuando el pedido llegó por WhatsApp desde la carta: es la única
+        // forma de medir cuánto se pide por la web, porque la web ya no registra
+        // pedidos. SALON es la venta de mostrador.
+        canal: dto.es_pedido_web ? 'WEB' : 'SALON',
+        tipo_entrega: dto.tipo_entrega ?? null,
+        // `costo_envio` queda en 0: el envío no pasa por la venta. Es plata del
+        // repartidor y entra como Ingreso extra del turno cuando rinde cuentas.
         metodo_pago: dto.metodo_pago as TipoCuenta,
         es_cortesia: dto.es_cortesia,
         total: Number(total),
@@ -681,168 +728,6 @@ export async function registrarVentaFisica(session: Session, dto: VentaFisicaInp
     }, tx);
 
     return { ...venta, abono_deuda: abono > 0 ? abono : undefined };
-  }, { maxWait: 10000, timeout: 20000 });
-}
-
-/**
- * Conciliación por repartidor del turno abierto: cuántos pedidos llevó cada uno,
- * cuántos entregó y cuánto efectivo adelantó a caja (Caso 2).
- */
-export async function resumenRepartidoresTurno(session: Session) {
-  const sucursal_id = sucursalDe(session);
-  const turno = await prisma.cajaTurno.findFirst({
-    where: { sucursal_id, estado: 'ABIERTO' },
-    orderBy: { fecha_apertura: 'desc' },
-  });
-  if (!turno) return { turno: null, repartidores: [] as RepartidorResumen[] };
-
-  const pedidos = await prisma.transaccion.findMany({
-    where: {
-      tipo_entrega: 'DELIVERY',
-      driver_nombre: { not: null },
-      update_at: { gte: turno.fecha_apertura },
-    },
-    select: { driver_nombre: true, total: true, estado: true, payment_status: true, metodo_pago: true },
-  });
-
-  const map = new Map<string, RepartidorResumen>();
-  for (const p of pedidos) {
-    const key = p.driver_nombre as string;
-    const cur = map.get(key) ?? { repartidor: key, pedidos: 0, en_curso: 0, entregados: 0, efectivo_adelantado: 0, total: 0 };
-    cur.pedidos += 1;
-    cur.total += Number(p.total);
-    if (p.estado === 'ENTREGADO') cur.entregados += 1; else cur.en_curso += 1;
-    if (p.metodo_pago === 'EFECTIVO' && p.payment_status === 'PAGADO') cur.efectivo_adelantado += Number(p.total);
-    map.set(key, cur);
-  }
-
-  return {
-    turno: { id: turno.id, fecha_apertura: turno.fecha_apertura },
-    repartidores: Array.from(map.values()).sort((a, b) => b.total - a.total),
-  };
-}
-
-interface RepartidorResumen {
-  repartidor: string;
-  pedidos: number;
-  en_curso: number;
-  entregados: number;
-  efectivo_adelantado: number;
-  total: number;
-}
-
-// ─────────────────────────────────────────────────────────────
-// Entrega de pedidos web (handoff) — Fase 3
-// ─────────────────────────────────────────────────────────────
-
-/** Busca un pedido por su código de retiro para verificarlo en el mostrador. */
-export async function buscarPedidoPorCodigo(_session: Session, codigo: string) {
-  const pedido = await prisma.transaccion.findUnique({
-    where: { codigo: codigo.trim().toUpperCase() },
-    include: { transaccionesDetalles_id: { include: { producto: { select: { nombre: true } } } } },
-  });
-  if (!pedido) throw new NotFoundError('No existe un pedido con ese código');
-  return pedido;
-}
-
-/**
- * Confirma la entrega/salida de un pedido desde el mostrador.
- * - Pickup: cobra en efectivo si falta pago y marca ENTREGADO.
- * - Delivery: el repartidor adelanta el producto (efectivo a caja) si era COD,
- *   se marca PAGADO y pasa a EN_CAMINO con el repartidor asignado.
- * Todo cobro en efectivo exige caja abierta e impacta el turno.
- */
-export async function entregarPedido(
-  session: Session,
-  dto: { codigo: string; driver_nombre?: string },
-  meta: Meta = {},
-) {
-  const sucursal_id = sucursalDe(session);
-  const codigo = dto.codigo.trim().toUpperCase();
-
-  return prisma.$transaction(async (tx) => {
-    const pedido = await tx.transaccion.findUnique({ where: { codigo } });
-    if (!pedido) throw new NotFoundError('No existe un pedido con ese código');
-    if (['ENTREGADO', 'CANCELADO', 'PAGADO'].includes(pedido.estado)) {
-      throw new ValidationError('El pedido ya fue cerrado o entregado');
-    }
-
-    const esDelivery = pedido.tipo_entrega === 'DELIVERY';
-    let nuevoPago: EstadoPago = pedido.payment_status;
-    let nuevoEstado: EstadoTransaccion = pedido.estado;
-    let cobroEfectivo = 0;
-
-    if (esDelivery) {
-      if (!dto.driver_nombre?.trim()) throw new ValidationError('Indica el repartidor que retira el pedido');
-      if (pedido.payment_status === 'COD_PENDIENTE') {
-        cobroEfectivo = Number(pedido.total); // el repartidor adelanta el efectivo a caja
-        nuevoPago = 'PAGADO';
-      }
-      nuevoEstado = 'EN_LOCAL'; // driver está retirando del local
-    } else {
-      if (pedido.payment_status !== 'PAGADO') {
-        cobroEfectivo = Number(pedido.total); // cobro en mostrador al recoger
-        nuevoPago = 'PAGADO';
-      }
-      nuevoEstado = 'ENTREGADO'; // pickup: se entrega directamente
-    }
-
-    let turnoId = pedido.turno_id;
-    if (cobroEfectivo > 0) {
-      const turno = await tx.cajaTurno.findFirst({ where: { sucursal_id, estado: 'ABIERTO' } });
-      if (!turno) throw new ConflictError('Abre caja antes de registrar el cobro en efectivo');
-      turnoId = turno.id;
-      const cuenta = await getCuenta(tx, sucursal_id, 'EFECTIVO');
-      await tx.movimientoCaja.create({
-        data: {
-          sucursal_id: turno.sucursal_id, turno_id: turno.id, cuenta_id: cuenta.id, tipo: 'VENTA',
-          metodo_pago: 'EFECTIVO', monto: cobroEfectivo,
-          concepto: esDelivery
-            ? `Adelanto repartidor ${dto.driver_nombre?.trim()} · pedido #${pedido.id}`
-            : `Cobro pickup · pedido #${pedido.id}`,
-          transaccion_id: pedido.id, creado_por_id: session.id,
-        },
-      });
-      await tx.cuentaFinanciera.update({ where: { id: cuenta.id }, data: { saldo: { increment: cobroEfectivo } } });
-      await tx.cajaTurno.update({ where: { id: turno.id }, data: { ventas_efectivo: { increment: cobroEfectivo } } });
-    }
-
-    // Pedido online sin cobro en mostrador (ya pagado): igual se cuelga del
-    // turno abierto, si lo hay, para que entre a la numeración del turno.
-    if (turnoId == null) {
-      const turnoAbierto = await tx.cajaTurno.findFirst({ where: { sucursal_id, estado: 'ABIERTO' } });
-      turnoId = turnoAbierto?.id ?? null;
-    }
-    const numeroTurno = pedido.numero_turno == null && turnoId != null
-      ? await siguienteNumeroTurno(tx, turnoId)
-      : undefined;
-
-    // Asegurar descuento de stock (idempotente) por si no se descontó antes
-    await descontarStockPorTransaccion(tx, pedido.id);
-
-    const actualizado = await tx.transaccion.update({
-      where: { id: pedido.id },
-      data: {
-        estado: nuevoEstado,
-        payment_status: nuevoPago,
-        cajero_id: session.id,
-        turno_id: turnoId,
-        ...(numeroTurno != null ? { numero_turno: numeroTurno } : {}),
-        ...(esDelivery ? { driver_nombre: dto.driver_nombre?.trim() } : {}),
-      },
-      include: { transaccionesDetalles_id: { include: { producto: { select: { nombre: true } } } } },
-    });
-
-    await logAudit({
-      usuarioId: session.id, rol: session.rol, accion: 'MODIFICO',
-      entidad: 'Transaccion', entidadId: pedido.id,
-      detalle: esDelivery
-        ? `Salida delivery #${pedido.id} con repartidor ${dto.driver_nombre?.trim()} (${pedido.payment_status}→${nuevoPago})`
-        : `Entrega pickup #${pedido.id} (${pedido.payment_status}→${nuevoPago})`,
-      monto: cobroEfectivo || undefined, ip: meta.ip, userAgent: meta.userAgent,
-    }, tx);
-
-    return actualizado;
   }, { maxWait: 10000, timeout: 20000 });
 }
 

@@ -36,6 +36,10 @@ export interface VentaFisicaInput {
   cliente_email?: string;
   cliente_nit?: string;
   cliente_anonimo?: boolean;
+  /** La venta entró como pedido de la carta web, avisado por WhatsApp. */
+  es_pedido_web?: boolean;
+  /** Entrega del pedido web: retiro en el local o delivery. */
+  tipo_entrega?: 'RECOJO' | 'DELIVERY';
 }
 
 export interface CierreCajaInput {
@@ -188,19 +192,6 @@ export function useTurnoActivo() {
     queryFn: async () => {
       const res = await apiClient.get('/api/caja/turno-activo');
       return res.data;
-    },
-  });
-}
-
-export function useResumenRepartidores() {
-  return useQuery({
-    queryKey: [...cajaKey, 'repartidores'],
-    queryFn: async () => {
-      const res = await apiClient.get('/api/caja/repartidores');
-      return res.data?.data as {
-        turno: { id: number; fecha_apertura: string } | null;
-        repartidores: { repartidor: string; pedidos: number; en_curso: number; entregados: number; efectivo_adelantado: number; total: number }[];
-      };
     },
   });
 }
