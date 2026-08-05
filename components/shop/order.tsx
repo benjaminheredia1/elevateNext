@@ -316,6 +316,18 @@ function CheckoutModal({
   const costoEnvio = envio?.dentroDeCobertura ? envio.costo : 0
   const total = subtotal + costoEnvio
 
+  /**
+   * El cliente marcó su ubicación pero el local no tiene las suyas cargadas: no
+   * hay desde dónde medir, así que `cotizarEnvio` no llegó a correr.
+   *
+   * Esto NO es envío gratis. Antes el pedido salía cobrando solo los productos
+   * y sin una sola línea que lo dijera, así que el reparto se regalaba sin que
+   * nadie lo notara. Se avisa en pantalla y en el mensaje al local.
+   */
+  const envioSinCotizar = tipoEntrega === 'delivery'
+    && lat != null && lng != null
+    && (sucursal?.lat == null || sucursal?.lng == null)
+
   const qrData = encodeURIComponent(`Elevate Food | Pago Bs.${total} | ${nombre || 'Cliente'}`)
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${qrData}&bgcolor=1e1e1e&color=ff5c19&margin=10`
 
@@ -393,6 +405,7 @@ function CheckoutModal({
       lineas: cart.map(i => ({ nombre: i.name, cantidad: i.quantity, total: i.price * i.quantity })),
       subtotal,
       envio: costoEnvio,
+      envioACoordinar: envioSinCotizar,
       distanciaKm: envio?.distancia_km ?? null,
       indicaciones: direccion,
       lat,
@@ -663,6 +676,14 @@ function CheckoutModal({
                     <span>Bs. {costoEnvio}</span>
                   </div>
                 )}
+                {/* Sin coordenadas del local no se puede cotizar: se dice, en
+                    lugar de mostrar un total que no incluye el reparto. */}
+                {envioSinCotizar && (
+                  <div className="modal-total-row" style={{ color: '#f59e0b' }}>
+                    <span>Envío · lo coordina el local</span>
+                    <span>A convenir</span>
+                  </div>
+                )}
                 {tipoEntrega === 'delivery' && envio && !envio.dentroDeCobertura && (
                   <div className="modal-total-row" style={{ color: '#ef4444' }}>
                     <span>Fuera de la zona de reparto ({envio.distancia_km.toFixed(1)} km)</span>
@@ -671,7 +692,7 @@ function CheckoutModal({
                 )}
                 <div className="modal-total-row big">
                   <span>Total a pagar</span>
-                  <span className="modal-total-price">Bs. {total}</span>
+                  <span className="modal-total-price">Bs. {total}{envioSinCotizar ? ' + envío' : ''}</span>
                 </div>
               </div>
 

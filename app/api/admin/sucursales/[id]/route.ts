@@ -4,6 +4,7 @@ import { requireAuth, requireRole, getClientIp } from '@/lib/server/auth/session
 import { logAudit } from '@/lib/server/audit/audit.service';
 import { handleApiError, NotFoundError, ValidationError } from '@/lib/server/errors';
 import prisma from '@/lib/prisma';
+import { coordenadasParaGuardar } from '@/lib/server/maps-url';
 import { SucursalSchema } from '../route';
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -31,6 +32,9 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
     });
     if (repetida) throw new ValidationError('Ya existe otra sucursal con ese nombre');
 
+    // Si el dueño solo pegó el link de Maps, las coordenadas salen de ahí.
+    const { lat, lng } = await coordenadasParaGuardar(input);
+
     const sucursal = await prisma.sucursal.update({
       where: { id },
       data: {
@@ -38,8 +42,8 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
         direccion: input.direccion ?? null,
         telefono:  input.telefono ?? null,
         maps_url:  input.maps_url ?? null,
-        lat:       input.lat ?? null,
-        lng:       input.lng ?? null,
+        lat,
+        lng,
           // Sin valores explícitos quedan los defaults del schema (Bs 8 / 2,5 km / Bs 2,50).
           ...(input.envio_base !== undefined ? { envio_base: input.envio_base } : {}),
           ...(input.envio_km_incluidos !== undefined ? { envio_km_incluidos: input.envio_km_incluidos } : {}),
