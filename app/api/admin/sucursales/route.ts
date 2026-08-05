@@ -4,6 +4,7 @@ import { requireAuth, requireRole, getClientIp } from '@/lib/server/auth/session
 import { logAudit } from '@/lib/server/audit/audit.service';
 import { handleApiError, ValidationError } from '@/lib/server/errors';
 import prisma from '@/lib/prisma';
+import { coordenadasParaGuardar } from '@/lib/server/maps-url';
 
 /** Hosts de Google Maps aceptados en `maps_url`. */
 const MAPS_HOSTS = ['google.com', 'www.google.com', 'maps.google.com', 'maps.app.goo.gl', 'goo.gl'];
@@ -107,6 +108,10 @@ export async function POST(req: NextRequest) {
     });
     if (repetida) throw new ValidationError('Ya existe una sucursal con ese nombre');
 
+    // Fuera de la transacción: resolver el enlace de Maps es una llamada de red
+    // y no tiene por qué tener una transacción abierta esperándola.
+    const { lat, lng } = await coordenadasParaGuardar(input);
+
     const sucursal = await prisma.$transaction(async (tx) => {
       const creada = await tx.sucursal.create({
         data: {
@@ -114,8 +119,8 @@ export async function POST(req: NextRequest) {
           direccion: input.direccion ?? null,
           telefono:  input.telefono ?? null,
           maps_url:  input.maps_url ?? null,
-          lat:       input.lat ?? null,
-          lng:       input.lng ?? null,
+          lat,
+          lng,
           // Sin valores explícitos quedan los defaults del schema (Bs 8 / 2,5 km / Bs 2,50).
           ...(input.envio_base !== undefined ? { envio_base: input.envio_base } : {}),
           ...(input.envio_km_incluidos !== undefined ? { envio_km_incluidos: input.envio_km_incluidos } : {}),

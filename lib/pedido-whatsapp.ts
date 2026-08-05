@@ -25,6 +25,12 @@ export interface PedidoWhatsApp {
   subtotal: number;
   /** Costo del envío. 0 o ausente = no se cobra. */
   envio?: number;
+  /**
+   * true cuando el envío no se pudo cotizar (el local todavía no tiene sus
+   * coordenadas cargadas). No es envío gratis: hay que decirlo en el mensaje,
+   * o quien atiende cobra solo los productos y el reparto se regala.
+   */
+  envioACoordinar?: boolean;
   /** Distancia usada para cotizar el envío, en km. */
   distanciaKm?: number | null;
   /** Indicaciones que escribió el cliente para el repartidor. */
@@ -81,22 +87,34 @@ export function mensajePedido(p: PedidoWhatsApp): string {
   lineas.push('');
 
   lineas.push(`Subtotal: ${bs(p.subtotal)}`);
-  if (p.envio && p.envio > 0) {
+  const envioCobrado = Boolean(p.envio && p.envio > 0);
+  if (envioCobrado) {
     const km = p.distanciaKm != null ? ` (${p.distanciaKm.toFixed(1)} km)` : '';
-    lineas.push(`Envío${km}: ${bs(p.envio)}`);
+    lineas.push(`Envío${km}: ${bs(p.envio!)}`);
+  } else if (p.entrega === 'delivery' && p.envioACoordinar) {
+    lineas.push('Envío: A COORDINAR con el local (no incluido en el total)');
   }
-  lineas.push(`*TOTAL: ${bs(total)}*`);
+  // Con el envío sin cotizar, el total de arriba no es lo que se cobra: se
+  // marca para que quien atiende no lea "TOTAL" y cobre de menos.
+  lineas.push(
+    !envioCobrado && p.entrega === 'delivery' && p.envioACoordinar
+      ? `*TOTAL: ${bs(total)} + envío*`
+      : `*TOTAL: ${bs(total)}*`,
+  );
   lineas.push('');
 
   lineas.push(`Sucursal: ${p.sucursal}`);
   if (p.entrega === 'delivery') {
-    lineas.push('Entrega: Delivery 🛵');
+    // Sin emojis: el scooter (U+1F6F5) y la tienda (U+1F3EA) son de bloques
+    // Unicode recientes y WhatsApp Desktop en Windows los pinta como "�". El
+    // aviso al local tiene que leerse igual en cualquier teléfono y escritorio.
+    lineas.push('Entrega: DELIVERY');
     if (p.indicaciones?.trim()) lineas.push(`Indicaciones: ${p.indicaciones.trim()}`);
     if (p.distanciaKm != null) lineas.push(`Distancia: ${p.distanciaKm.toFixed(1)} km`);
     if (p.lat != null && p.lng != null) lineas.push(`Ubicación en mapa: ${linkMapa(p.lat, p.lng)}`);
   } else {
     // Retiro: no hay dirección ni mapa, pero el resto del pedido va igual.
-    lineas.push('Entrega: Retiro en el local 🏪');
+    lineas.push('Entrega: RETIRO EN EL LOCAL');
   }
   lineas.push(`Pago: ${PAGO_LABEL[p.pago]}`);
   lineas.push('');

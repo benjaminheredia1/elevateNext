@@ -22,7 +22,7 @@ describe('mensaje de pedido por WhatsApp', () => {
     expect(texto).toContain('• 1x Hamburguesa Paladar — Bs 40');
     expect(texto).toContain('Subtotal: Bs 40');
     expect(texto).toContain('*TOTAL: Bs 40*');
-    expect(texto).toContain('Entrega: Retiro en el local');
+    expect(texto).toContain('Entrega: RETIRO EN EL LOCAL');
     expect(texto).toContain('Sucursal: Equipetrol');
     expect(texto).toContain('Pago: QR');
     expect(texto).toContain('Cliente: Jose Alfredo');
@@ -45,7 +45,7 @@ describe('mensaje de pedido por WhatsApp', () => {
       lng: -63.19987366704746,
     });
 
-    expect(texto).toContain('Entrega: Delivery');
+    expect(texto).toContain('Entrega: DELIVERY');
     expect(texto).toContain('Indicaciones: calle san Francisco');
     expect(texto).toContain('Distancia: 0.3 km');
     expect(texto).toContain('Envío (0.3 km): Bs 10');
@@ -53,6 +53,37 @@ describe('mensaje de pedido por WhatsApp', () => {
     // El envío suma al total sin tocar el subtotal.
     expect(texto).toContain('Subtotal: Bs 40');
     expect(texto).toContain('*TOTAL: Bs 50*');
+  });
+
+  it('avisa cuando el envío no se pudo cotizar, en vez de cobrar solo los productos', () => {
+    // Pasa cuando el local todavía no tiene sus coordenadas cargadas.
+    const texto = mensajePedido({
+      ...base,
+      entrega: 'delivery',
+      envio: 0,
+      envioACoordinar: true,
+      lat: -17.78,
+      lng: -63.13,
+    });
+
+    expect(texto).toContain('Envío: A COORDINAR con el local');
+    // El total lleva la marca: quien atiende no puede leer "TOTAL" y cobrar de menos.
+    expect(texto).toContain('*TOTAL: Bs 40 + envío*');
+  });
+
+  it('sin bandera de coordinar, el mensaje no inventa una línea de envío', () => {
+    const texto = mensajePedido({ ...base, entrega: 'delivery', envio: 0 });
+    expect(texto).not.toContain('Envío');
+    expect(texto).toContain('*TOTAL: Bs 40*');
+  });
+
+  it('no usa emojis: WhatsApp Desktop los pinta como carácter roto', () => {
+    const delivery = mensajePedido({ ...base, entrega: 'delivery' });
+    const retiro = mensajePedido(base);
+    // Rango de emojis fuera del plano básico (los que fallaban).
+    const emoji = /[\u{1F000}-\u{1FAFF}]/u;
+    expect(emoji.test(delivery)).toBe(false);
+    expect(emoji.test(retiro)).toBe(false);
   });
 
   it('omite la nota y las indicaciones cuando vienen vacías', () => {
