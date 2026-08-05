@@ -18,6 +18,8 @@ export interface MovimientoManualInput {
 
 export interface VentaFisicaInput {
   items: { producto_id: number; cantidad: number }[];
+  /** Combos vendidos. El servidor los valoriza y los descompone en productos. */
+  combos?: { combo_id: number; cantidad: number }[];
   metodo_pago: MetodoPago | 'MIXTO';
   /** Obligatorio cuando metodo_pago = MIXTO; debe sumar exactamente el total. */
   pago_mixto?: { efectivo: number; qr: number };
@@ -34,6 +36,10 @@ export interface VentaFisicaInput {
   cliente_email?: string;
   cliente_nit?: string;
   cliente_anonimo?: boolean;
+  /** La venta entró como pedido de la carta web, avisado por WhatsApp. */
+  es_pedido_web?: boolean;
+  /** Entrega del pedido web: retiro en el local o delivery. */
+  tipo_entrega?: 'RECOJO' | 'DELIVERY';
 }
 
 export interface CierreCajaInput {
@@ -190,19 +196,6 @@ export function useTurnoActivo() {
   });
 }
 
-export function useResumenRepartidores() {
-  return useQuery({
-    queryKey: [...cajaKey, 'repartidores'],
-    queryFn: async () => {
-      const res = await apiClient.get('/api/caja/repartidores');
-      return res.data?.data as {
-        turno: { id: number; fecha_apertura: string } | null;
-        repartidores: { repartidor: string; pedidos: number; en_curso: number; entregados: number; efectivo_adelantado: number; total: number }[];
-      };
-    },
-  });
-}
-
 export function useMovimientos() {
   return useQuery({
     queryKey: [...cajaKey, 'movimientos'],
@@ -211,6 +204,54 @@ export function useMovimientos() {
       return res.data;
     },
   });
+}
+
+/** Ventas del turno (o de una fecha), con su detalle y su forma de cierre. */
+export function useVentasCaja(fecha?: string) {
+  return useQuery({
+    queryKey: [...cajaKey, 'ventas', fecha ?? null],
+    queryFn: async () => {
+      const res = await apiClient.get(`/api/caja/ventas${fecha ? `?fecha=${fecha}` : ''}`);
+      return res.data as VentasCaja;
+    },
+  });
+}
+
+export interface VentaCaja {
+  id: number;
+  numero_turno: number | null;
+  /** Correlativo propio de la sucursal: el número que ve el cliente. */
+  numero_sucursal: number | null;
+  codigo: string | null;
+  canal: string | null;
+  created_at: string;
+  total: number;
+  metodo_pago: 'EFECTIVO' | 'QR' | 'TARJETA' | 'BANCO' | null;
+  estado: string;
+  payment_status: string;
+  /** Cómo se cerró: es el eje por el que filtra la pantalla. */
+  forma: 'PAGADA' | 'FIADO' | 'CORTESIA';
+  es_cortesia: boolean;
+  descuento: string | null;
+  cliente: { id: number; nombre: string; telefono: string | null } | null;
+  cliente_nombre: string | null;
+  cajero: string | null;
+  deuda: { saldo: number; estado: string; vencimiento: string | null } | null;
+  items: {
+    producto_id: number;
+    nombre: string;
+    cantidad: number;
+    precio_unitario: number;
+    descuento: number;
+    combo: { id: number; nombre: string } | null;
+  }[];
+}
+
+export interface VentasCaja {
+  turno: { id: number; numero?: number } | null;
+  ambito: 'TURNO' | 'DIA';
+  fecha: string | null;
+  ventas: VentaCaja[];
 }
 
 export function useHistorial() {

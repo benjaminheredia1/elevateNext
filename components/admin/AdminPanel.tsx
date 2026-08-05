@@ -4,8 +4,9 @@ import { useState, useCallback } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useOrderPolling, useAlertasPolling, type NuevoPedido } from '@/hooks/useOrderPolling';
+import { useAlertasPolling } from '@/hooks/useOrderPolling';
 import { useAuth } from '@/hooks/auth';
+import SucursalActual from '@/components/admin/SucursalActual';
 
 /* ============================
    ICONS
@@ -16,6 +17,7 @@ const Icons = {
   orders: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>,
   delivery: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>,
   category: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2L2 7l11 5 11-5z"/><path d="M2 17l11 5 11-5"/><path d="M2 12l11 5 11-5"/></svg>,
+  menus: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 3h16a1 1 0 011 1v16a1 1 0 01-1 1H4a1 1 0 01-1-1V4a1 1 0 011-1z"/><line x1="7" y1="8" x2="17" y2="8"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="7" y1="16" x2="13" y2="16"/></svg>,
   horarios: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
   insumos: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 002-2V2"/><path d="M7 2v20"/><path d="M21 15V2"/><path d="M18 15h3a1 1 0 01.97 1.24l-2 8A1 1 0 0119 25h-3.5a1 1 0 01-.97-.76L13 15h5z"/></svg>,
   clientes: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>,
@@ -48,16 +50,18 @@ const NAV_GROUPS = [
     label: 'Operación',
     items: [
       { to: '/admin', label: 'Dashboard', icon: Icons.dashboard, end: true, alertKey: 'dashboard' },
-      { to: '/admin/orders', label: 'Pedidos', icon: Icons.orders, alertKey: 'orders' },
-      { to: '/admin/deliverys', label: 'Deliverys', icon: Icons.delivery },
+      // Historial de ventas y pedidos cobrados, de solo lectura.
+      { to: '/admin/orders', label: 'Pedidos', icon: Icons.orders, alertKey: 'orders', end: false },
     ],
   },
   {
     label: 'Catálogo',
     items: [
+      { to: '/admin/menus', label: 'Menús', icon: Icons.menus },
       { to: '/admin/products', label: 'Productos', icon: Icons.products },
       { to: '/admin/category', label: 'Categorías', icon: Icons.category },
       { to: '/admin/insumos', label: 'Inventario', icon: Icons.insumos, alertKey: 'insumos' },
+      { to: '/admin/inventario-sucursal', label: 'Stock por Sucursal', icon: Icons.insumos },
       { to: '/admin/bajas', label: 'Bajas', icon: Icons.bajas },
     ],
   },
@@ -71,6 +75,7 @@ const NAV_GROUPS = [
   {
     label: 'Finanzas',
     items: [
+      { to: '/admin/consolidado', label: 'Consolidado', icon: Icons.analitica },
       { to: '/admin/caja', label: 'Caja', icon: Icons.caja },
       { to: '/admin/flujo-caja', label: 'Flujo de Caja', icon: Icons.flujo },
       { to: '/admin/contabilidad', label: 'Contabilidad', icon: Icons.contabilidad },
@@ -84,9 +89,10 @@ const NAV_GROUPS = [
   {
     label: 'Gestión',
     items: [
+      { to: '/admin/sucursales', label: 'Sucursales', icon: Icons.caja },
       { to: '/admin/clientes', label: 'Clientes', icon: Icons.clientes },
       { to: '/admin/privilegios', label: 'Privilegios', icon: Icons.privilegios },
-      { to: '/admin/reglasHorarias', label: 'Horarios', icon: Icons.horarios },
+      { to: '/admin/combos', label: 'Combos y promos', icon: Icons.horarios },
       { to: '/admin/horarios-trabajadores', label: 'Horario de Trabajadores', icon: Icons.horarioTrabajadores },
       { to: '/admin/usuarios', label: 'Usuarios', icon: Icons.usuarios },
       { to: '/admin/auditoria', label: 'Auditoría', icon: Icons.auditoria },
@@ -165,7 +171,6 @@ function ToastContainer({ toasts, onRemove }: { toasts: Toast[]; onRemove: (id: 
 export default function AdminPanel({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const [newOrdersCount, setNewOrdersCount] = useState(0);
   const [insumosAlerta, setInsumosAlerta] = useState(0);
   const pathname = usePathname();
   const router = useRouter();
@@ -179,17 +184,11 @@ export default function AdminPanel({ children }: { children: React.ReactNode }) 
     setToasts(prev => prev.filter(t => t.id !== id));
   }, []);
 
-  // Poll for new orders
-  useOrderPolling(useCallback((nuevos: NuevoPedido[]) => {
-    setNewOrdersCount(prev => prev + nuevos.length);
-    nuevos.forEach(pedido => {
-      addToast({
-        type: 'order',
-        title: `🛍️ Nuevo Pedido #${pedido.id}`,
-        message: `${pedido.cliente_nombre ?? 'Cliente'} — Bs. ${pedido.total}`,
-      });
-    });
-  }, []));
+  /**
+   * Ya no se notifican pedidos nuevos: la web no registra pedidos, avisa por
+   * WhatsApp. Lo que entra a /api/pedidos ahora son las ventas que el propio
+   * personal acaba de cobrar, así que un toast por cada una era solo ruido.
+   */
 
   // Poll for critical insumos
   useAlertasPolling(useCallback((criticos, advertencia) => {
@@ -206,7 +205,6 @@ export default function AdminPanel({ children }: { children: React.ReactNode }) 
 
   const handleNavClick = (path: string) => {
     setSidebarOpen(false);
-    if (path === '/admin/orders') setNewOrdersCount(0);
   };
 
   return (
@@ -223,17 +221,20 @@ export default function AdminPanel({ children }: { children: React.ReactNode }) 
           <span className="admin-badge">Admin</span>
         </div>
 
+        {/* Dónde estoy parado: condiciona la lectura de todos los números del panel. */}
+        <SucursalActual />
+
         <nav className="admin-nav">
           {NAV_GROUPS.map(group => (
             <div key={group.label} className="admin-nav-group">
               <div className="admin-nav-group-label">{group.label}</div>
               {group.items.map(item => {
-                const isActive = item.end ? pathname === item.to : pathname.startsWith(item.to);
+                const soloExacto = 'end' in item && item.end === true;
+                const isActive = soloExacto ? pathname === item.to : pathname.startsWith(item.to);
+                // El contador de pedidos nuevos se fue con el flujo web: la
+                // única señal viva es el faltante de insumos.
                 const badgeCount =
-                  item.alertKey === 'orders' ? newOrdersCount
-                  : item.alertKey === 'insumos' ? insumosAlerta
-                  : item.alertKey === 'dashboard' ? (insumosAlerta > 0 ? insumosAlerta : 0)
-                  : 0;
+                  item.alertKey === 'insumos' || item.alertKey === 'dashboard' ? insumosAlerta : 0;
 
                 return (
                   <Link
@@ -313,24 +314,25 @@ export default function AdminPanel({ children }: { children: React.ReactNode }) 
               En vivo
             </div>
 
-            {/* Bell with badge */}
+            {/* Campana: lleva al inventario, que es lo único que hoy alerta. */}
             <div style={{ position: 'relative' }}>
               <button
-                onClick={() => setNewOrdersCount(0)}
+                onClick={() => router.push('/admin/insumos')}
+                title={insumosAlerta > 0 ? `${insumosAlerta} insumo(s) para reponer` : 'Sin alertas'}
                 style={{
-                  background: 'transparent', border: 'none', color: newOrdersCount > 0 ? '#ff5c19' : '#888',
+                  background: 'transparent', border: 'none', color: insumosAlerta > 0 ? '#ff5c19' : '#888',
                   cursor: 'pointer', padding: 4, display: 'flex', alignItems: 'center',
                   transition: 'color 0.2s',
                 }}
               >
                 <motion.div
-                  animate={newOrdersCount > 0 ? { rotate: [-10, 10, -10, 10, 0] } : {}}
-                  transition={{ duration: 0.5, repeat: newOrdersCount > 0 ? 3 : 0 }}
+                  animate={insumosAlerta > 0 ? { rotate: [-10, 10, -10, 10, 0] } : {}}
+                  transition={{ duration: 0.5, repeat: insumosAlerta > 0 ? 3 : 0 }}
                 >
                   {Icons.bell}
                 </motion.div>
               </button>
-              {newOrdersCount > 0 && (
+              {insumosAlerta > 0 && (
                 <motion.span
                   initial={{ scale: 0 }}
                   animate={{ scale: 1 }}
@@ -341,7 +343,7 @@ export default function AdminPanel({ children }: { children: React.ReactNode }) 
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                   }}
                 >
-                  {newOrdersCount > 9 ? '9+' : newOrdersCount}
+                  {insumosAlerta > 9 ? '9+' : insumosAlerta}
                 </motion.span>
               )}
             </div>

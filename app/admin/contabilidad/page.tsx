@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import AdminPanel from '@/components/admin/AdminPanel';
+import VentaDetalleModal from '@/components/admin/VentaDetalleModal';
 import { useBalance, useEstadoResultados, useFlujoCaja, type RangoState } from '@/hooks/finanzas';
 import KpiCard from '@/components/ui/KpiCard';
 import MoneyText from '@/components/ui/MoneyText';
@@ -26,6 +27,7 @@ function downloadCsv(filename: string, rows: (string | number)[][]) {
 export default function AdminContabilidadPage() {
   const [tab, setTab] = useState<Tab>('estado');
   const [rango, setRango] = useState<RangoState>({ rango: 'mes' });
+  const [ventaAbierta, setVentaAbierta] = useState<number | null>(null);
   const estado = useEstadoResultados(rango);
   const balance = useBalance(rango.sucursal);
   const flujo = useFlujoCaja(rango);
@@ -65,6 +67,10 @@ export default function AdminContabilidadPage() {
         </div>
       </div>
 
+      {ventaAbierta !== null && (
+        <VentaDetalleModal transaccionId={ventaAbierta} onClose={() => setVentaAbierta(null)} />
+      )}
+
       <div className="admin-tabs">
         <button className={`admin-tab ${tab === 'estado' ? 'active' : ''}`} onClick={() => setTab('estado')}>Estado de Resultados</button>
         <button className={`admin-tab ${tab === 'balance' ? 'active' : ''}`} onClick={() => setTab('balance')}>Balance General</button>
@@ -103,11 +109,23 @@ export default function AdminContabilidadPage() {
                   data={flujo.data?.movimientos ?? []}
                   emptyTitle="Sin movimientos en el periodo"
                   rowKey={(row: any) => row.id}
+                  onRowClick={(row: any) => setVentaAbierta(row.transaccion_id)}
+                  isRowClickable={(row: any) => !!row.transaccion_id}
                   columns={[
                     { key: 'fecha', header: 'Fecha', render: (row: any) => new Date(row.created_at).toLocaleString('es-BO') },
                     { key: 'tipo', header: 'Tipo', render: (row: any) => row.tipo },
-                    { key: 'concepto', header: 'Concepto', render: (row: any) => row.concepto ?? '-' },
+                    { key: 'concepto', header: 'Concepto', render: (row: any) => (
+                      <div>
+                        <div>{row.concepto ?? '-'}</div>
+                        {row.venta_cliente && <div className="admin-cell-sub">{row.venta_cliente}</div>}
+                      </div>
+                    )},
                     { key: 'monto', header: 'Monto', className: 'num', render: (row: any) => <MoneyText value={row.monto ?? 0} /> },
+                    { key: 'detalle', header: '', className: 'num', render: (row: any) => (
+                      row.transaccion_id
+                        ? <span className="venta-detalle-link">Ver detalle ›</span>
+                        : <span className="admin-cell-muted">—</span>
+                    )},
                   ]}
                 />
               </div>

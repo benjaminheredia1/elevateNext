@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import apiClient from '@/hooks/api';
 import { useCrearFiado } from '@/hooks/cuentas-corrientes';
+import { useSucursalAdmin } from '@/hooks/sucursal-admin';
 
 type EstadoPedido = 'PENDIENTE' | 'EN_PREPARACION' | 'LISTO' | 'EN_LOCAL' | 'EN_CAMINO' | 'LLEGO' | 'ENTREGADO' | 'CANCELADO' | 'PAGADO';
 type FiltroEstado = 'Todos' | EstadoPedido;
@@ -18,9 +19,13 @@ interface DetalleItem {
 
 interface Pedido {
   id: number;
+  /** Correlativo propio de la sucursal: es el número que ve el cliente. */
+  numero_sucursal?: number | null;
   cliente_nombre: string | null;
   cliente_telefono: string | null;
   cliente_direccion: string | null;
+  /** Nota que dejó el cliente al pedir: "sin picante", "tocar timbre". */
+  notas?: string | null;
   tipo_entrega?: 'RECOJO' | 'DELIVERY' | null;
   metodo_pago: string | null;
   payment_status?: string | null;
@@ -43,21 +48,21 @@ function paymentMeta(status?: string | null) {
   return PAYMENT_META[status ?? 'PENDIENTE'] ?? PAYMENT_META.PENDIENTE;
 }
 
+/**
+ * Estados que filtran la lista. Quedan los que tiene una venta registrada por
+ * caja: cobrada, entregada sin cobrar (fiado) o anulada.
+ *
+ * Los intermedios del seguimiento —EN_PREPARACION, LISTO, EN_LOCAL, EN_CAMINO,
+ * LLEGO— salieron con el tracking de pedidos. Siguen existiendo en la base
+ * porque las ventas viejas los tienen, pero ya no se asignan.
+ */
 const STATUS_OPTIONS: EstadoPedido[] = [
+  'PAGADO',
   'PENDIENTE',
-  'EN_PREPARACION',
-  'LISTO',
-  'EN_LOCAL',
-  'EN_CAMINO',
-  'LLEGO',
   'ENTREGADO',
   'CANCELADO',
-  'PAGADO',
 ];
 
-// Estados que se pueden asignar según el tipo de entrega
-const STATUS_FLOW_DELIVERY: EstadoPedido[] = ['PENDIENTE', 'EN_PREPARACION', 'LISTO', 'EN_LOCAL', 'EN_CAMINO', 'LLEGO', 'ENTREGADO', 'CANCELADO'];
-const STATUS_FLOW_RECOJO: EstadoPedido[] = ['PENDIENTE', 'EN_PREPARACION', 'LISTO', 'ENTREGADO', 'CANCELADO'];
 
 const FILTER_OPTIONS: FiltroEstado[] = ['Todos', ...STATUS_OPTIONS];
 
@@ -135,7 +140,7 @@ function FiadoModal({
         </div>
         <div className="admin-modal-body">
           <div className="finance-modal-note">
-            Pedido #{pedido.id} · {pedido.cliente_nombre ?? 'Sin nombre'} · <strong>Bs. {pedido.total.toFixed(2)}</strong>
+            Pedido #{pedido.numero_sucursal ?? pedido.id} · {pedido.cliente_nombre ?? 'Sin nombre'} · <strong>Bs. {pedido.total.toFixed(2)}</strong>
           </div>
           <p style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 12 }}>
             Se creará una cuenta por cobrar vinculada a este pedido. El cliente podrá pagar luego.
@@ -159,41 +164,26 @@ function FiadoModal({
   );
 }
 
-function PedidoCard({
-  pedido,
-  expanded,
-  updating,
-  readOnly,
-  onToggle,
-  onEstadoChange,
-  onPagoChange,
-  onDriverLink,
-  onFiado,
-}: {
+function PedidoCard({ pedido, expanded, onToggle }: {
   pedido: Pedido;
   expanded: boolean;
-  updating: boolean;
-  readOnly: boolean;
   onToggle: () => void;
-  onEstadoChange: (id: number, estado: EstadoPedido) => void;
-  onPagoChange: (id: number, payment: string) => void;
-  onDriverLink: (pedido: Pedido) => void;
-  onFiado: (pedido: Pedido) => void;
 }) {
   const totalItems = pedido.transaccionesDetalles_id.reduce((sum, item) => sum + Number(item.cantidad || 0), 0);
   const payment = PAYMENT_LABELS[pedido.metodo_pago ?? ''] ?? pedido.metodo_pago ?? 'Efectivo';
   const isDelivery = pedido.tipo_entrega === 'DELIVERY';
   const entregaLabel = isDelivery ? '🛵 Delivery' : '🏪 Recoger en local';
-  const statusFlow = isDelivery ? STATUS_FLOW_DELIVERY : STATUS_FLOW_RECOJO;
   const pago = paymentMeta(pedido.payment_status);
 
   return (
     <div className={`order-card ${expanded ? 'expanded' : ''}`}>
       <button className="order-card-main" onClick={onToggle} type="button">
         <div className="order-card-left">
-          {/* Aquí se listan pedidos de todos los turnos: manda el número global.
-              El #N del turno vive en /caja/movimientos, que sí es solo del turno. */}
-          <span className="order-id">#{pedido.id}</span>
+          {/* Manda el correlativo de la sucursal, que es el que se le dice al
+              cliente. El `id` es un contador compartido por todo el negocio: en
+              un local nuevo mostraba #2101 solo porque los otros ya vendieron
+              2100 veces. Queda como referencia interna. */}
+          <span className="order-id">#{pedido.numero_sucursal ?? pedido.id}</span>
           <span className="order-time">{time(pedido.created_at)}</span>
         </div>
         <div className="order-card-center">
@@ -255,8 +245,10 @@ function PedidoCard({
               {isDelivery && (
                 <>
                   <div className="ocd-meta-item">
-                    <span className="ocd-meta-label">Dirección</span>
-                    <span>{pedido.cliente_direccion ?? 'Sin dirección'}</span>
+                    {/* Texto libre que escribe el cliente para guiar al
+                        repartidor. El punto exacto de entrega es el del mapa. */}
+                    <span className="ocd-meta-label">Indicaciones de entrega</span>
+                    <span>{pedido.cliente_direccion || 'Sin indicaciones'}</span>
                   </div>
                   <div className="ocd-meta-item">
                     <span className="ocd-meta-label">Repartidor</span>
@@ -266,61 +258,26 @@ function PedidoCard({
               )}
             </div>
 
-            {readOnly ? (
-              <div className="ocd-actions">
-                <span className="ocd-actions-label">Estado actual:</span>
-                <div className="ocd-status-btns">
-                  <span className="order-status-badge" style={{ color: statusMeta(pedido.estado).color, background: statusMeta(pedido.estado).bg }}>{statusMeta(pedido.estado).label}</span>
-                  <span className="order-status-badge" style={{ color: pago.color, background: pago.bg }}>{pago.label}</span>
-                </div>
-                <span className="ocd-actions-label" style={{ opacity: 0.7 }}>Gestionado por caja</span>
-              </div>
-            ) : (
-              <div className="ocd-actions">
-                <span className="ocd-actions-label">Cambiar estado:</span>
-                <div className="ocd-status-btns">
-                  {statusFlow.map(status => {
-                    const meta = STATUS_META[status];
-                    const current = pedido.estado === status;
-                    return (
-                      <button
-                        key={status}
-                        className={`ocd-status-btn ${current ? 'current' : ''}`}
-                        style={current ? { background: meta.bg, color: meta.color, borderColor: meta.color } : {}}
-                        onClick={() => onEstadoChange(pedido.id, status)}
-                        disabled={updating || current}
-                        type="button"
-                      >
-                        {meta.label}
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="ocd-status-btns">
-                  {pedido.payment_status !== 'PAGADO' && (
-                    <button className="ocd-status-btn" onClick={() => onPagoChange(pedido.id, 'PAGADO')} disabled={updating} type="button">
-                      💵 Marcar pagado
-                    </button>
-                  )}
-                  {pedido.payment_status !== 'PAGADO' && (
-                    <button
-                      className="ocd-status-btn"
-                      onClick={() => onFiado(pedido)}
-                      disabled={updating}
-                      type="button"
-                      title="Registrar como fiado: el cliente paga después"
-                    >
-                      📋 Marcar como fiado
-                    </button>
-                  )}
-                  {isDelivery && (
-                    <button className="ocd-status-btn" onClick={() => onDriverLink(pedido)} disabled={updating} type="button">
-                      {pedido.driver_link_id ? 'Copiar link repartidor' : 'Generar link repartidor'}
-                    </button>
-                  )}
-                </div>
+            {/* La nota del cliente va destacada y no como un dato más de la
+                grilla: es una instrucción para preparar el pedido y pasarla por
+                alto es un reclamo. */}
+            {pedido.notas && (
+              <div className="ocd-nota">
+                <span className="ocd-meta-label">Nota del cliente</span>
+                <p>{pedido.notas}</p>
               </div>
             )}
+
+            {/* Solo lectura: la venta ya está cobrada y registrada por caja.
+                Los estados intermedios (en preparación, en camino, repartidor
+                llegó…) se eliminaron con el seguimiento de pedidos. */}
+            <div className="ocd-actions">
+              <span className="ocd-actions-label">Estado:</span>
+              <div className="ocd-status-btns">
+                <span className="order-status-badge" style={{ color: statusMeta(pedido.estado).color, background: statusMeta(pedido.estado).bg }}>{statusMeta(pedido.estado).label}</span>
+                <span className="order-status-badge" style={{ color: pago.color, background: pago.bg }}>{pago.label}</span>
+              </div>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -334,15 +291,18 @@ export default function AdminOrders({ readOnly = false }: { readOnly?: boolean }
   const [filtroEstado, setFiltroEstado] = useState<FiltroEstado>('Todos');
   const [busqueda, setBusqueda] = useState('');
   const [expandedId, setExpandedId] = useState<number | null>(null);
-  const [updatingId, setUpdatingId] = useState<number | null>(null);
   const [fiadoPedido, setFiadoPedido] = useState<Pedido | null>(null);
   const [fiadoError, setFiadoError] = useState('');
   const [actionError, setActionError] = useState('');
   const crearFiado = useCrearFiado();
 
+  // Los pedidos son los del local elegido en el panel: cada sucursal prepara
+  // y entrega los suyos.
+  const { sucursal } = useSucursalAdmin();
+
   const fetchPedidos = useCallback(async () => {
     try {
-      const res = await apiClient.get('/api/pedidos');
+      const res = await apiClient.get(`/api/pedidos${sucursal ? `?sucursal=${sucursal}` : ''}`);
       setPedidos(res.data?.data ?? []);
     } catch (err) {
       console.error(err);
@@ -350,7 +310,7 @@ export default function AdminOrders({ readOnly = false }: { readOnly?: boolean }
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [sucursal]);
 
   useEffect(() => {
     fetchPedidos();
@@ -382,35 +342,6 @@ export default function AdminOrders({ readOnly = false }: { readOnly?: boolean }
     window.setTimeout(() => setActionError(''), 8000);
   };
 
-  const handleEstadoChange = async (id: number, estado: EstadoPedido) => {
-    setUpdatingId(id);
-    setActionError('');
-    try {
-      const res = await apiClient.put(`/api/pedidos/${id}`, { estado });
-      const updated = res.data?.data;
-      setPedidos(prev => prev.map(pedido => pedido.id === id ? { ...pedido, ...(updated ?? {}), estado } : pedido));
-    } catch (err) {
-      console.error(err);
-      mostrarErrorAccion(err, 'No se pudo cambiar el estado del pedido.');
-    } finally {
-      setUpdatingId(null);
-    }
-  };
-
-  const handlePagoChange = async (id: number, payment: string) => {
-    setUpdatingId(id);
-    setActionError('');
-    try {
-      const res = await apiClient.put(`/api/pedidos/${id}`, { payment_status: payment });
-      const updated = res.data?.data;
-      setPedidos(prev => prev.map(pedido => pedido.id === id ? { ...pedido, ...(updated ?? {}), payment_status: payment } : pedido));
-    } catch (err) {
-      console.error(err);
-      mostrarErrorAccion(err, 'No se pudo cambiar el estado de pago.');
-    } finally {
-      setUpdatingId(null);
-    }
-  };
 
   const handleFiado = async (vencimiento: string | null) => {
     if (!fiadoPedido) return;
@@ -426,25 +357,6 @@ export default function AdminOrders({ readOnly = false }: { readOnly?: boolean }
     );
   };
 
-  const handleDriverLink = async (pedido: Pedido) => {
-    setUpdatingId(pedido.id);
-    try {
-      let linkId = pedido.driver_link_id;
-      if (!linkId) {
-        const res = await apiClient.put(`/api/pedidos/${pedido.id}`, { generar_driver_link: true });
-        const updated = res.data?.data as Pedido | undefined;
-        linkId = updated?.driver_link_id ?? null;
-        if (updated) setPedidos(prev => prev.map(item => item.id === pedido.id ? { ...item, ...updated } : item));
-      }
-      if (linkId) {
-        await navigator.clipboard.writeText(`${window.location.origin}/driver/${linkId}`);
-      }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setUpdatingId(null);
-    }
-  };
 
   return (
     <div className="admin-orders">
@@ -516,13 +428,7 @@ export default function AdminOrders({ readOnly = false }: { readOnly?: boolean }
               key={pedido.id}
               pedido={pedido}
               expanded={expandedId === pedido.id}
-              updating={updatingId === pedido.id}
-              readOnly={readOnly}
               onToggle={() => setExpandedId(current => current === pedido.id ? null : pedido.id)}
-              onEstadoChange={handleEstadoChange}
-              onPagoChange={handlePagoChange}
-              onDriverLink={handleDriverLink}
-              onFiado={p => { setFiadoError(''); setFiadoPedido(p); }}
             />
           ))}
         </div>

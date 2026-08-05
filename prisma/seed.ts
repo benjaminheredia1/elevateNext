@@ -69,18 +69,35 @@ async function main() {
     }
     console.log('✅ Cuentas financieras (EFECTIVO, QR)')
   }
-  // 4. Marcas (FASE 5A) — upsert idempotente por key
+  // 4. Menús / marcas (FASE 5A) — upsert idempotente por key.
+  //    Los textos de presentación son los mismos que la migración
+  //    20260804210000_menus_administrables dejó en las bases que ya existían:
+  //    acá viven para que una base nueva arranque con las cartas al aire.
   const marcas = [
-    { key: 'elevate', nombre: 'Elevate', color: '#22c55e' },
-    { key: 'fitbull', nombre: 'Fitbull', color: '#f59e0b' },
+    {
+      key: 'fitbull', slug: 'fitbull', nombre: 'Fitbull', color: '#f59e0b', orden: 1,
+      eyebrow: 'Colaboración', kicker: 'Colaboración oficial', titulo: 'Elevate × Fitbull',
+      tagline: 'Nutrición deportiva de alto rendimiento, lista para tu entreno.',
+      descripcion: 'Nos aliamos con Fitbull, el gimnasio que entrena a la comunidad fitness de Santa Cruz, para crear un menú pensado para tu rendimiento. Pre-entreno, recovery y alto en proteína: cada plato apoya tus objetivos dentro y fuera del gym.',
+      bullets: ['Recetas aprobadas por entrenadores', 'Macros calculados por porción', 'Ideal pre y post entreno'],
+      cta_texto: 'Menú Elevate × Fitbull', icono: 'dumbbell',
+    },
+    {
+      key: 'elevate', slug: 'elevate', nombre: 'Elevate', color: '#22c55e', orden: 2,
+      eyebrow: 'Nuestra casa', kicker: 'Nuestra casa', titulo: 'Catering Elevate',
+      tagline: 'Comida saludable, fresca y deliciosa para cada momento del día.',
+      descripcion: 'El corazón de Elevate: nuestro catering de comida saludable. Bowls, ensaladas, wraps y bebidas frescas preparadas cada día con ingredientes locales. Comida que disfrutas sin culpa, para cualquier momento del día.',
+      bullets: ['Hecho fresco cada día', 'Ingredientes locales bolivianos', 'Opciones para todos los gustos'],
+      cta_texto: 'Menú Elevate', icono: 'bowl',
+    },
   ]
   for (const m of marcas) {
     await prisma.marca.upsert({
       where: { key: m.key },
-      update: { nombre: m.nombre, color: m.color },
+      update: m,
       create: m,
     })
-    console.log(`✅ Marca: ${m.nombre} (${m.key})`)
+    console.log(`✅ Menú: ${m.nombre} (${m.key})`)
   }
 
   // 5. Unidades de medida (catálogo administrable) — upsert idempotente por nombre

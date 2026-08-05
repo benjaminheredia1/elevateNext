@@ -81,6 +81,73 @@
   border-radius: 5px;
 }
 
+/* Sucursal activa, bajo el logo de la barra lateral. Siempre a la vista:
+   condiciona la lectura de todos los números del panel. */
+.admin-sucursal-actual {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 18px;
+  border-bottom: 1px solid rgba(255, 255, 255, .08);
+}
+
+.admin-sucursal-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, .45);
+}
+
+.admin-sucursal-actual select {
+  width: 100%;
+  background: rgba(255, 255, 255, .07);
+  border: 1px solid rgba(255, 255, 255, .14);
+  color: #fff;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-family: var(--font-ui);
+  font-size: 0.85rem;
+  font-weight: 600;
+  outline: none;
+  cursor: pointer;
+}
+.admin-sucursal-actual select:focus { border-color: var(--orange); }
+.admin-sucursal-actual select option { color: var(--ink); }
+
+.admin-sucursal-unica {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+.admin-sucursal-dir {
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: rgba(255, 255, 255, .45);
+}
+
+/* Globo del mini gráfico de las tarjetas KPI. */
+.spark-tooltip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(20, 52, 42, .12);
+  font-size: 0.78rem;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+.spark-tooltip strong { font-size: 0.72rem; color: var(--slate); text-transform: capitalize; font-weight: 600; }
+.spark-tooltip span { font-weight: 700; color: var(--ink); }
+.spark-tooltip .spark-tooltip-sub { font-weight: 500; font-size: 0.72rem; color: var(--slate); }
+
 .admin-nav {
   flex: 1;
   padding: 18px 14px;
@@ -340,7 +407,8 @@
 .alert-card-list { display: flex; flex-direction: column; gap: 10px; }
 .alert-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 10px; background: var(--canvas); border: 1px solid var(--line); }
 .alert-row-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
-.alert-row-name { flex: 1; font-size: 0.88rem; font-weight: 500; }
+.alert-row-name { flex: 1; font-size: 0.88rem; font-weight: 500; min-width: 0; }
+.alert-row-sucursal { display: block; font-size: 0.72rem; font-weight: 400; color: var(--slate); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .alert-row-qty { font-variant-numeric: tabular-nums; font-size: 0.82rem; color: var(--slate); font-weight: 600; }
 .alert-empty { text-align: center; padding: 24px; color: var(--slate); font-size: 0.88rem; }
 
@@ -350,6 +418,16 @@
 .donut-legend-dot { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
 .donut-legend-name { flex: 1; color: var(--ink); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .donut-legend-value { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--slate); }
+.donut-legend-pct { font-variant-numeric: tabular-nums; width: 46px; text-align: right; color: var(--slate); font-size: 0.8rem; }
+.donut-legend-toggle { text-align: left; padding: 0; border: none; background: none; cursor: pointer; font: inherit; }
+.donut-legend-toggle:hover { text-decoration: underline; }
+.donut-otros-detail { list-style: none; margin: 8px 0 0; padding: 8px 10px; border-radius: 10px; background: var(--canvas, #F7F9F8); border: 1px solid var(--line, #E4EAE5); max-height: 160px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+.donut-otros-item { display: flex; align-items: center; gap: 8px; font-size: 0.78rem; color: var(--slate); }
+.donut-otros-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.donut-otros-value { font-variant-numeric: tabular-nums; font-weight: 600; }
+.donut-otros-pct { font-variant-numeric: tabular-nums; width: 46px; text-align: right; }
+.donut-otros-head { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--slate); border-bottom: 1px solid var(--line, #E4EAE5); padding-bottom: 6px; }
+.donut-otros-total { border-top: 1px solid var(--line, #E4EAE5); padding-top: 6px; color: var(--ink); font-weight: 700; }
 
 /* ===== MENU ENGINEERING: RECOMMENDATIONS ===== */
 .menu-reco-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 16px; }
@@ -358,6 +436,9 @@
 .menu-reco-count { font-size: 0.78rem; color: var(--slate); font-weight: 600; }
 .menu-reco-text { margin: 0; font-size: 0.82rem; color: var(--ink); line-height: 1.4; }
 .menu-reco-items { margin: 6px 0 0; font-size: 0.76rem; color: var(--slate); }
+.menu-reco-items.expanded { max-height: 140px; overflow-y: auto; padding-right: 4px; }
+.menu-reco-more { margin-top: 6px; padding: 0; border: none; background: none; cursor: pointer; font-size: 0.76rem; font-weight: 600; color: var(--orange, #FF5C19); }
+.menu-reco-more:hover { text-decoration: underline; }
 @media (max-width: 640px) { .menu-reco-grid { grid-template-columns: 1fr; } }
 
 /* ===== TOP PRODUCTS ===== */
@@ -384,6 +465,17 @@
 .fav-prod-stats strong { font-size: 0.9rem; font-variant-numeric: tabular-nums; color: var(--ink); }
 .fav-prod-stats span { font-size: 0.74rem; color: var(--slate); }
 
+/* ===== TOP CLIENTES DEL MES ===== */
+.top-clientes-list { list-style: none; margin: 0; padding: 0 6px 0 0; display: flex; flex-direction: column; gap: 2px; max-height: 380px; overflow-y: auto; }
+.top-cliente-item { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: 10px; cursor: pointer; transition: background 0.15s ease; }
+.top-cliente-item:hover { background: var(--canvas, #F7F9F8); }
+.top-cliente-rank { flex-shrink: 0; width: 26px; height: 26px; border-radius: 50%; background: var(--canvas, #F7F9F8); color: var(--slate); font-size: 0.78rem; font-weight: 700; font-variant-numeric: tabular-nums; display: flex; align-items: center; justify-content: center; }
+.top-cliente-rank.is-podio { background: var(--orange, #FF5C19); color: #fff; }
+.top-cliente-body { flex: 1; min-width: 0; }
+.top-cliente-name { font-size: 0.88rem; font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.top-cliente-sub { font-size: 0.75rem; color: var(--slate); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.top-cliente-total { flex-shrink: 0; font-size: 0.9rem; font-variant-numeric: tabular-nums; color: var(--ink); }
+
 /* ===== FILTERS / SEARCH ===== */
 .admin-filters { display: flex; justify-content: space-between; align-items: center; margin-bottom: 22px; gap: 16px; flex-wrap: wrap; }
 .admin-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
@@ -403,6 +495,31 @@
   outline: none;
 }
 .admin-search-field:focus { border-color: var(--orange); box-shadow: 0 0 0 2px rgba(255, 92, 25, .12); }
+/* ===== AUTOCOMPLETADO DE CLIENTES ===== */
+.cliente-search { position: relative; flex: 1; min-width: 240px; max-width: 360px; }
+.cliente-search .admin-search-field { max-width: none; padding-right: 34px; }
+.cliente-search-clear { position: absolute; top: 0; right: 0; width: 34px; height: 40px; border: none; background: none; cursor: pointer; color: var(--slate); font-size: 1.1rem; line-height: 1; }
+.cliente-search-clear:hover { color: var(--ink); }
+.cliente-search-list { position: absolute; z-index: 30; top: 44px; left: 0; right: 0; list-style: none; margin: 0; padding: 4px; background: var(--surface, #fff); border: 1px solid var(--line, #E4EAE5); border-radius: 10px; box-shadow: 0 8px 24px rgba(20, 52, 42, 0.12); max-height: 280px; overflow-y: auto; }
+.cliente-search-option { display: flex; flex-direction: column; gap: 2px; padding: 7px 10px; border-radius: 8px; cursor: pointer; }
+.cliente-search-option.is-active { background: var(--canvas, #F7F9F8); }
+.cliente-search-name { font-size: 0.87rem; font-weight: 600; color: var(--ink); }
+.cliente-search-meta { font-size: 0.74rem; color: var(--slate); }
+.cliente-search-empty { padding: 8px 10px; font-size: 0.78rem; color: var(--slate); }
+
+/* ===== RANGO DE FECHAS PERSONALIZADO ===== */
+.custom-date-range { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; }
+.custom-date-range label { display: flex; flex-direction: column; gap: 3px; }
+.custom-date-range label span { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--slate); }
+.custom-date-range input { background: var(--surface); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 7px 10px; font-family: var(--font-ui); font-size: 0.85rem; outline: none; }
+.custom-date-range input:focus { border-color: var(--orange); box-shadow: 0 0 0 2px rgba(255, 92, 25, .12); }
+
+/* ===== SELECTOR DE SUCURSAL ===== */
+.sucursal-selector { display: flex; flex-direction: column; gap: 3px; }
+.sucursal-selector span { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--slate); }
+.sucursal-selector select { background: var(--surface); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 7px 10px; font-family: var(--font-ui); font-size: 0.85rem; outline: none; }
+.sucursal-selector select:focus { border-color: var(--orange); box-shadow: 0 0 0 2px rgba(255, 92, 25, .12); }
+
 .admin-cat-filters { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
 .cat-filter-btn { background: var(--surface); border: 1px solid var(--line); color: var(--slate); padding: 6px 14px; border-radius: 20px; font-size: 0.83rem; font-weight: 500; cursor: pointer; white-space: nowrap; transition: all 0.18s; }
 .cat-filter-btn:hover { background: #f0f3ef; }
@@ -511,6 +628,8 @@
 .admin-modal-header { padding: 20px 24px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; }
 .admin-modal-header h2 { margin: 0; font-family: var(--font-display); font-size: 1.2rem; font-weight: 600; }
 .admin-modal-close { background: transparent; border: none; color: var(--slate); font-size: 1.6rem; cursor: pointer; line-height: 1; }
+/* Aviso de a qué sucursal afecta lo que se está editando en el wizard. */
+.wizard-scope-note { margin: 4px 0 0; font-size: 0.78rem; color: var(--slate); }
 .admin-modal-body { padding: 24px; overflow-y: auto; }
 .admin-modal-footer { padding: 18px 24px; border-top: 1px solid var(--line); display: flex; justify-content: flex-end; gap: 12px; align-items: center; }
 
@@ -524,6 +643,46 @@
 }
 .form-group input:focus, .form-group select:focus, .form-group textarea:focus { outline: 2px solid var(--orange); outline-offset: -1px; border-color: var(--orange); }
 .form-hint { font-size: 0.76rem; color: var(--slate); }
+
+/* Acción en texto dentro de una ayuda: "usar el del catálogo". Se ve como un
+   enlace pero es un <button>, para que funcione con teclado y lectores. */
+.linklike {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--orange);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.linklike:hover { opacity: 0.8; }
+
+/* Modal de copiar productos entre sucursales: lista larga y seleccionable. */
+.admin-modal-lg { max-width: 780px; }
+.form-check { display: flex; align-items: center; gap: 8px; margin: 12px 0 4px; font-size: 0.84rem; cursor: pointer; }
+.form-check input { width: 16px; height: 16px; accent-color: var(--orange); }
+.copiar-lista {
+  margin-top: 10px;
+  max-height: 46vh;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.copiar-fila {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.86rem;
+  cursor: pointer;
+}
+.copiar-fila:last-child { border-bottom: none; }
+.copiar-fila:hover { background: #fafcfa; }
+.copiar-fila input { width: 16px; height: 16px; accent-color: var(--orange); flex-shrink: 0; }
+.copiar-fila-todos { position: sticky; top: 0; background: #f4f7f4; font-weight: 600; z-index: 1; }
+.copiar-nombre { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.copiar-precio { color: var(--slate); font-size: 0.8rem; white-space: nowrap; }
 
 .unidad-contenido-panel { margin-top: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: rgba(0,0,0,0.015); display: flex; flex-direction: column; gap: 10px; }
 .unidad-contenido-panel .form-grid { grid-template-columns: 1fr 1fr; gap: 12px; }
@@ -554,6 +713,16 @@
 .finance-row:last-child { border-bottom: none; }
 .finance-row span { color: var(--slate); font-size: .84rem; }
 .finance-row strong { color: var(--ink); font-weight: 750; font-variant-numeric: tabular-nums; text-align: right; }
+
+/* ===== DETALLE DE VENTA (flujo de caja) ===== */
+.venta-detalle-modal { max-width: 760px; }
+.venta-detalle-meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 18px; font-size: 0.85rem; margin-bottom: 16px; }
+.venta-detalle-items { margin-bottom: 14px; }
+.venta-detalle-items th, .venta-detalle-items td { font-size: 0.83rem; }
+.venta-detalle-totales { border-top: 1px solid var(--line, #E4EAE5); padding-top: 6px; }
+.venta-detalle-totales .finance-row.is-total strong { font-size: 1.05rem; color: var(--orange, #FF5C19); }
+.venta-detalle-link { color: var(--orange, #FF5C19); font-size: 0.8rem; font-weight: 600; white-space: nowrap; }
+@media (max-width: 640px) { .venta-detalle-meta { grid-template-columns: 1fr; } }
 .finance-metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
 .finance-mini-card {
   background: var(--canvas); border: 1px solid var(--line); border-radius: 10px;
@@ -632,6 +801,10 @@
 .ocd-meta { display: flex; flex-direction: column; gap: 12px; }
 .ocd-meta-item { display: flex; flex-direction: column; gap: 2px; font-size: 0.88rem; }
 .ocd-meta-label { font-size: 0.74rem; color: var(--slate); }
+/* Nota del cliente: instrucción para preparar el pedido, así que se lee sola y
+   no como un dato más de la grilla. */
+.ocd-nota { margin-top: 12px; background: rgba(232, 163, 23, .10); border: 1px solid rgba(232, 163, 23, .32); border-radius: 10px; padding: 10px 14px; }
+.ocd-nota p { margin: 2px 0 0; font-size: 0.88rem; white-space: pre-wrap; }
 .ocd-actions { grid-column: span 2; margin-top: 12px; padding-top: 14px; border-top: 1px solid var(--line); display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
 .ocd-actions-label { font-size: 0.88rem; font-weight: 600; }
 .ocd-status-btns { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -708,6 +881,17 @@
 .menu-check { display: flex; gap: 10px; }
 .menu-check label { display: flex; align-items: center; gap: 7px; border: 1px solid var(--line); border-radius: 10px; padding: 8px 14px; cursor: pointer; font-size: 0.88rem; }
 .recipe-builder-row { display: grid; grid-template-columns: 1fr 90px 90px 36px; gap: 10px; align-items: center; margin-bottom: 8px; }
+/* Selector de unidad de la fila de receta. Antes era estilo inline, pero así
+   el layout móvil puede sobrescribirlo (un inline gana a cualquier media query). */
+.recipe-unit { width: auto; font-size: 0.8rem; }
+/* En celular los tracks fijos (90+90+36 + gaps = 246px) no dejan ancho al
+   buscador de insumo dentro del modal, y su dropdown salía recortado. Se parte
+   en dos líneas: buscador arriba a todo el ancho, cantidad/unidad/× abajo. */
+@media (max-width: 640px) {
+  .recipe-builder-row { grid-template-columns: 1fr 96px 34px; gap: 8px; }
+  .recipe-builder-row > :first-child { grid-column: 1 / -1; }
+  .recipe-builder-row input, .recipe-builder-row .recipe-unit { width: 100%; min-width: 0; font-size: 16px; }
+}
 .review-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
 .review-stat { background: var(--canvas); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
 .review-stat-label { font-size: 0.74rem; color: var(--slate); text-transform: uppercase; }
@@ -715,6 +899,27 @@
 .gate-warning { background: rgba(229, 72, 77, .08); border: 1px solid rgba(229, 72, 77, .3); color: var(--danger); border-radius: 10px; padding: 12px 14px; font-size: 0.84rem; margin-top: 14px; }
 .photo-drop { border: 1.5px dashed var(--line); border-radius: 12px; padding: 24px; text-align: center; color: var(--slate); cursor: pointer; }
 .photo-preview { width: 100%; border-radius: 12px; border: 1px solid var(--line); aspect-ratio: 16/10; object-fit: cover; }
+
+/* ===== MENÚS (las cartas de la web) =====
+   Tarjetas y no tabla: .admin-table tiene min-width 900px y esta pantalla se
+   usa desde el celular. Con auto-fill la grilla cae a una columna sola. */
+.menus-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+.menu-admin-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; box-shadow: var(--shadow-sm); display: flex; flex-direction: column; gap: 10px; }
+/* Un borrador se lee como "todavía no está afuera"; un archivado, apagado. */
+.menu-admin-card.estado-borrador { border-style: dashed; }
+.menu-admin-card.estado-archivado { opacity: .68; }
+.menu-admin-top { display: flex; align-items: flex-start; gap: 10px; }
+.menu-admin-dot { width: 12px; height: 12px; border-radius: 50%; margin-top: 6px; flex-shrink: 0; }
+.menu-admin-title { flex: 1; min-width: 0; }
+.menu-admin-title h3 { margin: 0; font-family: var(--font-display); font-size: 1.05rem; font-weight: 600; }
+.menu-admin-title span { font-size: 0.76rem; }
+.menu-admin-estado { font-size: 0.66rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; border: 1px solid; border-radius: 12px; padding: 3px 9px; white-space: nowrap; }
+.menu-admin-tagline { margin: 0; font-size: 0.85rem; color: var(--slate); }
+.menu-admin-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 0.78rem; color: var(--slate); }
+.menu-admin-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: auto; padding-top: 6px; }
+.menu-admin-orden { display: flex; gap: 4px; margin-right: auto; }
+.menu-admin-orden .action-btn { font-size: 0.95rem; line-height: 1; }
+.menu-admin-orden .action-btn:disabled { opacity: .4; cursor: not-allowed; }
 
 /* ===== ANALYTICS ===== */
 .chart-wrap { width: 100%; }
@@ -783,3 +988,15 @@
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+/* Aviso de producto duplicado en el alta. */
+.dup-aviso {
+  margin: 0 20px 4px;
+  padding: 14px 16px;
+  border: 1px solid rgba(232, 163, 23, .35);
+  background: rgba(232, 163, 23, .08);
+  border-radius: 10px;
+}
+.dup-aviso strong { display: block; font-size: 0.9rem; color: var(--ink); margin-bottom: 4px; }
+.dup-aviso p { font-size: 0.8rem; color: var(--slate); line-height: 1.45; margin-bottom: 12px; }
+.dup-acciones { display: flex; flex-wrap: wrap; gap: 8px; }

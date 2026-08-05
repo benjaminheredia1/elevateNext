@@ -5,7 +5,10 @@ import { logAudit } from '@/lib/server/audit/audit.service';
 import { ConflictError, NotFoundError, ValidationError } from '@/lib/server/errors';
 import type { AperturaCajaInput, MovimientoManualInput, CierreCajaInput, VentaFisicaInput } from '@/lib/server/dto/caja.dto';
 import { descontarStockPorTransaccion } from '@/lib/server/inventario/descuento-stock.service';
+import { lineasDeCombo } from '@/lib/server/promociones/combos.service';
 import { resolverCliente, getClienteAnonimo } from '@/lib/server/clientes/clientes.service';
+import { rangoDiaNegocio, hoyISO } from '@/lib/server/fechas';
+import { siguienteNumeroSucursal } from '@/lib/server/ventas/numeracion';
 
 interface Meta { ip?: string | null; userAgent?: string | null }
 
@@ -16,15 +19,51 @@ function sucursalDe(session: Session): number {
   return session.sucursal_id;
 }
 
+/**
+ * Pedidos del turno que NO dejaron rastro en el libro de caja: fiados (la plata
+ * entra después, como cobro de deuda) y cortesías (no entra nunca).
+ *
+ * Se listan aparte porque igual consumen número de pedido del turno: sin ellos
+ * el libro se ve saltado —"#7, #9"— y el cajero cree que se perdió una venta.
+ */
+async function pedidosSinCobroDelTurno(turnoId: number) {
+  return prisma.transaccion.findMany({
+    where: { turno_id: turnoId, movimientos: { none: {} } },
+    orderBy: { created_at: 'desc' },
+    select: {
+      id: true, numero_turno: true, total: true, es_cortesia: true,
+      cliente_nombre: true, created_at: true,
+      cuenta_corriente: { select: { id: true } },
+    },
+  });
+}
+
+/** Cuántos pedidos lleva el turno, cobrados o no. Es "por cuál va la caja". */
+function contarPedidosDelTurno(turnoId: number) {
+  return prisma.transaccion.count({ where: { turno_id: turnoId } });
+}
+
 export async function getTurnoActivo(session: Session) {
   const sucursal_id = sucursalDe(session);
-  return prisma.cajaTurno.findFirst({
+  const turno = await prisma.cajaTurno.findFirst({
     where: { sucursal_id, estado: 'ABIERTO' },
     include: {
-      movimientos: { orderBy: { created_at: 'desc' } },
+      // La venta se guarda en el concepto con su id global ("Venta #2393"); el
+      // número que el cajero canta es el del turno, y sale de acá.
+      movimientos: {
+        orderBy: { created_at: 'desc' },
+        include: { transaccion: { select: { id: true, numero_turno: true } } },
+      },
       sucursal: { select: { nombre: true } },
     },
   });
+  if (!turno) return null;
+
+  const [pedidos_sin_cobro, pedidos_count] = await Promise.all([
+    pedidosSinCobroDelTurno(turno.id),
+    contarPedidosDelTurno(turno.id),
+  ]);
+  return { ...turno, pedidos_sin_cobro, pedidos_count };
 }
 
 export async function abrirTurno(session: Session, dto: AperturaCajaInput, meta: Meta = {}) {
@@ -103,6 +142,7 @@ export async function registrarMovimientoManual(
 
     const mov = await tx.movimientoCaja.create({
       data: {
+        sucursal_id,
         turno_id: turno.id,
         cuenta_id: cuenta.id,
         tipo: tipo as TipoMovimientoCaja,
@@ -134,10 +174,119 @@ export async function getMovimientos(session: Session) {
   const movimientos = await prisma.movimientoCaja.findMany({
     where: { turno_id: turno.id },
     orderBy: { created_at: 'desc' },
-    // Para mostrar el #N del pedido dentro del turno junto al global
-    include: { transaccion: { select: { id: true, numero_turno: true } } },
+    include: {
+      transaccion: {
+        select: {
+          // Para mostrar el número de pedido del turno junto al id global
+          id: true, numero_turno: true,
+          // Detalle que se despliega al abrir la fila.
+          total: true, cliente_nombre: true, codigo_descuento: true,
+          transaccionesDetalles_id: {
+            select: {
+              cantidad: true, precio_unitario: true,
+              producto: { select: { nombre: true } },
+              combo: { select: { nombre: true } },
+            },
+          },
+        },
+      },
+    },
   });
-  return { turno, movimientos };
+
+  const [pedidos_sin_cobro, pedidos_count] = await Promise.all([
+    pedidosSinCobroDelTurno(turno.id),
+    contarPedidosDelTurno(turno.id),
+  ]);
+  return { turno, movimientos, pedidos_sin_cobro, pedidos_count };
+}
+
+/**
+ * Ventas de la caja: todas las del turno abierto, pagadas o no.
+ *
+ * Es distinto del libro de movimientos, que solo registra plata que entró o
+ * salió: los fiados y las cortesías NO generan movimiento de caja, así que ahí
+ * no aparecen nunca. Acá se ven todas, con su forma de cierre.
+ *
+ * Sin turno abierto (caja cerrada) cae al día de negocio en curso de la misma
+ * sucursal, para poder revisar lo vendido después de cerrar.
+ */
+export async function getVentasDeCaja(session: Session, fechaISO?: string | null) {
+  const sucursal_id = sucursalDe(session);
+  const turno = await prisma.cajaTurno.findFirst({ where: { sucursal_id, estado: 'ABIERTO' } });
+
+  // Con fecha explícita manda la fecha; si no, el turno abierto; y si no hay
+  // turno, el día de negocio de hoy en esa sucursal.
+  const porFecha = fechaISO || !turno;
+  const rango = porFecha ? rangoDiaNegocio(fechaISO) : null;
+
+  const ventas = await prisma.transaccion.findMany({
+    where: {
+      sucursal_id,
+      ...(rango ? { created_at: { gte: rango.desde, lte: rango.hasta } } : { turno_id: turno!.id }),
+    },
+    orderBy: { created_at: 'desc' },
+    include: {
+      transaccionesDetalles_id: {
+        include: {
+          producto: { select: { id: true, nombre: true } },
+          combo: { select: { id: true, nombre: true } },
+        },
+      },
+      cliente: { select: { id: true, nombre: true, telefono: true } },
+      cajero: { select: { id: true, nombre: true } },
+      // La deuda explica un fiado: cuánto queda y cuándo vence.
+      cuenta_corriente: { select: { id: true, monto: true, monto_pagado: true, estado: true, vencimiento: true } },
+    },
+  });
+
+  return {
+    turno,
+    // Ámbito de lo que se está viendo, para que la pantalla pueda decirlo.
+    ambito: porFecha ? 'DIA' : 'TURNO',
+    fecha: rango ? hoyISO() : null,
+    ventas: ventas.map(v => {
+      // Pendiente de cobro: el fiado de salón y el contra-entrega del delivery.
+      const esFiado = v.payment_status === 'PENDIENTE' || v.payment_status === 'COD_PENDIENTE';
+      const deuda = v.cuenta_corriente;
+      return {
+        id: v.id,
+        numero_turno: v.numero_turno,
+        // El que se le dice al cliente; `id` queda como referencia interna.
+        numero_sucursal: v.numero_sucursal,
+        codigo: v.codigo,
+        canal: v.canal,
+        created_at: v.created_at,
+        total: Number(v.total),
+        metodo_pago: v.metodo_pago,
+        estado: v.estado,
+        payment_status: v.payment_status,
+        // Cómo se cerró la venta: es el eje por el que se filtra la pantalla.
+        forma: v.es_cortesia ? 'CORTESIA' : esFiado ? 'FIADO' : 'PAGADA',
+        es_cortesia: v.es_cortesia,
+        // `codigo_descuento` guarda el privilegio o la promo aplicada.
+        descuento: v.codigo_descuento,
+        cliente: v.cliente ? { id: v.cliente.id, nombre: v.cliente.nombre, telefono: v.cliente.telefono } : null,
+        cliente_nombre: v.cliente?.nombre ?? v.cliente_nombre,
+        cajero: v.cajero?.nombre ?? null,
+        deuda: deuda
+          ? {
+              saldo: Number(deuda.monto) - Number(deuda.monto_pagado),
+              estado: deuda.estado,
+              vencimiento: deuda.vencimiento,
+            }
+          : null,
+        items: v.transaccionesDetalles_id.map(d => ({
+          producto_id: d.producto_id,
+          nombre: d.producto.nombre,
+          cantidad: d.cantidad,
+          precio_unitario: Number(d.precio_unitario),
+          descuento: Number(d.descuentoAplicado),
+          // Las líneas de un combo comparten combo_id: la pantalla las agrupa.
+          combo: d.combo ? { id: d.combo.id, nombre: d.combo.nombre } : null,
+        })),
+      };
+    }),
+  };
 }
 
 export async function cerrarTurno(session: Session, dto: CierreCajaInput, meta: Meta = {}) {
@@ -293,7 +442,7 @@ async function aplicarAbonoDeudaFifo(tx: Prisma.TransactionClient, args: {
       }
       const mov = await tx.movimientoCaja.create({
         data: {
-          turno_id: args.turno_id, cuenta_id: cuentaFin.id, tipo: 'INGRESO_EXTRA',
+          sucursal_id: args.sucursal_id, turno_id: args.turno_id, cuenta_id: cuentaFin.id, tipo: 'INGRESO_EXTRA',
           metodo_pago: pago.metodo_pago, monto: aplicar,
           concepto: `Cobro fiado — ${deuda.contraparte}: ${deuda.concepto}${args.venta_id ? ` (junto a venta #${args.venta_id})` : ''}`,
           categoria: 'Cobro fiado',
@@ -371,15 +520,40 @@ export async function registrarVentaFisica(session: Session, dto: VentaFisicaInp
     const productos = await tx.producto.findMany({ where: { id: { in: ids } } });
     if (productos.length !== ids.length) throw new NotFoundError('Algún producto no existe');
 
+    // Precios de ESTA sucursal: el mismo plato puede costar distinto en cada local.
+    const habilitaciones = await tx.productoSucursal.findMany({
+      where: { producto_id: { in: ids }, sucursal_id },
+    });
+    const precioDeSucursal = new Map(habilitaciones.map(h => [h.producto_id, h]));
+
     // Calcular total EN EL SERVIDOR
     let total = new Prisma.Decimal(0);
-    const detalles = dto.items.map(item => {
-      const p = productos.find(x => x.id === item.producto_id)!;
-      if (p.disponible === false) throw new ValidationError(`Producto no disponible: ${p.nombre}`);
-      const precio = new Prisma.Decimal(p.precio);
-      total = total.plus(precio.times(item.cantidad));
-      return { producto_id: p.id, precio_unitario: Number(precio), cantidad: item.cantidad };
-    });
+    const detalles: { producto_id: number; precio_unitario: number; cantidad: number; combo_id?: number }[] =
+      dto.items.map(item => {
+        const p = productos.find(x => x.id === item.producto_id)!;
+        if (p.disponible === false) throw new ValidationError(`Producto no disponible: ${p.nombre}`);
+        const enSucursal = precioDeSucursal.get(p.id);
+        if (!enSucursal || !enSucursal.disponible) {
+          throw new ValidationError(`Producto no disponible en esta sucursal: ${p.nombre}`);
+        }
+        const precio = new Prisma.Decimal(enSucursal.precio);
+        total = total.plus(precio.times(item.cantidad));
+        return { producto_id: p.id, precio_unitario: Number(precio), cantidad: item.cantidad };
+      });
+
+    // Combos: el servidor los valoriza y los descompone en una línea por
+    // producto. Se revalida la ventana horaria acá aunque el POS ya haya
+    // filtrado: un combo de 7:00 a 12:00 no se cobra 12:05 porque la pantalla
+    // quedó abierta.
+    for (const pedido of dto.combos) {
+      const { combo, lineas } = await lineasDeCombo(pedido.combo_id, pedido.cantidad, sucursal_id, new Date(), tx);
+      for (const linea of lineas) {
+        total = total.plus(new Prisma.Decimal(linea.precio_unitario).times(linea.cantidad));
+        detalles.push(linea);
+      }
+      if (lineas.length === 0) throw new ValidationError(`El combo "${combo.nombre}" no tiene productos`);
+    }
+
     if (total.lte(0)) throw new ValidationError('El total debe ser mayor a 0');
 
     // Un fiado no puede ser cortesía ni anónimo: la deuda debe quedar a nombre
@@ -424,11 +598,18 @@ export async function registrarVentaFisica(session: Session, dto: VentaFisicaInp
       if (!clienteId || esAnonimo) {
         throw new ValidationError('El privilegio requiere un cliente registrado');
       }
+      // El privilegio tiene que valer en ESTE local: `sucursal_id` nulo es del
+      // negocio (vale en todos), con valor solo descuenta en el suyo. Sin este
+      // filtro, un "Staff Fitbull" descontaría también comprando en Sur.
       const privilegio = await tx.privilegio.findFirst({
-        where: { id: dto.privilegio_id, activo: true },
+        where: {
+          id: dto.privilegio_id,
+          activo: true,
+          OR: [{ sucursal_id: null }, { sucursal_id }],
+        },
       });
       if (!privilegio) {
-        throw new ValidationError('El privilegio no existe o no está activo');
+        throw new ValidationError('El privilegio no existe, no está activo o no aplica en esta sucursal');
       }
       const pct = Number(privilegio.porcentaje);
       if (pct > 0) {
@@ -456,7 +637,13 @@ export async function registrarVentaFisica(session: Session, dto: VentaFisicaInp
     const nombreCliente = dto.cliente_nombre?.trim() || 'Cliente mostrador';
     const venta = await tx.transaccion.create({
       data: {
-        canal: 'SALON',
+        // WEB cuando el pedido llegó por WhatsApp desde la carta: es la única
+        // forma de medir cuánto se pide por la web, porque la web ya no registra
+        // pedidos. SALON es la venta de mostrador.
+        canal: dto.es_pedido_web ? 'WEB' : 'SALON',
+        tipo_entrega: dto.tipo_entrega ?? null,
+        // `costo_envio` queda en 0: el envío no pasa por la venta. Es plata del
+        // repartidor y entra como Ingreso extra del turno cuando rinde cuentas.
         metodo_pago: dto.metodo_pago as TipoCuenta,
         es_cortesia: dto.es_cortesia,
         total: Number(total),
@@ -464,7 +651,11 @@ export async function registrarVentaFisica(session: Session, dto: VentaFisicaInp
         estado: dto.es_fiado ? 'ENTREGADO' : 'PAGADO',
         payment_status: dto.es_fiado ? 'PENDIENTE' : 'PAGADO',
         turno_id: turno.id,
+        // La venta de salón pertenece a la sucursal del turno abierto.
+        sucursal_id: turno.sucursal_id,
         numero_turno: await siguienteNumeroTurno(tx, turno.id),
+        // El correlativo del local: es el que se le canta al cliente.
+        numero_sucursal: await siguienteNumeroSucursal(tx, turno.sucursal_id),
         cajero_id: session.id,
         cliente_id: clienteId,
         cliente_nombre: nombreCliente,
@@ -506,7 +697,7 @@ export async function registrarVentaFisica(session: Session, dto: VentaFisicaInp
         const cuenta = await getCuenta(tx, sucursal_id, parte.metodo);
         await tx.movimientoCaja.create({
           data: {
-            turno_id: turno.id, cuenta_id: cuenta.id, tipo: 'VENTA',
+            sucursal_id: turno.sucursal_id, turno_id: turno.id, cuenta_id: cuenta.id, tipo: 'VENTA',
             metodo_pago: parte.metodo, monto: parte.monto,
             concepto: partes.length > 1 ? `Venta #${venta.id} (mixto, ${parte.metodo.toLowerCase()})` : `Venta #${venta.id}`,
             transaccion_id: venta.id, creado_por_id: session.id,
@@ -537,168 +728,6 @@ export async function registrarVentaFisica(session: Session, dto: VentaFisicaInp
     }, tx);
 
     return { ...venta, abono_deuda: abono > 0 ? abono : undefined };
-  }, { maxWait: 10000, timeout: 20000 });
-}
-
-/**
- * Conciliación por repartidor del turno abierto: cuántos pedidos llevó cada uno,
- * cuántos entregó y cuánto efectivo adelantó a caja (Caso 2).
- */
-export async function resumenRepartidoresTurno(session: Session) {
-  const sucursal_id = sucursalDe(session);
-  const turno = await prisma.cajaTurno.findFirst({
-    where: { sucursal_id, estado: 'ABIERTO' },
-    orderBy: { fecha_apertura: 'desc' },
-  });
-  if (!turno) return { turno: null, repartidores: [] as RepartidorResumen[] };
-
-  const pedidos = await prisma.transaccion.findMany({
-    where: {
-      tipo_entrega: 'DELIVERY',
-      driver_nombre: { not: null },
-      update_at: { gte: turno.fecha_apertura },
-    },
-    select: { driver_nombre: true, total: true, estado: true, payment_status: true, metodo_pago: true },
-  });
-
-  const map = new Map<string, RepartidorResumen>();
-  for (const p of pedidos) {
-    const key = p.driver_nombre as string;
-    const cur = map.get(key) ?? { repartidor: key, pedidos: 0, en_curso: 0, entregados: 0, efectivo_adelantado: 0, total: 0 };
-    cur.pedidos += 1;
-    cur.total += Number(p.total);
-    if (p.estado === 'ENTREGADO') cur.entregados += 1; else cur.en_curso += 1;
-    if (p.metodo_pago === 'EFECTIVO' && p.payment_status === 'PAGADO') cur.efectivo_adelantado += Number(p.total);
-    map.set(key, cur);
-  }
-
-  return {
-    turno: { id: turno.id, fecha_apertura: turno.fecha_apertura },
-    repartidores: Array.from(map.values()).sort((a, b) => b.total - a.total),
-  };
-}
-
-interface RepartidorResumen {
-  repartidor: string;
-  pedidos: number;
-  en_curso: number;
-  entregados: number;
-  efectivo_adelantado: number;
-  total: number;
-}
-
-// ─────────────────────────────────────────────────────────────
-// Entrega de pedidos web (handoff) — Fase 3
-// ─────────────────────────────────────────────────────────────
-
-/** Busca un pedido por su código de retiro para verificarlo en el mostrador. */
-export async function buscarPedidoPorCodigo(_session: Session, codigo: string) {
-  const pedido = await prisma.transaccion.findUnique({
-    where: { codigo: codigo.trim().toUpperCase() },
-    include: { transaccionesDetalles_id: { include: { producto: { select: { nombre: true } } } } },
-  });
-  if (!pedido) throw new NotFoundError('No existe un pedido con ese código');
-  return pedido;
-}
-
-/**
- * Confirma la entrega/salida de un pedido desde el mostrador.
- * - Pickup: cobra en efectivo si falta pago y marca ENTREGADO.
- * - Delivery: el repartidor adelanta el producto (efectivo a caja) si era COD,
- *   se marca PAGADO y pasa a EN_CAMINO con el repartidor asignado.
- * Todo cobro en efectivo exige caja abierta e impacta el turno.
- */
-export async function entregarPedido(
-  session: Session,
-  dto: { codigo: string; driver_nombre?: string },
-  meta: Meta = {},
-) {
-  const sucursal_id = sucursalDe(session);
-  const codigo = dto.codigo.trim().toUpperCase();
-
-  return prisma.$transaction(async (tx) => {
-    const pedido = await tx.transaccion.findUnique({ where: { codigo } });
-    if (!pedido) throw new NotFoundError('No existe un pedido con ese código');
-    if (['ENTREGADO', 'CANCELADO', 'PAGADO'].includes(pedido.estado)) {
-      throw new ValidationError('El pedido ya fue cerrado o entregado');
-    }
-
-    const esDelivery = pedido.tipo_entrega === 'DELIVERY';
-    let nuevoPago: EstadoPago = pedido.payment_status;
-    let nuevoEstado: EstadoTransaccion = pedido.estado;
-    let cobroEfectivo = 0;
-
-    if (esDelivery) {
-      if (!dto.driver_nombre?.trim()) throw new ValidationError('Indica el repartidor que retira el pedido');
-      if (pedido.payment_status === 'COD_PENDIENTE') {
-        cobroEfectivo = Number(pedido.total); // el repartidor adelanta el efectivo a caja
-        nuevoPago = 'PAGADO';
-      }
-      nuevoEstado = 'EN_LOCAL'; // driver está retirando del local
-    } else {
-      if (pedido.payment_status !== 'PAGADO') {
-        cobroEfectivo = Number(pedido.total); // cobro en mostrador al recoger
-        nuevoPago = 'PAGADO';
-      }
-      nuevoEstado = 'ENTREGADO'; // pickup: se entrega directamente
-    }
-
-    let turnoId = pedido.turno_id;
-    if (cobroEfectivo > 0) {
-      const turno = await tx.cajaTurno.findFirst({ where: { sucursal_id, estado: 'ABIERTO' } });
-      if (!turno) throw new ConflictError('Abre caja antes de registrar el cobro en efectivo');
-      turnoId = turno.id;
-      const cuenta = await getCuenta(tx, sucursal_id, 'EFECTIVO');
-      await tx.movimientoCaja.create({
-        data: {
-          turno_id: turno.id, cuenta_id: cuenta.id, tipo: 'VENTA',
-          metodo_pago: 'EFECTIVO', monto: cobroEfectivo,
-          concepto: esDelivery
-            ? `Adelanto repartidor ${dto.driver_nombre?.trim()} · pedido #${pedido.id}`
-            : `Cobro pickup · pedido #${pedido.id}`,
-          transaccion_id: pedido.id, creado_por_id: session.id,
-        },
-      });
-      await tx.cuentaFinanciera.update({ where: { id: cuenta.id }, data: { saldo: { increment: cobroEfectivo } } });
-      await tx.cajaTurno.update({ where: { id: turno.id }, data: { ventas_efectivo: { increment: cobroEfectivo } } });
-    }
-
-    // Pedido online sin cobro en mostrador (ya pagado): igual se cuelga del
-    // turno abierto, si lo hay, para que entre a la numeración del turno.
-    if (turnoId == null) {
-      const turnoAbierto = await tx.cajaTurno.findFirst({ where: { sucursal_id, estado: 'ABIERTO' } });
-      turnoId = turnoAbierto?.id ?? null;
-    }
-    const numeroTurno = pedido.numero_turno == null && turnoId != null
-      ? await siguienteNumeroTurno(tx, turnoId)
-      : undefined;
-
-    // Asegurar descuento de stock (idempotente) por si no se descontó antes
-    await descontarStockPorTransaccion(tx, pedido.id);
-
-    const actualizado = await tx.transaccion.update({
-      where: { id: pedido.id },
-      data: {
-        estado: nuevoEstado,
-        payment_status: nuevoPago,
-        cajero_id: session.id,
-        turno_id: turnoId,
-        ...(numeroTurno != null ? { numero_turno: numeroTurno } : {}),
-        ...(esDelivery ? { driver_nombre: dto.driver_nombre?.trim() } : {}),
-      },
-      include: { transaccionesDetalles_id: { include: { producto: { select: { nombre: true } } } } },
-    });
-
-    await logAudit({
-      usuarioId: session.id, rol: session.rol, accion: 'MODIFICO',
-      entidad: 'Transaccion', entidadId: pedido.id,
-      detalle: esDelivery
-        ? `Salida delivery #${pedido.id} con repartidor ${dto.driver_nombre?.trim()} (${pedido.payment_status}→${nuevoPago})`
-        : `Entrega pickup #${pedido.id} (${pedido.payment_status}→${nuevoPago})`,
-      monto: cobroEfectivo || undefined, ip: meta.ip, userAgent: meta.userAgent,
-    }, tx);
-
-    return actualizado;
   }, { maxWait: 10000, timeout: 20000 });
 }
 
@@ -825,7 +854,7 @@ export async function cobrarDeudaCaja(
       const cuentaFin = await getCuenta(tx, sucursal_id, pago.metodo_pago as TipoCuenta);
       const mov = await tx.movimientoCaja.create({
         data: {
-          turno_id: turno.id, cuenta_id: cuentaFin.id, tipo: 'INGRESO_EXTRA',
+          sucursal_id: turno.sucursal_id, turno_id: turno.id, cuenta_id: cuentaFin.id, tipo: 'INGRESO_EXTRA',
           metodo_pago: pago.metodo_pago as TipoCuenta, monto: pago.monto,
           concepto: `Cobro fiado — ${cuenta.contraparte}: ${cuenta.concepto}`, categoria: 'Cobro fiado',
           transaccion_id: cuenta.transaccion_id, creado_por_id: session.id,
@@ -877,8 +906,18 @@ export async function aplicarDescuentoDeuda(
       throw new ConflictError('La deuda ya tiene un privilegio aplicado');
     }
 
-    const privilegio = await tx.privilegio.findFirst({ where: { id: dto.privilegio_id, activo: true } });
-    if (!privilegio) throw new ValidationError('El privilegio no existe o no está activo');
+    // Mismo criterio que en la venta: el privilegio debe valer en el local donde
+    // se está aplicando el descuento.
+    const privilegio = await tx.privilegio.findFirst({
+      where: {
+        id: dto.privilegio_id,
+        activo: true,
+        OR: [{ sucursal_id: null }, { sucursal_id: sucursalDe(session) }],
+      },
+    });
+    if (!privilegio) {
+      throw new ValidationError('El privilegio no existe, no está activo o no aplica en esta sucursal');
+    }
     const pct = Number(privilegio.porcentaje);
     if (pct <= 0) throw new ValidationError('El privilegio no genera descuento');
 

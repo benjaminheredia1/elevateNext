@@ -96,15 +96,28 @@ async function crearReceta(
   producto_id: number,
   receta: { insumo_id: number; cantidad: number }[],
 ) {
+  // La receta y el precio pertenecen a una sucursal; el seed carga la principal.
+  const sucursal = await prisma.sucursal.findFirst({ orderBy: { id: 'asc' }, select: { id: true } })
+  if (!sucursal) throw new Error('No hay sucursal creada: corre primero el seed principal')
+
   for (const item of receta) {
     const existe = await prisma.recetasProducto.findFirst({
-      where: { producto_id, insumo_id: item.insumo_id },
+      where: { producto_id, insumo_id: item.insumo_id, sucursal_id: sucursal.id },
     })
     if (!existe) {
       await prisma.recetasProducto.create({
-        data: { producto_id, insumo_id: item.insumo_id, cantidad_utilizada: item.cantidad },
+        data: { producto_id, sucursal_id: sucursal.id, insumo_id: item.insumo_id, cantidad_utilizada: item.cantidad },
       })
     }
+  }
+
+  const producto = await prisma.producto.findUnique({ where: { id: producto_id }, select: { precio: true, disponible: true } })
+  if (producto) {
+    await prisma.productoSucursal.upsert({
+      where: { producto_id_sucursal_id: { producto_id, sucursal_id: sucursal.id } },
+      create: { producto_id, sucursal_id: sucursal.id, precio: producto.precio, disponible: producto.disponible },
+      update: {},
+    })
   }
 }
 

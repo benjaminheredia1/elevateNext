@@ -6,6 +6,7 @@
  */
 import { Prisma } from '@prisma/client';
 import { resolverConsumoInsumos, evaluarAlertas } from './inventario.service';
+import { ajustarStock } from './stock-sucursal.service';
 
 /**
  * Descuenta stock por todos los productos de una transacción.
@@ -32,10 +33,18 @@ export async function descontarStockPorTransaccion(
 
   if (detalles.length === 0) return [];
 
+  // La receta a aplicar es la de la sucursal donde se hizo la venta: cada local
+  // puede tener gramajes distintos para el mismo plato.
+  const venta = await tx.transaccion.findUnique({
+    where: { id: transaccionId },
+    select: { sucursal_id: true },
+  });
+  if (!venta) return [];
+
   // ── Acumular consumo total de insumos crudos ───────────────────
   const consumoTotal = new Map<number, number>();
   for (const detalle of detalles) {
-    const consumo = await resolverConsumoInsumos(detalle.producto_id, detalle.cantidad, tx);
+    const consumo = await resolverConsumoInsumos(detalle.producto_id, detalle.cantidad, tx, venta.sucursal_id);
     for (const [insumoId, cant] of consumo.entries()) {
       consumoTotal.set(insumoId, (consumoTotal.get(insumoId) ?? 0) + cant);
     }
@@ -46,18 +55,18 @@ export async function descontarStockPorTransaccion(
   const insumoIds = Array.from(consumoTotal.keys());
 
   // ── Actualizar stock y crear MovimientoInterno por cada insumo ─
+  // El descuento golpea el stock de la sucursal donde se vendió.
+  const sucursalId = venta.sucursal_id;
   for (const [insumoId, cantidad] of consumoTotal.entries()) {
     const insumo = await tx.insumo.findUnique({ where: { id: insumoId } });
     if (!insumo) continue;
 
-    await tx.insumo.update({
-      where: { id: insumoId },
-      data: { stock_actual: { decrement: cantidad } },
-    });
+    await ajustarStock(tx, insumoId, sucursalId, -cantidad);
 
     await tx.movimientoInterno.create({
       data: {
         insumo_id:       insumoId,
+        sucursal_id:     sucursalId,
         tipo_movimiento: 'VENTA',
         cantidad:        -cantidad,
         descripcion:     `Descuento por transacción #${transaccionId}`,
@@ -67,7 +76,8 @@ export async function descontarStockPorTransaccion(
   }
 
   // ── Evaluar alertas (fire-and-forget dentro de la misma tx) ───
-  await evaluarAlertas(insumoIds, tx);
+  // Solo interesa el faltante del local que acaba de vender.
+  await evaluarAlertas(insumoIds, tx, sucursalId);
 
   return insumoIds;
 }

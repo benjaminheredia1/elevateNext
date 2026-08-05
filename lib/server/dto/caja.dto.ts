@@ -28,7 +28,16 @@ export const VentaFisicaDTO = z.object({
   items: z.array(z.object({
     producto_id: z.number().int().positive(),
     cantidad: z.number().positive(),
-  })).min(1),
+  })).default([]),
+  /**
+   * Combos vendidos. Viajan aparte de los productos sueltos porque el servidor
+   * los valoriza y los descompone él mismo: del cliente solo se acepta CUÁL y
+   * CUÁNTOS, nunca el precio ni qué lleva adentro.
+   */
+  combos: z.array(z.object({
+    combo_id: z.number().int().positive(),
+    cantidad: z.number().positive(),
+  })).default([]),
   metodo_pago: z.enum(['EFECTIVO', 'QR', 'TARJETA', 'MIXTO']),
   // Desglose obligatorio cuando metodo_pago = MIXTO. El servidor valida además
   // que efectivo + qr sea exactamente el total calculado server-side.
@@ -51,6 +60,20 @@ export const VentaFisicaDTO = z.object({
   cliente_email: z.string().trim().max(120).optional(),
   cliente_nit: z.string().trim().max(30).optional(),
   cliente_anonimo: z.boolean().optional().default(false),
+  /**
+   * La venta entró como pedido de la web (por WhatsApp) y no por el mostrador.
+   * Sirve para medir cuánto se pide por la web: la web no registra pedidos, los
+   * registra el cajero cuando cobra.
+   */
+  es_pedido_web: z.boolean().optional().default(false),
+  /**
+   * Entrega del pedido web. Sin esto se asume consumo en el local.
+   *
+   * El costo del envío NO viaja acá y la venta no lo cobra: esa plata es del
+   * repartidor, no ingreso del negocio. Cuando el repartidor rinde cuentas, el
+   * dueño la registra como Ingreso extra del turno.
+   */
+  tipo_entrega: z.enum(['RECOJO', 'DELIVERY']).optional(),
 }).superRefine((dto, ctx) => {
   if (dto.metodo_pago === 'MIXTO' && !dto.pago_mixto) {
     ctx.addIssue({ code: 'custom', path: ['pago_mixto'], message: 'El pago mixto requiere el desglose efectivo/qr' });
@@ -65,6 +88,12 @@ export const VentaFisicaDTO = z.object({
     if (dto.metodo_pago === 'MIXTO') {
       ctx.addIssue({ code: 'custom', path: ['abono_deuda'], message: 'El abono a deuda no se puede combinar con pago mixto; cóbralo por separado' });
     }
+  }
+
+  // Antes `items` era obligatorio; ahora una venta puede ser solo de combos,
+  // pero no puede estar vacía.
+  if (dto.items.length === 0 && dto.combos.length === 0) {
+    ctx.addIssue({ code: 'custom', path: ['items'], message: 'La venta debe tener al menos un producto o un combo' });
   }
 });
 

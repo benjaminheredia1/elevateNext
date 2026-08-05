@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { motion, useReducedMotion } from 'framer-motion';
+import { useState, useEffect, type CSSProperties } from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { useRouter } from 'next/navigation';
 
 import { Icons } from '@/components/shop/icons';
@@ -20,7 +20,9 @@ import {
   staggerItem,
   slideFromLeft,
 } from '@/components/shop/motion';
-import { BRANDS } from '@/data/menus';
+import type { Menu } from '@/lib/menus';
+import SucursalPicker from '@/components/shop/SucursalPicker';
+import { useSucursalTienda } from '@/hooks/sucursal-tienda';
 
 /* ===== Landing-only data ===== */
 const benefits = [
@@ -38,28 +40,33 @@ const testimonials = [
   { name: 'Ana Sofía R.', role: 'Nutricionista', text: '"Como profesional de la nutrición, valoro mucho la transparencia en los ingredientes. Elevate cumple con los más altos estándares."', initials: 'AS' },
 ];
 
-const collaborations = [
-  {
-    brand: BRANDS.fitbull,
-    imageSide: 'left' as const,
-    kicker: 'Colaboración oficial',
-    heading: 'Elevate × Fitbull',
-    body: 'Nos aliamos con Fitbull, el gimnasio que entrena a la comunidad fitness de Santa Cruz, para crear un menú pensado para tu rendimiento. Pre-entreno, recovery y alto en proteína: cada plato apoya tus objetivos dentro y fuera del gym.',
-    bullets: ['Recetas aprobadas por entrenadores', 'Macros calculados por porción', 'Ideal pre y post entreno'],
-    cta: 'Menú Elevate × Fitbull',
-    visualIcon: Icons.dumbbell,
-  },
-  {
-    brand: BRANDS.elevate,
-    imageSide: 'right' as const,
-    kicker: 'Nuestra casa',
-    heading: 'Catering Elevate',
-    body: 'El corazón de Elevate: nuestro catering de comida saludable. Bowls, ensaladas, wraps y bebidas frescas preparadas cada día con ingredientes locales. Comida que disfrutas sin culpa, para cualquier momento del día.',
-    bullets: ['Hecho fresco cada día', 'Ingredientes locales bolivianos', 'Opciones para todos los gustos'],
-    cta: 'Menú Elevate',
-    visualIcon: Icons.bowl,
-  },
-];
+/**
+ * "Dos experiencias, un mismo estándar" dejó de ser cierto en cuanto los menús
+ * se pueden crear desde el admin, así que el título cuenta cuántos hay.
+ */
+const CARDINALES = ['cero', 'una', 'dos', 'tres', 'cuatro', 'cinco', 'seis'];
+function tituloMenus(cantidad: number): string {
+  if (cantidad === 1) return 'Un menú, un mismo estándar';
+  const palabra = CARDINALES[cantidad] ?? String(cantidad);
+  return `${palabra.charAt(0).toUpperCase()}${palabra.slice(1)} experiencias, un mismo estándar`;
+}
+
+/** El ícono que eligió el dueño para la carta; bowl si quedó sin elegir. */
+function iconoDeMenu(nombre: string | null) {
+  return Icons[(nombre ?? '') as keyof typeof Icons] ?? Icons.bowl;
+}
+
+/** Renderiza el × de "Elevate × Fitbull" con su estilo, venga en cualquier título. */
+function tituloConX(titulo: string) {
+  if (!titulo.includes('×')) return titulo;
+  const partes = titulo.split('×');
+  return partes.map((parte, i) => (
+    <span key={i}>
+      {i > 0 && <span className="collab-x">×</span>}
+      {parte}
+    </span>
+  ));
+}
 
 const heroParticles = [
   { left: '7%', size: 4, dur: 9, delay: 0 },
@@ -103,6 +110,10 @@ const heroStats = [
   { target: 4.9, suffix: '', duration: 1.5, label: 'Calificación promedio', icon: Icons.star, delay: '2.2s' },
 ];
 
+/* Mismos enlaces en el navbar de escritorio y en el panel de celular. */
+const NAV_LINKS = ['Inicio', 'Menús', 'Nosotros', 'Beneficios', 'Testimonios'];
+const anclaDeLink = (link: string) => `#${link.toLowerCase().replace('ú', 'u')}`;
+
 function HeroWordmark() {
   const reduced = useReducedMotion();
   return (
@@ -124,27 +135,59 @@ function HeroWordmark() {
 
 export default function Home() {
   const [scrolled, setScrolled] = useState(false);
+  const [menuAbierto, setMenuAbierto] = useState(false);
   const [featuredProducts, setFeaturedProducts] = useState<any[]>([]);
+  /** Las cartas publicadas, en el orden que fijó el dueño en /admin/menus. */
+  const [menus, setMenus] = useState<Menu[]>([]);
+  const { sucursalId } = useSucursalTienda();
+  const sufijoSucursal = sucursalId ? `&sucursal=${sucursalId}` : '';
   const shop = useShop();
   const router = useRouter();
 
   useEffect(() => {
     const handleScroll = () => setScrolled(window.scrollY > 50);
     window.addEventListener('scroll', handleScroll);
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
 
-    // Fetch from both brands in parallel, interleave up to 3 from each
-    Promise.all([
-      fetch('/api/productos?marca=elevate').then(r => r.json()),
-      fetch('/api/productos?marca=fitbull').then(r => r.json()),
-    ])
-      .then(([elevateRes, fitbullRes]) => {
-        const elevateItems: any[] = elevateRes.data ?? [];
-        const fitbullItems: any[] = fitbullRes.data ?? [];
+  useEffect(() => {
+    fetch('/api/menus')
+      .then(r => r.json())
+      .then(res => setMenus(Array.isArray(res.data) ? res.data : []))
+      .catch(() => setMenus([]));
+  }, []);
 
+  useEffect(() => {
+    if (menus.length === 0) return;
+
+    // Un pedido por carta y se van intercalando: así los destacados representan
+    // a todos los menús publicados y no solo al primero.
+    Promise.all(
+      // Los destacados son los del local elegido: precio y disponibilidad propios.
+      menus.map(m =>
+        fetch(`/api/productos?marca=${encodeURIComponent(m.key)}${sufijoSucursal}`)
+          .then(r => r.json())
+          .then(res => (res.data ?? []) as any[])
+          .catch(() => [] as any[]),
+      ),
+    )
+      .then(listas => {
+        // Un producto puede estar publicado en varias cartas (AMERICANO, los
+        // paninis, las barras...), asi que viene en varias respuestas. Sin
+        // descartar el repetido se renderizan dos tarjetas con la misma key.
+        const DESTACADOS = 6;
         const combined: any[] = [];
-        for (let i = 0; i < 3; i++) {
-          if (elevateItems[i]) combined.push(elevateItems[i]);
-          if (fitbullItems[i]) combined.push(fitbullItems[i]);
+        const vistos = new Set<number>();
+        const agregar = (p: any) => {
+          if (!p || vistos.has(p.id) || combined.length >= DESTACADOS) return;
+          vistos.add(p.id);
+          combined.push(p);
+        };
+        // Se avanza mas alla del primer producto de cada carta solo si hizo
+        // falta descartar repetidos: la grilla siempre queda con 6.
+        const maxLen = Math.max(0, ...listas.map(l => l.length));
+        for (let i = 0; i < maxLen && combined.length < DESTACADOS; i++) {
+          for (const lista of listas) agregar(lista[i]);
         }
 
         const mapProduct = (p: any) => {
@@ -167,15 +210,40 @@ export default function Home() {
             protein: p.proteina ?? null,
           };
         };
-        setFeaturedProducts(combined.slice(0, 6).map(mapProduct));
+        setFeaturedProducts(combined.map(mapProduct));
       })
       .catch(console.error);
+  }, [menus, sufijoSucursal]);
 
-    return () => window.removeEventListener('scroll', handleScroll);
-  }, []);
+  // El menu de celular se cierra con Escape y al volver al ancho de escritorio,
+  // donde el boton de las tres lineas ya no existe y quedaria abierto invisible.
+  useEffect(() => {
+    if (!menuAbierto) return;
+    const alPresionar = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenuAbierto(false); };
+    const alRedimensionar = () => { if (window.innerWidth > 768) setMenuAbierto(false); };
+    window.addEventListener('keydown', alPresionar);
+    window.addEventListener('resize', alRedimensionar);
+    return () => {
+      window.removeEventListener('keydown', alPresionar);
+      window.removeEventListener('resize', alRedimensionar);
+    };
+  }, [menuAbierto]);
 
   const scrollTo = (id: string) =>
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' });
+
+  /**
+   * Enlaces del panel de celular. El salto no puede quedar en manos del ancla
+   * nativa: el panel se cierra al tocar y su colapso cambia el alto de la
+   * pagina, asi que el navegador terminaba en una posicion corrida. Se cierra
+   * primero y recien despues se hace el scroll, ya con la altura definitiva.
+   */
+  const irASeccion = (e: React.MouseEvent<HTMLAnchorElement>, link: string) => {
+    e.preventDefault();
+    setMenuAbierto(false);
+    const id = anclaDeLink(link).slice(1);
+    window.setTimeout(() => scrollTo(id), 300);
+  };
 
   return (
     <div className="app">
@@ -200,10 +268,10 @@ export default function Home() {
             />
           </motion.a>
           <div className="navbar-links">
-            {['Inicio', 'Menús', 'Nosotros', 'Beneficios', 'Testimonios'].map((link, i) => (
+            {NAV_LINKS.map((link, i) => (
               <motion.a
                 key={link}
-                href={`#${link.toLowerCase().replace('ú', 'u')}`}
+                href={anclaDeLink(link)}
                 initial={{ opacity: 0, y: -20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.5, delay: 0.4 + i * 0.08 }}
@@ -223,8 +291,44 @@ export default function Home() {
               Ordenar Ahora
             </motion.button>
           </div>
-          <div className="navbar-mobile-toggle"><span /><span /><span /></div>
+          <button
+            type="button"
+            className={`navbar-mobile-toggle ${menuAbierto ? 'is-abierto' : ''}`}
+            onClick={() => setMenuAbierto(v => !v)}
+            aria-label={menuAbierto ? 'Cerrar menú' : 'Abrir menú'}
+            aria-expanded={menuAbierto}
+            aria-controls="navbar-mobile-panel"
+          >
+            <span /><span /><span />
+          </button>
         </div>
+
+        {/* En celular los enlaces del navbar estan ocultos: sin este panel el
+            boton de las tres lineas no llevaba a ninguna parte. */}
+        <AnimatePresence>
+          {menuAbierto && (
+            <motion.div
+              id="navbar-mobile-panel"
+              className="navbar-mobile-panel"
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+            >
+              {NAV_LINKS.map(link => (
+                <a key={link} href={anclaDeLink(link)} onClick={e => irASeccion(e, link)}>
+                  {link}
+                </a>
+              ))}
+              <button
+                className="navbar-cta"
+                onClick={() => { setMenuAbierto(false); scrollTo('menus'); }}
+              >
+                Ordenar Ahora
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </motion.nav>
 
       <ShopOverlays shop={shop} />
@@ -243,11 +347,7 @@ export default function Home() {
             Alimentación que <GlowText>eleva</GlowText> tu rendimiento
           </motion.p>
 
-          <motion.p className="hero-description" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.7, delay: 1.35 }}>
-            Un catering de comida saludable con dos menús: fresco, alto en proteína y hecho cada día en Santa Cruz.
-          </motion.p>
-
-          <motion.div className="hero-actions" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 1.55 }}>
+          <motion.div className="hero-actions" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 1.35 }}>
             <motion.button className="btn-primary" whileHover={{ scale: 1.04, boxShadow: '0 16px 40px rgba(255, 92, 25, 0.35)' }} whileTap={{ scale: 0.96 }} onClick={() => scrollTo('menus')}>
               Ver menús
               <motion.span style={{ display: 'inline-flex' }} animate={{ x: [0, 4, 0] }} transition={{ duration: 1.5, repeat: Infinity, ease: 'easeInOut' as const }}>
@@ -255,6 +355,13 @@ export default function Home() {
               </motion.span>
             </motion.button>
             <button className="hero-link" onClick={() => scrollTo('nosotros')}>Conoce la historia</button>
+          </motion.div>
+
+          {/* El local va dentro del hero, antes de las estadisticas: define que
+              menu y que precios ve el cliente, asi que tiene que estar a la
+              vista sin scrollear, sobre todo en celular. */}
+          <motion.div className="hero-sucursal" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 1.5 }}>
+            <SucursalPicker />
           </motion.div>
 
           <motion.div className="hero-stats" initial="hidden" animate="visible" variants={staggerContainer}>
@@ -276,51 +383,63 @@ export default function Home() {
           <motion.div className="menus-header" initial="hidden" whileInView="visible" viewport={{ once: true, amount: 0.5 }}>
             <TextReveal delay={0} direction="left"><span className="section-label">Nuestros menús</span></TextReveal>
             <motion.h2 className="section-title" variants={fadeUp} custom={0.1}>
-              <AnimatedWords text="Dos experiencias, un mismo estándar" delay={0.2} animationType="wave" />
+              <AnimatedWords text={tituloMenus(menus.length)} delay={0.2} animationType="wave" />
             </motion.h2>
           </motion.div>
 
-          {collaborations.map((collab) => (
-            <motion.div key={collab.brand.key} className={`collab collab-${collab.imageSide}`} initial="hidden" whileInView="visible" viewport={{ once: true, amount: 0.3 }}>
-              <TiltCard
-                className={`collab-visual collab-visual-${collab.brand.key}`}
-                lift={-6}
-                variants={collab.imageSide === 'left' ? slideFromLeft : { hidden: { opacity: 0, x: 60 }, visible: { opacity: 1, x: 0, transition: { duration: 0.7, ease: [0.16, 1, 0.3, 1] } } }}
-              >
-                <div className="collab-visual-glow" />
-                <motion.div className="collab-visual-icon" animate={{ y: [0, -14, 0], rotate: [0, 4, 0] }} transition={{ duration: 5, repeat: Infinity, ease: 'easeInOut' }}>
-                  {collab.visualIcon}
-                </motion.div>
-                <span className="collab-visual-tag">{collab.brand.title}</span>
-                <span className="collab-visual-hint">{Icons.camera} Imagen {collab.heading}</span>
-              </TiltCard>
-
-              <motion.div className="collab-content" variants={staggerContainer}>
-                <motion.span className="collab-kicker" variants={staggerItem}>{collab.kicker}</motion.span>
-                <motion.h3 className="collab-heading" variants={staggerItem}>
-                  {collab.heading.includes('×') ? (<>Elevate <span className="collab-x">×</span> Fitbull</>) : collab.heading}
-                </motion.h3>
-                <motion.p className="collab-body" variants={staggerItem}>{collab.body}</motion.p>
-                <motion.ul className="collab-bullets" variants={staggerItem}>
-                  {collab.bullets.map((b) => (
-                    <li key={b}><span className="collab-bullet-check">{Icons.checkCircle}</span>{b}</li>
-                  ))}
-                </motion.ul>
-                <motion.button
-                  className="collab-btn"
-                  variants={staggerItem}
-                  whileHover={{ scale: 1.04, boxShadow: '0 16px 40px rgba(255, 92, 25, 0.3)' }}
-                  whileTap={{ scale: 0.96 }}
-                  onClick={() => router.push(`/menu/${collab.brand.slug}`)}
+          {menus.map((menu, index) => {
+            // Las secciones alternan de qué lado va la imagen, como estaban
+            // escritas a mano cuando eran dos.
+            const imageSide = index % 2 === 0 ? 'left' : 'right';
+            return (
+              <motion.div key={menu.id} className={`collab collab-${imageSide}`} initial="hidden" whileInView="visible" viewport={{ once: true, amount: 0.3 }}>
+                <TiltCard
+                  className={`collab-visual collab-visual-${menu.key}`}
+                  lift={-6}
+                  variants={imageSide === 'left' ? slideFromLeft : { hidden: { opacity: 0, x: 60 }, visible: { opacity: 1, x: 0, transition: { duration: 0.7, ease: [0.16, 1, 0.3, 1] } } }}
+                  style={menu.color ? ({ '--menu-color': menu.color } as CSSProperties) : undefined}
                 >
-                  {collab.cta}
-                  <motion.span style={{ display: 'inline-flex' }} animate={{ x: [0, 5, 0] }} transition={{ duration: 1.5, repeat: Infinity, ease: 'easeInOut' as const }}>
-                    {Icons.arrowRight}
-                  </motion.span>
-                </motion.button>
+                  <div className="collab-visual-glow" />
+                  {menu.imagen_url ? (
+                    <img className="collab-visual-img" src={menu.imagen_url} alt={menu.titulo} />
+                  ) : (
+                    <motion.div className="collab-visual-icon" animate={{ y: [0, -14, 0], rotate: [0, 4, 0] }} transition={{ duration: 5, repeat: Infinity, ease: 'easeInOut' }}>
+                      {iconoDeMenu(menu.icono)}
+                    </motion.div>
+                  )}
+                  <span className="collab-visual-tag">{menu.titulo}</span>
+                  {!menu.imagen_url && (
+                    <span className="collab-visual-hint">{Icons.camera} Imagen {menu.titulo}</span>
+                  )}
+                </TiltCard>
+
+                <motion.div className="collab-content" variants={staggerContainer}>
+                  {menu.kicker && <motion.span className="collab-kicker" variants={staggerItem}>{menu.kicker}</motion.span>}
+                  <motion.h3 className="collab-heading" variants={staggerItem}>
+                    {tituloConX(menu.titulo)}
+                  </motion.h3>
+                  {menu.descripcion && <motion.p className="collab-body" variants={staggerItem}>{menu.descripcion}</motion.p>}
+                  <motion.ul className="collab-bullets" variants={staggerItem}>
+                    {menu.bullets.map((b) => (
+                      <li key={b}><span className="collab-bullet-check">{Icons.checkCircle}</span>{b}</li>
+                    ))}
+                  </motion.ul>
+                  <motion.button
+                    className="collab-btn"
+                    variants={staggerItem}
+                    whileHover={{ scale: 1.04, boxShadow: '0 16px 40px rgba(255, 92, 25, 0.3)' }}
+                    whileTap={{ scale: 0.96 }}
+                    onClick={() => router.push(`/menu/${menu.slug}`)}
+                  >
+                    {menu.cta_texto}
+                    <motion.span style={{ display: 'inline-flex' }} animate={{ x: [0, 5, 0] }} transition={{ duration: 1.5, repeat: Infinity, ease: 'easeInOut' as const }}>
+                      {Icons.arrowRight}
+                    </motion.span>
+                  </motion.button>
+                </motion.div>
               </motion.div>
-            </motion.div>
-          ))}
+            );
+          })}
         </div>
       </section>
 

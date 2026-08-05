@@ -2,7 +2,6 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useState } from 'react';
 import { useAuth } from '@/hooks/auth';
 import { useTurnoActivo } from '@/hooks/caja';
 import StatusBadge from '@/components/ui/StatusBadge';
@@ -19,15 +18,14 @@ const Icons = {
   clientes: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
   pedidos: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>,
   insumos: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7 12 12l8.7-5"/><path d="M12 22V12"/></svg>,
-  entregar: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12l5 5L20 7"/></svg>,
   logout: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>,
 };
 
-const NAV_ITEMS = [
+export const NAV_ITEMS = [
   { to: '/caja', label: 'Dashboard', icon: Icons.dashboard, end: true },
   { to: '/caja/pedidos', label: 'Pedidos', icon: Icons.pedidos },
-  { to: '/caja/entregar', label: 'Entregar', icon: Icons.entregar },
   { to: '/caja/venta', label: 'Venta', icon: Icons.venta },
+  { to: '/caja/ventas', label: 'Ventas', icon: Icons.venta },
   { to: '/caja/movimientos', label: 'Movimientos', icon: Icons.movimientos },
   { to: '/caja/ingreso', label: 'Ingreso', icon: Icons.ingreso },
   { to: '/caja/gasto', label: 'Gasto', icon: Icons.gasto },
@@ -38,10 +36,15 @@ const NAV_ITEMS = [
   { to: '/caja/historial', label: 'Historial', icon: Icons.historial },
 ];
 
-export default function CajaSidebar() {
+type CajaSidebarProps = {
+  /** Solo aplica en mobile: en desktop el sidebar siempre está visible. */
+  open: boolean;
+  onClose: () => void;
+};
+
+export default function CajaSidebar({ open, onClose }: CajaSidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const [sidebarOpen, setSidebarOpen] = useState(false);
   const { data: turno, isLoading } = useTurnoActivo();
 
   const logout = () => {
@@ -51,8 +54,8 @@ export default function CajaSidebar() {
 
   return (
     <>
-      {sidebarOpen && <div className="admin-sidebar-overlay" onClick={() => setSidebarOpen(false)} />}
-      <aside className={`admin-sidebar ${sidebarOpen ? 'open' : ''}`}>
+      {open && <div className="admin-sidebar-overlay" aria-hidden="true" onClick={onClose} />}
+      <aside id="caja-sidebar" className={`admin-sidebar ${open ? 'open' : ''}`}>
         <div className="admin-sidebar-header">
           <img src="/elevate.png" alt="Elevate" className="admin-logo" />
           <span className="admin-badge">Caja</span>
@@ -78,7 +81,7 @@ export default function CajaSidebar() {
                 key={item.to}
                 href={item.to}
                 className={`admin-nav-link ${isActive ? 'active' : ''}`}
-                onClick={() => setSidebarOpen(false)}
+                onClick={onClose}
               >
                 {item.icon}
                 <span>{item.label}</span>

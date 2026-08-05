@@ -16,18 +16,11 @@ import MethodPill from '@/components/ui/MethodPill';
 import MoneyText from '@/components/ui/MoneyText';
 import StatusBadge from '@/components/ui/StatusBadge';
 import { calcularDiferencia, estadoDiferencia } from '@/lib/shared/caja-calc';
+import { armarLibro, type MovimientoLibro, type PedidoSinCobro } from '@/lib/shared/libro-caja';
 
 type Metodo = 'EFECTIVO' | 'QR' | 'TARJETA';
 
-type Movimiento = {
-  id: number;
-  concepto: string;
-  tipo: string;
-  metodo_pago: Metodo;
-  monto: string | number;
-  categoria?: string | null;
-  created_at: string;
-};
+type Movimiento = MovimientoLibro & { categoria?: string | null };
 
 function asNumber(value: unknown): number {
   if (typeof value === 'number') return value;
@@ -62,6 +55,10 @@ export default function CajaHomePage() {
 
   const turno = turnoQuery.data;
   const movimientos = (turno?.movimientos ?? []) as Movimiento[];
+  // Fiados y cortesías: pedidos del turno que no mueven plata. Van al libro
+  // igual, porque consumen número de pedido y sin ellos la cuenta salta.
+  const pedidosSinCobro = (turno?.pedidos_sin_cobro ?? []) as PedidoSinCobro[];
+  const pedidosDelTurno = (turno?.pedidos_count ?? 0) as number;
 
   const [aperturaEfectivo, setAperturaEfectivo] = useState('0.00');
   const [aperturaQr, setAperturaQr] = useState('0.00');
@@ -101,7 +98,7 @@ export default function CajaHomePage() {
     };
   }, [movimientos, realEfectivo, realQr, turno]);
 
-  const latest = movimientos.slice(0, 8);
+  const latest = armarLibro(movimientos, pedidosSinCobro).slice(0, 8);
   const cierreStatus = estadoDiferencia(totals.diferenciaTotal);
 
   const clearMessageSoon = () => window.setTimeout(() => setMessage(null), 4500);
@@ -265,6 +262,9 @@ export default function CajaHomePage() {
       {message && <div className={`caja-alert ${message.type}`}>{message.text}</div>}
 
       <div className="kpi-grid">
+        {/* Cuenta todos los pedidos del turno, cobrados o no: es el número que
+            el cajero le canta al siguiente cliente. */}
+        <KpiCard label="Pedidos del turno" value={pedidosDelTurno} accent="var(--info)" />
         <KpiCard label="Esperado efectivo" value={<MoneyText value={totals.esperadoEfectivo} signed />} highlight />
         <KpiCard label="Esperado QR" value={<MoneyText value={totals.esperadoQr} signed />} accent="var(--info)" />
         <KpiCard label="Ingresos turno" value={<MoneyText value={totals.ingresos} />} accent="var(--fresh)" />
@@ -358,21 +358,40 @@ export default function CajaHomePage() {
           <div className="caja-panel-head">
             <div>
               <h2>Libro reciente</h2>
-              <p>Ultimos movimientos del turno activo.</p>
+              <p>Ultimos movimientos del turno activo · pedido #{pedidosDelTurno} en curso.</p>
             </div>
           </div>
           {latest.length === 0 ? (
             <EmptyState title="Sin movimientos" hint="Las ventas, ingresos y gastos apareceran aqui." />
           ) : (
             <div className="caja-movement-list">
-              {latest.map(mov => {
+              {latest.map(entrada => {
+                const hora = new Date(entrada.created_at).toLocaleTimeString('es-BO', { hour: '2-digit', minute: '2-digit' });
+
+                // Fiado o cortesía: ocupa su lugar en la secuencia, pero no hay
+                // plata que sumar, así que no lleva método ni monto firmado.
+                if (entrada.clase === 'SIN_COBRO') {
+                  return (
+                    <div className="caja-movement" key={entrada.key}>
+                      <span className="caja-movement-dot" style={{ background: 'var(--muted, #9aa0a6)' }} />
+                      <div>
+                        <strong>{entrada.concepto}</strong>
+                        <span>{entrada.etiqueta === 'Fiado' ? 'Sin cobro · queda como deuda' : 'Sin cobro · cortesía'} · {hora}</span>
+                      </div>
+                      <span className="admin-cell-sub">Sin cobro</span>
+                      <MoneyText value={asNumber(entrada.pedido.total)} />
+                    </div>
+                  );
+                }
+
+                const mov = entrada.movimiento;
                 const amount = asNumber(mov.monto);
                 return (
-                  <div className="caja-movement" key={mov.id}>
+                  <div className="caja-movement" key={entrada.key}>
                     <span className={`caja-movement-dot ${amount >= 0 ? 'in' : 'out'}`} />
                     <div>
-                      <strong>{mov.concepto}</strong>
-                      <span>{movimientoLabel(mov.tipo)} · {new Date(mov.created_at).toLocaleTimeString('es-BO', { hour: '2-digit', minute: '2-digit' })}</span>
+                      <strong>{entrada.concepto}</strong>
+                      <span>{movimientoLabel(mov.tipo)} · {hora}</span>
                     </div>
                     <MethodPill metodo={mov.metodo_pago} />
                     <MoneyText value={amount} signed />

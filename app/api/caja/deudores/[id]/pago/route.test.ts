@@ -10,6 +10,7 @@ import { POST } from './route';
 import { GET as GET_DEUDORES } from '../../route';
 import { login } from '@/lib/auth';
 import prisma from '@/lib/prisma';
+import { sucursalPorDefectoId } from '@/lib/server/sucursales/sucursal.service';
 
 const CONTRAPARTE = 'Cliente Fiado Ledger E2E';
 const NOMBRE_PROD = 'Producto Fiado Ledger E2E';
@@ -45,6 +46,7 @@ async function crearDeudaConVenta(monto: number) {
   });
   const venta = await prisma.transaccion.create({
     data: {
+      sucursal_id: await sucursalPorDefectoId(),
       total: monto, estado: 'PAGADO', payment_status: 'PENDIENTE',
       cliente_id: clienteId, turno_id: turnoId, cajero_id: cajeroUserId,
       transaccionesDetalles_id: { create: [{ producto_id: producto.id, precio_unitario: monto, cantidad: 1 }] },

@@ -36,13 +36,16 @@ export async function bajaInsumoExclusivoDeReventa(
   ]);
   if (enRecetas + otrosProductos + enMixtos > 0) return false;
 
+  const motivoBaja = `${PREFIJO_BAJA_POR_PRODUCTO} "${producto.nombre}". Motivo: ${motivo}`;
   await tx.insumo.update({
     where: { id: insumoId },
-    data: {
-      activo: false,
-      fecha_baja: new Date(),
-      motivo_baja: `${PREFIJO_BAJA_POR_PRODUCTO} "${producto.nombre}". Motivo: ${motivo}`,
-    },
+    data: { activo: false, fecha_baja: new Date(), motivo_baja: motivoBaja },
+  });
+  // Esta cascada nace de la baja del producto en TODO el catálogo, así que el
+  // insumo espejo sale del inventario de todos los locales: ninguno lo vende ya.
+  await tx.stockSucursal.updateMany({
+    where: { insumo_id: insumoId, activo: true },
+    data: { activo: false, fecha_baja: new Date(), motivo_baja: motivoBaja },
   });
   return true;
 }
@@ -66,6 +69,12 @@ export async function reactivarInsumoDeReventaSiCascada(
     where: { id: insumoReventaId },
     data: { activo: true, fecha_baja: null, motivo_baja: null },
   });
+  // Se revierte la cascada en los locales que la sufrieron: los que ya lo
+  // habían dado de baja por su cuenta tienen otro motivo y no se tocan.
+  await tx.stockSucursal.updateMany({
+    where: { insumo_id: insumoReventaId, activo: false, motivo_baja: { startsWith: PREFIJO_BAJA_POR_PRODUCTO } },
+    data: { activo: true, fecha_baja: null, motivo_baja: null },
+  });
   return true;
 }
 
@@ -83,32 +92,36 @@ export async function reactivarInsumoDeReventaSiCascada(
 export async function darDeBajaInsumo(
   insumoId: number,
   motivo: string,
+  sucursalId: number,
   db: PrismaClient = prisma
 ) {
   const insumo = await db.insumo.findUnique({ where: { id: insumoId } });
   if (!insumo) throw new NotFoundError('Insumo no encontrado');
 
+  const enSucursal = await db.stockSucursal.findUnique({
+    where: { insumo_id_sucursal_id: { insumo_id: insumoId, sucursal_id: sucursalId } },
+  });
+  if (!enSucursal) throw new NotFoundError('El insumo no está en el inventario de esa sucursal');
+  if (!enSucursal.activo) throw new ConflictError('El insumo ya está de baja en esta sucursal');
+
   return db.$transaction(async (tx: any) => {
-    // Marcar insumo como inactivo
-    const insumoBaja = await tx.insumo.update({
-      where: { id: insumoId },
-      data: {
-        activo: false,
-        fecha_baja: new Date(),
-        motivo_baja: motivo,
-      },
+    // La baja es DE ESTE LOCAL: las demás sucursales lo siguen usando.
+    const bajaLocal = await tx.stockSucursal.update({
+      where: { id: enSucursal.id },
+      data: { activo: false, fecha_baja: new Date(), motivo_baja: motivo },
     });
 
-    // Productos ELABORADOS que usan este insumo en su receta
+    // Productos ELABORADOS cuya receta EN ESTA SUCURSAL usa el insumo. La ficha
+    // técnica es del local, así que solo se revisan sus habilitaciones.
     const recetasAfectadas = await tx.recetasProducto.findMany({
-      where: { insumo_id: insumoId, producto: { tipo: 'ELABORADO' } },
+      where: { insumo_id: insumoId, sucursal_id: sucursalId, producto: { tipo: 'ELABORADO' } },
       include: { producto: { select: { id: true, nombre: true } } },
     });
 
-    // Productos de REVENTA mapeados 1:1 a este insumo (ej. Agua Vital):
-    // sin el insumo no hay nada que vender, también pasan a revisión.
+    // Productos de REVENTA mapeados 1:1 a este insumo (ej. Agua Vital) que este
+    // local vende: sin el insumo no hay nada que vender acá.
     const reventasAfectadas = await tx.producto.findMany({
-      where: { insumo_reventa_id: insumoId },
+      where: { insumo_reventa_id: insumoId, sucursales: { some: { sucursal_id: sucursalId } } },
       select: { id: true, nombre: true },
     });
 
@@ -118,23 +131,73 @@ export async function darDeBajaInsumo(
     ];
 
     if (afectados.length > 0) {
-      await tx.producto.updateMany({
-        where: { id: { in: afectados.map((p: { id: number }) => p.id) } },
+      await tx.productoSucursal.updateMany({
+        where: { producto_id: { in: afectados.map((p: { id: number }) => p.id) }, sucursal_id: sucursalId },
         data: {
           en_revision: true,
           revision_desde: new Date(),
-          motivo_revision: `Insumo "${insumo.nombre}" fue dado de baja. Motivo: ${motivo}`,
+          motivo_revision: `Insumo "${insumo.nombre}" fue dado de baja en esta sucursal. Motivo: ${motivo}`,
           insumo_causa_revision_id: insumoId,
         },
       });
     }
 
+    const agregados = await sincronizarAgregados(tx, insumoId, afectados.map((p: { id: number }) => p.id));
+
     return {
-      insumo: insumoBaja,
+      insumo: { ...insumo, ...agregados.insumo, activo_en_sucursal: false, sucursal_id: sucursalId },
+      stock_sucursal: bajaLocal,
       productosEnRevision: afectados.length,
       productos: afectados,
     };
   });
+}
+
+/**
+ * Recalcula los agregados del negocio a partir de las filas de sucursal.
+ *
+ * `Insumo.activo` y `Producto.en_revision` dejaron de ser la verdad operativa
+ * —esa vive en el local—, pero los siguen leyendo reportes y pantallas todavía
+ * no migrados. Se derivan, en vez de escribirse a mano, para que no puedan
+ * contradecir a las sucursales:
+ *   - el insumo está de baja para el negocio cuando NINGÚN local lo usa ya;
+ *   - el producto figura en revisión mientras ALGÚN local lo tenga en revisión.
+ */
+async function sincronizarAgregados(tx: any, insumoId: number, productoIds: number[]) {
+  const filas = await tx.stockSucursal.findMany({
+    where: { insumo_id: insumoId },
+    select: { activo: true, motivo_baja: true, fecha_baja: true },
+  });
+  const activas = filas.filter((f: { activo: boolean }) => f.activo);
+  const sinUso = filas.length > 0 && activas.length === 0;
+  const ultimaBaja = filas.find((f: { activo: boolean }) => !f.activo);
+
+  const insumo = await tx.insumo.update({
+    where: { id: insumoId },
+    data: sinUso
+      ? { activo: false, fecha_baja: ultimaBaja?.fecha_baja ?? new Date(), motivo_baja: ultimaBaja?.motivo_baja ?? null }
+      : { activo: true, fecha_baja: null, motivo_baja: null },
+  });
+
+  for (const productoId of productoIds) {
+    const enRevision = await tx.productoSucursal.findFirst({
+      where: { producto_id: productoId, en_revision: true },
+      orderBy: { revision_desde: 'desc' },
+    });
+    await tx.producto.update({
+      where: { id: productoId },
+      data: enRevision
+        ? {
+            en_revision: true,
+            revision_desde: enRevision.revision_desde,
+            motivo_revision: enRevision.motivo_revision,
+            insumo_causa_revision_id: enRevision.insumo_causa_revision_id,
+          }
+        : { en_revision: false, revision_desde: null, motivo_revision: null, insumo_causa_revision_id: null },
+    });
+  }
+
+  return { insumo };
 }
 
 /**
@@ -143,36 +206,58 @@ export async function darDeBajaInsumo(
  */
 export async function resolverProductoEnRevision(
   productoId: number,
+  sucursalId: number,
   db: PrismaClient = prisma
 ) {
-  const producto = await db.producto.findUnique({ where: { id: productoId } });
-  if (!producto) throw new NotFoundError('Producto no encontrado');
-  if (!producto.en_revision) throw new ConflictError('Producto no está en revisión');
+  const enSucursal = await db.productoSucursal.findUnique({
+    where: { producto_id_sucursal_id: { producto_id: productoId, sucursal_id: sucursalId } },
+  });
+  if (!enSucursal) throw new NotFoundError('El producto no está habilitado en esa sucursal');
+  if (!enSucursal.en_revision) throw new ConflictError('El producto no está en revisión en esta sucursal');
 
-  return db.producto.update({
-    where: { id: productoId },
-    data: {
-      en_revision: false,
-      revision_desde: null,
-      motivo_revision: null,
-      insumo_causa_revision_id: null,
-    },
+  return db.$transaction(async (tx: any) => {
+    const resuelto = await tx.productoSucursal.update({
+      where: { id: enSucursal.id },
+      data: { en_revision: false, revision_desde: null, motivo_revision: null, insumo_causa_revision_id: null },
+    });
+    // El agregado del producto sigue en revisión si otro local lo está.
+    const otra = await tx.productoSucursal.findFirst({
+      where: { producto_id: productoId, en_revision: true },
+      orderBy: { revision_desde: 'desc' },
+    });
+    await tx.producto.update({
+      where: { id: productoId },
+      data: otra
+        ? {
+            en_revision: true,
+            revision_desde: otra.revision_desde,
+            motivo_revision: otra.motivo_revision,
+            insumo_causa_revision_id: otra.insumo_causa_revision_id,
+          }
+        : { en_revision: false, revision_desde: null, motivo_revision: null, insumo_causa_revision_id: null },
+    });
+    return resuelto;
   });
 }
 
 /**
- * Listar productos en revisión de la sucursal.
+ * Productos en revisión de una sucursal. Sin sucursal (dueño en consolidado)
+ * devuelve los que están en revisión en algún local.
  */
-export async function listarProductosEnRevision(db: PrismaClient = prisma) {
+export async function listarProductosEnRevision(sucursalId?: number, db: PrismaClient = prisma) {
   return db.producto.findMany({
-    where: { en_revision: true },
+    where: sucursalId != null
+      ? { sucursales: { some: { sucursal_id: sucursalId, en_revision: true } } }
+      : { sucursales: { some: { en_revision: true } } },
     include: {
       recetaProducto_id: {
+        ...(sucursalId != null ? { where: { sucursal_id: sucursalId } } : {}),
         include: { insumo: true },
       },
       categoria_id: {
         include: { categoria: true },
       },
+      ...(sucursalId != null ? { sucursales: { where: { sucursal_id: sucursalId } } } : {}),
     },
     orderBy: { revision_desde: 'desc' },
   });
@@ -182,39 +267,41 @@ export async function listarProductosEnRevision(db: PrismaClient = prisma) {
  * Reactivar un insumo que fue dado de baja.
  * Automáticamente resuelve los productos que estaban en revisión por culpa de este insumo.
  */
-export async function reactivarInsumo(insumoId: number, db: PrismaClient = prisma) {
+export async function reactivarInsumo(insumoId: number, sucursalId: number, db: PrismaClient = prisma) {
   const insumo = await db.insumo.findUnique({ where: { id: insumoId } });
   if (!insumo) throw new NotFoundError('Insumo no encontrado');
-  if (insumo.activo) throw new ConflictError('Insumo ya está activo');
+
+  const enSucursal = await db.stockSucursal.findUnique({
+    where: { insumo_id_sucursal_id: { insumo_id: insumoId, sucursal_id: sucursalId } },
+  });
+  if (!enSucursal) throw new NotFoundError('El insumo no está en el inventario de esa sucursal');
+  if (enSucursal.activo) throw new ConflictError('El insumo ya está activo en esta sucursal');
 
   return db.$transaction(async (tx: any) => {
-    // Reactivar insumo
-    const insumoReactivado = await tx.insumo.update({
-      where: { id: insumoId },
-      data: {
-        activo: true,
-        fecha_baja: null,
-        motivo_baja: null,
-      },
+    await tx.stockSucursal.update({
+      where: { id: enSucursal.id },
+      data: { activo: true, fecha_baja: null, motivo_baja: null },
     });
 
-    // Resolver productos que estaban en revisión por ESTE insumo
-    const productosResueltos = await tx.producto.updateMany({
-      where: {
-        insumo_causa_revision_id: insumoId,
-        en_revision: true,
-      },
-      data: {
-        en_revision: false,
-        revision_desde: null,
-        motivo_revision: null,
-        insumo_causa_revision_id: null,
-      },
+    // Se resuelven las revisiones que causó ESTE insumo EN ESTE LOCAL. Las de
+    // otras sucursales siguen abiertas: allá el insumo puede seguir de baja.
+    const enRevision = await tx.productoSucursal.findMany({
+      where: { sucursal_id: sucursalId, en_revision: true, insumo_causa_revision_id: insumoId },
+      select: { producto_id: true },
     });
+    await tx.productoSucursal.updateMany({
+      where: { sucursal_id: sucursalId, en_revision: true, insumo_causa_revision_id: insumoId },
+      data: { en_revision: false, revision_desde: null, motivo_revision: null, insumo_causa_revision_id: null },
+    });
+
+    const { insumo: insumoReactivado } = await sincronizarAgregados(
+      tx, insumoId, enRevision.map((r: { producto_id: number }) => r.producto_id),
+    );
 
     return {
       insumo: insumoReactivado,
-      productosResueltos: productosResueltos.count,
+      productosResueltos: enRevision.length,
+      sucursal_id: sucursalId,
     };
   });
 }

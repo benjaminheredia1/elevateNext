@@ -1,7 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import apiClient from '@/hooks/api';
 
-export type RangoKey = 'hoy' | '7d' | 'mes' | 'custom';
+/** `todo` = sin filtro de fechas: desde el primer registro del negocio hasta hoy. */
+export type RangoKey = 'hoy' | '7d' | 'mes' | 'todo' | 'custom';
 
 export interface RangoState {
   rango: RangoKey;

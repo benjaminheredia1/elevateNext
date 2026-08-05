@@ -1,4 +1,5 @@
 import prisma from '@/lib/prisma';
+import { resolverSucursal } from '@/lib/server/sucursales/sucursal.service';
 import { NotFoundError } from '@/lib/server/errors';
 import type { Prisma } from '@prisma/client';
 import type { GastoOperativoInput } from '@/lib/server/dto/gastos-operativos.dto';
@@ -11,11 +12,13 @@ function decorate<T extends { monto: Prisma.Decimal }>(row: T) {
   return { ...row, monto: toNumber(row.monto) };
 }
 
-export async function listarGastosOperativos(metodoPago?: 'EFECTIVO' | 'QR', q?: string) {
+export async function listarGastosOperativos(metodoPago?: 'EFECTIVO' | 'QR', q?: string, sucursal?: number) {
   const gastos = await prisma.gastoOperativo.findMany({
     where: {
       ...(metodoPago ? { metodo_pago: metodoPago } : {}),
       ...(q ? { concepto: { contains: q, mode: 'insensitive' } } : {}),
+      // Gasto del local donde se hizo. Sin sucursal (solo el dueño), todos.
+      ...(sucursal ? { sucursal_id: sucursal } : {}),
     },
     orderBy: { fecha: 'desc' },
   });
@@ -48,6 +51,8 @@ export async function crearGastoOperativo(input: GastoOperativoInput, usuarioId:
       metodo_pago: input.metodo_pago,
       fecha: input.fecha,
       notas: input.notas ?? null,
+      // Todo gasto pertenece a un local; sin indicarlo va a la principal.
+      sucursal_id: await resolverSucursal(input.sucursal_id),
       creado_por_id: usuarioId,
     },
   });

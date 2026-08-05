@@ -3,6 +3,7 @@ import { NextRequest } from 'next/server';
 import { GET } from './route';
 import { login } from '@/lib/auth';
 import prisma from '@/lib/prisma';
+import { sucursalPorDefectoId } from '@/lib/server/sucursales/sucursal.service';
 
 const MARCADOR = `balance-test-${Date.now()}`;
 
@@ -30,6 +31,16 @@ beforeAll(async () => {
     },
   });
   insumoId = insumo.id;
+  // El inventario se valoriza por sucursal: sin fila de stock el insumo no
+  // pertenece a ningún local y no suma al activo.
+  await prisma.stockSucursal.create({
+    data: {
+      insumo_id: insumo.id,
+      sucursal_id: await sucursalPorDefectoId(),
+      stock_actual: 10,
+      costo_promedio: 2.5,
+    },
+  });
 
   // CxC pendiente Bs 40 (30 ya pagados de 70) y CxP pendiente Bs 60
   const porCobrar = await prisma.cuentaCorriente.create({

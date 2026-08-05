@@ -36,7 +36,9 @@ export function whereVentasNetas(rango: RangoFechas, sucursal?: number): Prisma.
     created_at: { gte: rango.desde, lte: rango.hasta },
     estado: { in: [...ESTADOS_VENTA] },
     es_cortesia: false,
-    ...(sucursal ? { turno: { sucursal_id: sucursal } } : {}),
+    // Se filtra por la columna propia de la venta, no por su turno: las ventas
+    // web no tienen turno y con el filtro anterior desaparecían del reporte.
+    ...(sucursal ? { sucursal_id: sucursal } : {}),
   };
 }
 
@@ -85,24 +87,30 @@ export async function ventasNetas(rango: RangoFechas, sucursal?: number): Promis
 export async function cmvPorReceta(rango: RangoFechas, sucursal?: number): Promise<number> {
   const detalles = await prisma.transaccionesDetalles.findMany({
     where: { transaccion: whereVentasNetas(rango, sucursal) },
-    select: { producto_id: true, cantidad: true },
+    select: { producto_id: true, cantidad: true, transaccion: { select: { sucursal_id: true } } },
   });
 
-  const cantidades = new Map<number, number>();
+  // Se agrupa por (producto, sucursal) porque la ficha técnica es de cada local:
+  // el mismo plato puede llevar gramajes —y por tanto costos— distintos.
+  const cantidades = new Map<string, { productoId: number; sucursalId: number; cantidad: number }>();
   for (const detalle of detalles) {
-    cantidades.set(detalle.producto_id, (cantidades.get(detalle.producto_id) ?? 0) + Number(detalle.cantidad));
+    const sucursalId = detalle.transaccion.sucursal_id;
+    const clave = `${detalle.producto_id}:${sucursalId}`;
+    const previo = cantidades.get(clave);
+    if (previo) previo.cantidad += Number(detalle.cantidad);
+    else cantidades.set(clave, { productoId: detalle.producto_id, sucursalId, cantidad: Number(detalle.cantidad) });
   }
 
   const costos = await Promise.all(
-    Array.from(cantidades.keys()).map(async (productoId) => ({
-      productoId,
-      costo: await costoFichaTecnica(productoId),
+    Array.from(cantidades.values()).map(async (item) => ({
+      ...item,
+      costo: await costoFichaTecnica(item.productoId, undefined, item.sucursalId),
     })),
   );
 
   let cmv = 0;
-  for (const { productoId, costo } of costos) {
-    cmv += costo * (cantidades.get(productoId) ?? 0);
+  for (const { costo, cantidad } of costos) {
+    cmv += costo * cantidad;
   }
   return Number(cmv.toFixed(2));
 }
@@ -120,11 +128,13 @@ export async function gastosOperativos(rango: RangoFechas, sucursal?: number): P
       where: {
         created_at: { gte: rango.desde, lte: rango.hasta },
         tipo: 'GASTO_OPERATIVO',
-        ...(sucursal ? { turno: { sucursal_id: sucursal } } : {}),
+        ...(sucursal ? { sucursal_id: sucursal } : {}),
       },
       select: { monto: true, categoria: true },
     }),
-    prisma.gastoFijo.findMany({ where: { activo: true } }),
+    // Los gastos fijos son del local: al filtrar por sucursal solo prorratean
+    // los suyos, para que la utilidad por sucursal sea honesta.
+    prisma.gastoFijo.findMany({ where: { activo: true, ...(sucursal ? { sucursal_id: sucursal } : {}) } }),
   ]);
 
   const deCaja = movimientos

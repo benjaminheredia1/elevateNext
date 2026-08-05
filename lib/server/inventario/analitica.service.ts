@@ -9,6 +9,9 @@ import prisma from '@/lib/prisma';
 import { costoFichaTecnica } from './inventario.service';
 import { hoyISO, rangoDiaNegocio } from '@/lib/server/fechas';
 import { diaNegocioDe, ESTADOS_VENTA } from '@/lib/server/finanzas/metricas.service';
+import { inicioDelHistorial } from '@/lib/server/finanzas/rango';
+import { resolverSucursal } from '@/lib/server/sucursales/sucursal.service';
+import { aplicarOverrides, vigentesEnSucursal } from '@/lib/server/productos/overrides';
 import type { Rango } from '@/lib/server/dto/inventario.dto';
 
 const TZ = 'America/La_Paz';
@@ -24,6 +27,26 @@ function fechaDesde(rango: Rango): Date {
   const [anio, mes, dia] = hoyISO().split('-').map(Number);
   const inicio = new Date(Date.UTC(anio, mes - 1, dia - (dias - 1)));
   return rangoDiaNegocio(inicio.toISOString().slice(0, 10)).desde;
+}
+
+const FECHA_ISO = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Rango personalizado: fin nunca menor al inicio (igual sí se admite). */
+export interface RangoPersonalizado { desde?: string | null; hasta?: string | null }
+
+async function ventanaDelRango(rango: Rango, custom?: RangoPersonalizado): Promise<{ desde: Date; hasta: Date }> {
+  // Todo el historial: arranca en el primer registro real, no en una fecha fija.
+  if (rango === 'todo') {
+    return { desde: await inicioDelHistorial(), hasta: rangoDiaNegocio().hasta };
+  }
+  if (rango !== 'custom') {
+    return { desde: fechaDesde(rango), hasta: rangoDiaNegocio().hasta };
+  }
+  const hoy = hoyISO();
+  const desdeISO = custom?.desde && FECHA_ISO.test(custom.desde) ? custom.desde : hoy;
+  const hastaPedido = custom?.hasta && FECHA_ISO.test(custom.hasta) ? custom.hasta : hoy;
+  const hastaISO = hastaPedido < desdeISO ? desdeISO : hastaPedido;
+  return { desde: rangoDiaNegocio(desdeISO).desde, hasta: rangoDiaNegocio(hastaISO).hasta };
 }
 
 // ─────────────────────────────────────────────────────────
@@ -61,15 +84,27 @@ export interface AnaliticaResult {
 // ─────────────────────────────────────────────────────────
 // Función principal
 // ─────────────────────────────────────────────────────────
-export async function getAnalitica(rango: Rango): Promise<AnaliticaResult> {
-  const desde = fechaDesde(rango);
+export async function getAnalitica(
+  rango: Rango,
+  custom?: RangoPersonalizado,
+  sucursal?: number,
+): Promise<AnaliticaResult> {
+  const { desde, hasta } = await ventanaDelRango(rango, custom);
+
+  // La analítica es SIEMPRE de un local. Sin sucursal explícita se usa la
+  // principal, en vez de sumar las ventas de todas contra la receta de una sola:
+  // eso daba un food cost y una clasificación de menú que no correspondían a
+  // ninguna sucursal. La interfaz obliga a elegir; esto lo garantiza también
+  // para quien llame la API directo.
+  const sucursalId = await resolverSucursal(sucursal);
 
   // ── Ventas netas del período (sin cortesías) ──────────────────
   const transacciones = await prisma.transaccion.findMany({
     where: {
-      created_at: { gte: desde },
+      created_at: { gte: desde, lte: hasta },
       estado:     { in: [...ESTADOS_VENTA] },
       es_cortesia: false,
+      sucursal_id: sucursalId,
     },
     include: {
       transaccionesDetalles_id: {
@@ -78,6 +113,9 @@ export async function getAnalitica(rango: Rango): Promise<AnaliticaResult> {
             include: {
               categoria_id: { include: { categoria: true } },
               marcas:       { include: { marca: true } },
+              // Ficha del local: el reporte de una sucursal usa el nombre, el
+              // precio y las categorías con los que ese local vende.
+              ...(sucursalId != null ? { sucursales: { where: { sucursal_id: sucursalId } } } : {}),
             },
           },
         },
@@ -107,11 +145,13 @@ export async function getAnalitica(rango: Rango): Promise<AnaliticaResult> {
   for (const t of transacciones) {
     for (const d of t.transaccionesDetalles_id) {
       const pid = d.producto_id;
+      const enSucursal = (d.producto as typeof d.producto & { sucursales?: Parameters<typeof aplicarOverrides>[1][] }).sucursales?.[0];
+      const producto = aplicarOverrides(d.producto, enSucursal);
       const prev = productoVentas.get(pid) ?? {
-        nombre:      d.producto.nombre,
+        nombre:      producto.nombre,
         ventas:      0,
         totalVentas: 0,
-        precio:      Number(d.producto.precio),
+        precio:      Number(producto.precio),
       };
       productoVentas.set(pid, {
         ...prev,
@@ -123,9 +163,22 @@ export async function getAnalitica(rango: Rango): Promise<AnaliticaResult> {
 
   // ── Costos por receta (una sola pasada, en paralelo) ──────────
   const prodIds = Array.from(productoVentas.keys());
+
+  // Precio de venta DE ESTE LOCAL. Con el precio del catálogo, un plato que en
+  // esta sucursal se cobra más caro aparecía con el margen de la otra.
+  const preciosLocales = await prisma.productoSucursal.findMany({
+    where: { sucursal_id: sucursalId, producto_id: { in: prodIds } },
+    select: { producto_id: true, precio: true },
+  });
+  for (const fila of preciosLocales) {
+    const actual = productoVentas.get(fila.producto_id);
+    if (actual) actual.precio = Number(fila.precio);
+  }
   const costosPorProducto = new Map<number, number>(
     await Promise.all(
-      prodIds.map(async (id): Promise<[number, number]> => [id, await costoFichaTecnica(id)]),
+      // Mismo local que las ventas: es lo que hace comparables los dos ejes de
+      // la ingeniería de menú (popularidad y rentabilidad).
+      prodIds.map(async (id): Promise<[number, number]> => [id, await costoFichaTecnica(id, undefined, sucursalId)]),
     ),
   );
 
@@ -193,9 +246,11 @@ export async function getAnalitica(rango: Rango): Promise<AnaliticaResult> {
   for (const t of transacciones) {
     for (const d of t.transaccionesDetalles_id) {
       const monto = Number(d.precio_unitario) * d.cantidad;
-      const cat = d.producto.categoria_id[0]?.categoria?.nombre ?? 'Sin categoría';
+      // Categorías y marcas del local si las tiene propias; si no, las del catálogo.
+      const ambito = sucursalId ?? null;
+      const cat = vigentesEnSucursal(d.producto.categoria_id, ambito)[0]?.categoria?.nombre ?? 'Sin categoría';
       catMap.set(cat, (catMap.get(cat) ?? 0) + monto);
-      const marca = d.producto.marcas[0]?.marca?.nombre ?? 'Sin marca';
+      const marca = vigentesEnSucursal(d.producto.marcas, ambito)[0]?.marca?.nombre ?? 'Sin marca';
       marcaMap.set(marca, (marcaMap.get(marca) ?? 0) + monto);
     }
   }

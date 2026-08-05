@@ -3,6 +3,7 @@ import { NextRequest } from 'next/server';
 import { GET } from './route';
 import { login } from '@/lib/auth';
 import prisma from '@/lib/prisma';
+import { sucursalPorDefectoId } from '@/lib/server/sucursales/sucursal.service';
 import { hoyISO, rangoDiaNegocio } from '@/lib/server/fechas';
 
 const MARCADOR = `dashboard-test-${Date.now()}`;
@@ -20,10 +21,10 @@ beforeAll(async () => {
 
   // Venta neta de hoy + cancelada de hoy (no debe contar en ventas ni pedidos)
   const venta = await prisma.transaccion.create({
-    data: { cliente_nombre: MARCADOR, total: 40, estado: 'PAGADO', payment_status: 'PAGADO', created_at: mediodia },
+    data: { sucursal_id: await sucursalPorDefectoId(), cliente_nombre: MARCADOR, total: 40, estado: 'PAGADO', payment_status: 'PAGADO', created_at: mediodia },
   });
   const cancelada = await prisma.transaccion.create({
-    data: { cliente_nombre: MARCADOR, total: 500, estado: 'CANCELADO', created_at: mediodia },
+    data: { sucursal_id: await sucursalPorDefectoId(), cliente_nombre: MARCADOR, total: 500, estado: 'CANCELADO', created_at: mediodia },
   });
   transaccionIds.push(venta.id, cancelada.id);
 });
@@ -56,8 +57,23 @@ describe('GET /api/admin/dashboard', () => {
 
     expect(body.kpis.ventas).toBeGreaterThanOrEqual(40);
     expect(body.kpis.cancelados).toBeGreaterThanOrEqual(1);
-    // La cancelada de Bs 500 no puede estar sumada: si lo estuviera, ventas ≥ 540
-    expect(body.kpis.ventas).toBeLessThan(500);
+
+    // La cancelada no debe sumar. Se compara contra las ventas netas de HOY en
+    // la base, no contra un tope fijo: la BD de pruebas no se limpia entre
+    // corridas y las ventas de otros fixtures se acumulan, así que un umbral
+    // absoluto (ventas < 500) fallaba solo al repetir la suite.
+    const netasDeHoy = await prisma.transaccion.aggregate({
+      _sum: { total: true },
+      where: {
+        created_at: { gte: rangoDiaNegocio().desde, lte: rangoDiaNegocio().hasta },
+        estado: { not: 'CANCELADO' },
+        es_cortesia: false,
+      },
+    });
+    const esperado = Number(netasDeHoy._sum.total ?? 0);
+
+    // Si la cancelada de Bs 500 se estuviera sumando, el KPI superaría el neto real.
+    expect(body.kpis.ventas).toBeLessThanOrEqual(esperado);
   });
 
   it('expone utilidad y food cost basados en CMV por receta', async () => {

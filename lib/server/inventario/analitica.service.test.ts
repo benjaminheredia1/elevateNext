@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import prisma from '@/lib/prisma';
+import { sucursalPorDefectoId } from '@/lib/server/sucursales/sucursal.service';
 import { getAnalitica } from './analitica.service';
 import { hoyISO, rangoDiaNegocio } from '@/lib/server/fechas';
 
@@ -28,7 +29,7 @@ beforeAll(async () => {
       precio: 20,
       tipo: 'ELABORADO',
       estado_publicacion: 'PUBLICADO',
-      recetaProducto_id: { create: [{ insumo_id: insumoId, cantidad_utilizada: 1 }] },
+      recetaProducto_id: { create: [{ insumo_id: insumoId, sucursal_id: await sucursalPorDefectoId(), cantidad_utilizada: 1 }] },
     },
   });
   productoId = producto.id;
@@ -38,6 +39,7 @@ beforeAll(async () => {
   const nocturna = new Date(`${hoyISO()}T21:00:00.000-04:00`);
   const venta = await prisma.transaccion.create({
     data: {
+      sucursal_id: await sucursalPorDefectoId(),
       cliente_nombre: MARCADOR,
       total: 20,
       estado: 'PAGADO',
@@ -53,6 +55,7 @@ beforeAll(async () => {
   // Cortesía de hoy: NO debe aparecer en la analítica
   const cortesia = await prisma.transaccion.create({
     data: {
+      sucursal_id: await sucursalPorDefectoId(),
       cliente_nombre: MARCADOR,
       total: 999,
       estado: 'ENTREGADO',
@@ -100,6 +103,39 @@ describe('getAnalitica', () => {
     expect(fila.costo).toBe(5);            // 1 insumo × Bs 5
     expect(fila.food_cost_pct).toBe(25);   // 5 / 20
     expect(fila.margen).toBe(75);
+  });
+
+  it('la analítica es de un solo local: otra sucursal no ve estas ventas', async () => {
+    // Sin sucursal explícita se usa la principal, donde está el fixture.
+    const principal = await getAnalitica('7d');
+    expect(principal.ingenieriaMeniu.some(item => item.producto_id === productoId)).toBe(true);
+
+    const otra = await prisma.sucursal.create({ data: { nombre: `Sucursal ${MARCADOR}` } });
+    try {
+      const vacia = await getAnalitica('7d', undefined, otra.id);
+      // Las ventas son de la principal: no deben aparecer al mirar otro local.
+      expect(vacia.ingenieriaMeniu.some(item => item.producto_id === productoId)).toBe(false);
+    } finally {
+      await prisma.sucursal.deleteMany({ where: { id: otra.id } });
+    }
+  });
+
+  it('usa el precio de venta del local, no el del catálogo', async () => {
+    const sucursalId = await sucursalPorDefectoId();
+    // El catálogo dice 20; este local lo cobra a 40, así que el margen sobre un
+    // costo de 5 pasa de 75% a 87.5%.
+    await prisma.productoSucursal.create({
+      data: { producto_id: productoId, sucursal_id: sucursalId, precio: 40, update_at: new Date() },
+    });
+    try {
+      const resultado = await getAnalitica('7d');
+      const fila = resultado.ingenieriaMeniu.find(item => item.producto_id === productoId)!;
+      expect(fila.precio).toBe(40);
+      expect(fila.food_cost_pct).toBe(12.5);
+      expect(fila.margen).toBe(87.5);
+    } finally {
+      await prisma.productoSucursal.deleteMany({ where: { producto_id: productoId } });
+    }
   });
 
   it('el CMV del período valoriza el consumo por receta', async () => {
