@@ -72,6 +72,16 @@ export function normalizarWhatsApp(telefono: string | null | undefined): string 
   return digitos.length >= 8 ? digitos : null;
 }
 
+/**
+ * Chat de WhatsApp con el local, sin mensaje precargado: es el "escribinos" de
+ * la tienda. null cuando la sucursal no tiene número cargado, para que la
+ * pantalla no muestre un botón que abre un chat vacío.
+ */
+export function linkWhatsApp(telefono: string | null | undefined): string | null {
+  const numero = normalizarWhatsApp(telefono);
+  return numero ? `https://wa.me/${numero}` : null;
+}
+
 /** El texto del mensaje, tal como lo va a ver quien atiende el local. */
 export function mensajePedido(p: PedidoWhatsApp): string {
   const total = p.subtotal + (p.envio ?? 0);

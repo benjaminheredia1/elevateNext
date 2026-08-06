@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSucursalTienda } from '@/hooks/sucursal-tienda';
+import { linkWhatsApp } from '@/lib/pedido-whatsapp';
+import { INSTAGRAM_URL } from '@/lib/redes';
 
 const PinIcon = () => (
   <svg className="shop-sucursal-pin" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
@@ -21,24 +23,21 @@ const WhatsappIcon = () => (
   </svg>
 );
 
+const InstagramIcon = () => (
+  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <rect x="2" y="2" width="20" height="20" rx="5" ry="5" />
+    <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z" />
+    <line x1="17.5" y1="6.5" x2="17.51" y2="6.5" />
+  </svg>
+);
+
 const ChevronIcon = ({ hacia }: { hacia: 'izq' | 'der' }) => (
   <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"
     style={{ transform: hacia === 'izq' ? 'rotate(180deg)' : undefined }}>
     <path fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" d="m9 5 7 7-7 7" />
   </svg>
 );
-
-/**
- * Número de la sucursal en el formato que espera wa.me: solo dígitos y con
- * código de país. Los locales se cargan con el número corto boliviano (8
- * dígitos), así que se le antepone 591 cuando falta.
- */
-function enlaceWhatsapp(telefono: string): string | null {
-  const digitos = telefono.replace(/\D/g, '');
-  if (digitos.length === 8) return `https://wa.me/591${digitos}`;
-  if (digitos.length >= 10 && digitos.length <= 15) return `https://wa.me/${digitos}`;
-  return null;
-}
 
 /**
  * Selector de local en la tienda, en forma de pestañas: siempre a la vista, con
@@ -94,7 +93,7 @@ export default function SucursalPicker({ compacto = false }: { compacto?: boolea
   };
 
   const conFlechas = puedeIzq || puedeDer;
-  const whatsapp = sucursalActual?.telefono ? enlaceWhatsapp(sucursalActual.telefono) : null;
+  const whatsapp = linkWhatsApp(sucursalActual?.telefono);
 
   return (
     <div className={`shop-sucursal-block ${compacto ? 'is-compacto' : ''}`}>
@@ -156,9 +155,11 @@ export default function SucursalPicker({ compacto = false }: { compacto?: boolea
         <span className="shop-sucursal-dir">{sucursalActual.direccion}</span>
       )}
 
-      {/* Contacto del local seleccionado: cada sucursal trae el suyo, así que
-          los botones cambian al cambiar de pestaña. */}
-      {!compacto && (whatsapp || sucursalActual?.maps_url) && (
+      {/* Contacto del local seleccionado: el WhatsApp y el mapa son de la
+          sucursal, así que cambian al cambiar de pestaña. Instagram es de la
+          marca y va siempre, al lado del WhatsApp: son los dos lugares por
+          donde el cliente escribe o mira qué hay hoy. */}
+      {!compacto && (
         <div className="shop-sucursal-contacto">
           {whatsapp && (
             <a className="shop-sucursal-accion" href={whatsapp} target="_blank" rel="noopener noreferrer">
@@ -166,6 +167,10 @@ export default function SucursalPicker({ compacto = false }: { compacto?: boolea
               WhatsApp
             </a>
           )}
+          <a className="shop-sucursal-accion" href={INSTAGRAM_URL} target="_blank" rel="noopener noreferrer">
+            <InstagramIcon />
+            Instagram
+          </a>
           {sucursalActual?.maps_url && (
             <a
               className="shop-sucursal-accion"

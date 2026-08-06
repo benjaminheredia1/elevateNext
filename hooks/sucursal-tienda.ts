@@ -11,10 +11,8 @@ export interface SucursalPublica {
   maps_url: string | null;
   lat: number | null;
   lng: number | null;
-  // Tarifa de delivery del local, para cotizar el envío en el checkout.
-  envio_base: number;
-  envio_km_incluidos: number;
-  envio_por_km: number;
+  // Límites de reparto del local, para cotizar el envío en el checkout.
+  // El tarifario por tramos es único y vive en lib/envio.ts.
   envio_maximo: number | null;
   envio_radio_km: number | null;
 }

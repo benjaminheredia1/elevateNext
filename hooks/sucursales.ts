@@ -17,10 +17,7 @@ export interface Sucursal {
   turnos: number;
   cuentas: { id: number; tipo: string; saldo: number }[];
   created_at: string;
-  // Tarifa de delivery del local.
-  envio_base: number;
-  envio_km_incluidos: number;
-  envio_por_km: number;
+  // Límites de reparto del local; el tarifario por tramos vive en lib/envio.ts.
   envio_maximo: number | null;
   envio_radio_km: number | null;
 }
@@ -33,11 +30,7 @@ export interface SucursalPayload {
   maps_url?: string;
   lat?: number;
   lng?: number;
-  // Tarifa de delivery: sin valor quedan los defaults del sistema. `null` en el
-  // tope y el radio significa "sin límite".
-  envio_base?: number;
-  envio_km_incluidos?: number;
-  envio_por_km?: number;
+  // Límites de reparto: `null` en el tope y el radio significa "sin límite".
   envio_maximo?: number | null;
   envio_radio_km?: number | null;
 }

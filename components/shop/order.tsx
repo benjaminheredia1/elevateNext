@@ -293,7 +293,7 @@ function CheckoutModal({
   const sucursal = sucursales.find(s => s.id === sucursalElegidaId()) ?? sucursales[0]
 
   /**
-   * Envío cotizado con la tarifa del local y la distancia hasta el pin. Se
+   * Envío cotizado con el tarifario por tramos y la distancia hasta el pin. Se
    * recalcula solo al mover el pin, así el cliente ve el costo antes de mandar
    * el pedido y no se lo enteran recién al recibirlo.
    */
@@ -304,9 +304,6 @@ function CheckoutModal({
       { lat: sucursal.lat, lng: sucursal.lng },
       { lat, lng },
       {
-        envio_base: sucursal.envio_base,
-        envio_km_incluidos: sucursal.envio_km_incluidos,
-        envio_por_km: sucursal.envio_por_km,
         envio_maximo: sucursal.envio_maximo,
         envio_radio_km: sucursal.envio_radio_km,
       },
