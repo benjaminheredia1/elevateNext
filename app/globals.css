@@ -64,6 +64,12 @@ html {
   scroll-behavior: smooth;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* El scroll lateral se corta en el elemento raíz, que es el que manda sobre el
+     viewport: en <body> el navegador igual deja correr la página de costado por
+     código o al restaurar la posición. `clip` no admite scroll de ninguna forma
+     (los navegadores viejos se quedan con el `hidden` de arriba). */
+  overflow-x: hidden;
+  overflow-x: clip;
 }
 
 body {
@@ -72,6 +78,7 @@ body {
   color: var(--text-primary);
   line-height: 1.6;
   overflow-x: hidden;
+  overflow-x: clip;
 }
 
 a {

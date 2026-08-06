@@ -69,7 +69,17 @@ export default function SucursalPicker({ compacto = false }: { compacto?: boolea
     if (!fila) return;
     revisarDesborde();
     // Al entrar, el local activo tiene que estar a la vista aunque esté al final.
-    fila.querySelector('.is-activa')?.scrollIntoView({ block: 'nearest', inline: 'center' });
+    // Se mueve solo el scroll de la fila: scrollIntoView arrastraría también a los
+    // ancestros scrolleables y en mobile corría la página entera hacia el costado,
+    // dejando el logo y el menú fuera de pantalla.
+    const activa = fila.querySelector<HTMLElement>('.is-activa');
+    if (activa) {
+      fila.scrollLeft = activa.offsetLeft - (fila.clientWidth - activa.offsetWidth) / 2;
+    }
+    // Cambiar de local recarga la página, y el navegador restaura la posición de
+    // scroll guardada: si quedó corrida de costado, vuelve corrida cada vez. Se
+    // devuelve al margen izquierdo sin tocar la altura, que sí conviene mantener.
+    if (window.scrollX !== 0) window.scrollTo(0, window.scrollY);
     const observer = new ResizeObserver(revisarDesborde);
     observer.observe(fila);
     return () => observer.disconnect();

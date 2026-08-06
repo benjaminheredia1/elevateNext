@@ -3062,6 +3062,13 @@ section[id] { scroll-margin-top: 96px; }
   gap: 72px;
   align-items: center;
   margin-bottom: 120px;
+  /* Las tarjetas entran deslizándose desde los costados (x: ±60) y hasta que se
+     animan quedan fuera del ancho de la pantalla. En celular eso ensanchaba el
+     documento y dejaba la página corrida de lado. Se recorta acá, en el bloque:
+     `clip` no vuelve scrolleable el eje vertical, así que la animación sigue
+     igual y no se crea una caja de scroll nueva. */
+  overflow-x: hidden;
+  overflow-x: clip;
 }
 
 .collab:last-child {
@@ -3459,6 +3466,9 @@ section[id] { scroll-margin-top: 96px; }
   gap: 10px;
   flex: 1;
   min-width: 0;
+  /* Es el offsetParent de las pestañas: así el centrado del local activo se
+     calcula contra la fila y no contra un ancestro cualquiera. */
+  position: relative;
   overflow-x: auto;
   scroll-behavior: smooth;
   scrollbar-width: none;
