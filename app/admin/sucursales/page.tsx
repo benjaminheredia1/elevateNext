@@ -107,39 +107,18 @@ function SucursalModal({ value, onClose, onSubmit, saving, error }: {
               />
             </div>
 
-            {/* Tarifa de delivery del local. El checkout la usa para cotizar el
-                envío según la distancia hasta donde el cliente marca el pin. */}
+            {/* El precio del envío sale del tarifario por tramos de lib/envio.ts,
+                igual para todos los locales. Acá solo se define hasta dónde
+                reparte esta sucursal y si le pone un techo al cobro. */}
             <div className="form-group full">
               <span className="form-hint" style={{ fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.5px' }}>
-                Tarifa de delivery
+                Delivery
               </span>
-            </div>
-            <div className="form-group">
-              <label>Base (Bs)</label>
-              <input
-                type="number" step="0.5" min="0"
-                value={form.envio_base ?? ''}
-                onChange={e => setForm({ ...form, envio_base: e.target.value === '' ? undefined : Number(e.target.value) })}
-                placeholder="8"
-              />
-            </div>
-            <div className="form-group">
-              <label>Km incluidos en la base</label>
-              <input
-                type="number" step="0.5" min="0"
-                value={form.envio_km_incluidos ?? ''}
-                onChange={e => setForm({ ...form, envio_km_incluidos: e.target.value === '' ? undefined : Number(e.target.value) })}
-                placeholder="2.5"
-              />
-            </div>
-            <div className="form-group">
-              <label>Por km adicional (Bs)</label>
-              <input
-                type="number" step="0.5" min="0"
-                value={form.envio_por_km ?? ''}
-                onChange={e => setForm({ ...form, envio_por_km: e.target.value === '' ? undefined : Number(e.target.value) })}
-                placeholder="2.5"
-              />
+              <span className="form-hint">
+                Tarifario vigente (igual en todas las sucursales): Bs 10 hasta 2 km, 12 hasta 3,
+                15 hasta 5, 18 hasta 6, 20 hasta 7, 22 hasta 8, 25 hasta 9, 27 hasta 10,
+                30 hasta 11 y 32 hasta 12 km. Más lejos, Bs 3 por km adicional.
+              </span>
             </div>
             <div className="form-group">
               <label>Tope del envío (Bs)</label>
@@ -160,8 +139,6 @@ function SucursalModal({ value, onClose, onSubmit, saving, error }: {
               />
               <span className="form-hint">
                 Más lejos que esto el checkout no cotiza y le ofrece retiro en el local.
-                Referencias del rubro: PedidosYa cobra Bs 5 los primeros 5 km y Bs 1 por km extra;
-                la tarifa municipal de Cochabamba, Bs 6,50 el primer km y Bs 2 por km adicional.
               </span>
             </div>
           </div>
@@ -284,9 +261,6 @@ export default function SucursalesPage() {
                         maps_url: row.maps_url ?? '',
                         lat: row.lat ?? undefined,
                         lng: row.lng ?? undefined,
-                        envio_base: row.envio_base,
-                        envio_km_incluidos: row.envio_km_incluidos,
-                        envio_por_km: row.envio_por_km,
                         envio_maximo: row.envio_maximo,
                         envio_radio_km: row.envio_radio_km,
                       }); }}

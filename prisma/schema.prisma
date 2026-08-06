@@ -708,15 +708,15 @@ model Sucursal {
   lat        Float?
   lng        Float?
   activa     Boolean            @default(true)
-  // ── Tarifa de delivery del local ──
-  // Cada sucursal reparte en su zona, así que la tarifa es suya: base con unos
-  // km incluidos más un monto por km adicional. Es el esquema que usan las
-  // plataformas y las tarifas municipales del rubro.
-  /// Cuánto cuesta el envío dentro de los km incluidos.
+  // ── Delivery del local ──
+  // El precio del envío sale del tarifario por tramos de lib/envio.ts, único
+  // para todas las sucursales. Lo que decide cada local es hasta dónde reparte
+  // y si le pone un techo al cobro.
+  /// Sin uso desde el tarifario por tramos; se conserva la columna con su histórico.
   envio_base         Decimal  @default(8) @db.Decimal(12, 2)
-  /// Km que ya cubre la base.
+  /// Sin uso desde el tarifario por tramos; se conserva la columna con su histórico.
   envio_km_incluidos Float    @default(2.5)
-  /// Monto por cada km adicional, redondeando el km hacia arriba.
+  /// Sin uso desde el tarifario por tramos; se conserva la columna con su histórico.
   envio_por_km       Decimal  @default(2.5) @db.Decimal(12, 2)
   /// Tope del envío por más lejos que sea. Null = sin tope.
   envio_maximo       Decimal? @db.Decimal(12, 2)

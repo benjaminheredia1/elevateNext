@@ -2,28 +2,61 @@
  * Cotización del delivery: cuánto cobrar por llevar un pedido desde el local
  * hasta la ubicación que marcó el cliente.
  *
- * El esquema es el que usa el rubro —base con unos km incluidos más un monto por
- * km adicional— y no un precio plano, que castiga al cliente cercano y regala el
- * viaje largo. Referencias: PedidosYa Envíos cobra Bs 5 los primeros 5 km y Bs 1
- * por km adicional; la tarifa municipal de Cochabamba, Bs 6,50 el primer km y
- * Bs 2 por cada km más. Las de plataforma están subsidiadas, así que los valores
- * por defecto (Bs 8 / 2,5 km / Bs 2,50 por km) quedan en el medio y cada local
- * los ajusta en /admin/sucursales.
+ * El precio sale de un tarifario por tramos —el que fijó el negocio, más abajo—
+ * y no de una fórmula: es una tabla cerrada que el repartidor y la cajera leen
+ * de memoria, y que el cliente puede verificar. Fuera del último tramo se sigue
+ * cobrando por km, para no regalar el viaje largo.
+ *
+ * El tarifario es único para todos los locales; lo que sí decide cada sucursal
+ * es hasta dónde reparte (`envio_radio_km`) y si le pone un tope al cobro
+ * (`envio_maximo`), que son decisiones operativas, no de precio.
  *
  * Sin prisma adentro: lo usa el checkout en el navegador y también el servidor.
  */
 
-export interface TarifaEnvio {
-  /** Cuánto cuesta el envío dentro de los km incluidos. */
-  envio_base: number;
-  /** Km que ya cubre la base. */
-  envio_km_incluidos: number;
-  /** Monto por cada km adicional (se redondea el km hacia arriba). */
-  envio_por_km: number;
+/**
+ * Tarifario vigente, en tramos cerrados por arriba: la primera fila cuyo
+ * `hasta_km` alcance la distancia es la que se cobra.
+ *
+ *   0    a  2,0 km → Bs 10      7,1 a  8,0 km → Bs 22
+ *   2,1  a  3,0 km → Bs 12      8,1 a  9,0 km → Bs 25
+ *   3,1  a  5,0 km → Bs 15      9,1 a 10,0 km → Bs 27
+ *   5,1  a  6,0 km → Bs 18     10,1 a 11,0 km → Bs 30
+ *   6,1  a  7,0 km → Bs 20     11,1 a 12,0 km → Bs 32
+ */
+export const TRAMOS_ENVIO: ReadonlyArray<{ hasta_km: number; costo: number }> = [
+  { hasta_km: 2, costo: 10 },
+  { hasta_km: 3, costo: 12 },
+  { hasta_km: 5, costo: 15 },
+  { hasta_km: 6, costo: 18 },
+  { hasta_km: 7, costo: 20 },
+  { hasta_km: 8, costo: 22 },
+  { hasta_km: 9, costo: 25 },
+  { hasta_km: 10, costo: 27 },
+  { hasta_km: 11, costo: 30 },
+  { hasta_km: 12, costo: 32 },
+];
+
+/** Pasado el último tramo, cada km adicional (redondeado hacia arriba). */
+export const ENVIO_POR_KM_EXTRA = 3;
+
+/** Recargo cuando se reparte bajo lluvia. */
+export const RECARGO_LLUVIA = 3;
+
+export interface LimitesEnvio {
   /** Tope del envío. null = sin tope. */
   envio_maximo?: number | null;
   /** Hasta dónde reparte el local. null = sin límite. */
   envio_radio_km?: number | null;
+}
+
+export interface OpcionesEnvio {
+  /**
+   * Reparto bajo lluvia: suma el recargo. Todavía no hay interfaz para
+   * activarlo; el parámetro existe para que el recargo tenga un solo lugar
+   * donde vivir cuando se decida quién lo prende.
+   */
+  lluvia?: boolean;
 }
 
 export interface Coordenada {
@@ -69,6 +102,23 @@ export function distanciaRecorrido(local: Coordenada, destino: Coordenada): numb
 }
 
 /**
+ * Lo que dice el tarifario para una distancia dada, sin topes ni recargos.
+ *
+ * Los tramos se leen sobre la distancia ya redondeada a un decimal, que es como
+ * está escrito el tarifario (2,1 arranca el segundo tramo). Más allá del último
+ * tramo se suma por km entero: medio km de más ya significa un viaje más largo,
+ * y cobrar fracciones es imposible de explicar.
+ */
+export function costoPorDistancia(distancia_km: number): number {
+  const tramo = TRAMOS_ENVIO.find(t => distancia_km <= t.hasta_km);
+  if (tramo) return tramo.costo;
+
+  const ultimo = TRAMOS_ENVIO[TRAMOS_ENVIO.length - 1];
+  const kmExtra = Math.ceil(distancia_km - ultimo.hasta_km);
+  return ultimo.costo + kmExtra * ENVIO_POR_KM_EXTRA;
+}
+
+/**
  * Cotiza el envío del local al destino.
  *
  * Devuelve la cotización incluso fuera de cobertura (con `dentroDeCobertura` en
@@ -78,19 +128,18 @@ export function distanciaRecorrido(local: Coordenada, destino: Coordenada): numb
 export function cotizarEnvio(
   local: Coordenada,
   destino: Coordenada,
-  tarifa: TarifaEnvio,
+  limites: LimitesEnvio = {},
+  opciones: OpcionesEnvio = {},
 ): CotizacionEnvio {
   const distancia = Math.round(distanciaRecorrido(local, destino) * 10) / 10;
 
-  const dentroDeCobertura = tarifa.envio_radio_km == null || distancia <= tarifa.envio_radio_km;
+  const dentroDeCobertura = limites.envio_radio_km == null || distancia <= limites.envio_radio_km;
 
-  // Los km que pasan de la base se cobran por km entero: medio km de más ya
-  // significa un viaje más largo, y cobrar fracciones es imposible de explicar.
-  const excedente = Math.max(0, distancia - tarifa.envio_km_incluidos);
-  const kmExtra = Math.ceil(excedente);
-
-  let costo = tarifa.envio_base + kmExtra * tarifa.envio_por_km;
-  if (tarifa.envio_maximo != null) costo = Math.min(costo, tarifa.envio_maximo);
+  let costo = costoPorDistancia(distancia);
+  // El tope se aplica sobre el tarifario; la lluvia va después, porque es un
+  // costo del viaje concreto y no parte del precio de la distancia.
+  if (limites.envio_maximo != null) costo = Math.min(costo, limites.envio_maximo);
+  if (opciones.lluvia) costo += RECARGO_LLUVIA;
 
   return {
     distancia_km: distancia,

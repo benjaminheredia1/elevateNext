@@ -12,9 +12,9 @@ export async function GET() {
       orderBy: { id: 'asc' },
       select: {
         id: true, nombre: true, direccion: true, telefono: true, maps_url: true, lat: true, lng: true,
-        // Tarifa de delivery: el checkout cotiza el envío en el navegador para
-        // mostrarlo mientras el cliente mueve el pin, sin ir y volver al server.
-        envio_base: true, envio_km_incluidos: true, envio_por_km: true,
+        // Límites de reparto del local: el checkout cotiza el envío en el
+        // navegador para mostrarlo mientras el cliente mueve el pin, sin ir y
+        // volver al server. El tarifario en sí vive en lib/envio.ts.
         envio_maximo: true, envio_radio_km: true,
       },
     });
@@ -23,8 +23,6 @@ export async function GET() {
     return NextResponse.json({
       data: sucursales.map(s => ({
         ...s,
-        envio_base: Number(s.envio_base),
-        envio_por_km: Number(s.envio_por_km),
         envio_maximo: s.envio_maximo == null ? null : Number(s.envio_maximo),
       })),
     });

@@ -23,6 +23,14 @@ import {
 import type { Menu } from '@/lib/menus';
 import SucursalPicker from '@/components/shop/SucursalPicker';
 import { useSucursalTienda } from '@/hooks/sucursal-tienda';
+import { linkWhatsApp } from '@/lib/pedido-whatsapp';
+import { INSTAGRAM_URL } from '@/lib/redes';
+
+/** Enlace del footer: texto plano, o un logo que abre algo (WhatsApp del local). */
+interface FooterColumn {
+  title: string;
+  links: { label: string; href?: string; icon?: React.ReactNode }[];
+}
 
 /* ===== Landing-only data ===== */
 const benefits = [
@@ -139,8 +147,10 @@ export default function Home() {
   const [featuredProducts, setFeaturedProducts] = useState<any[]>([]);
   /** Las cartas publicadas, en el orden que fijó el dueño en /admin/menus. */
   const [menus, setMenus] = useState<Menu[]>([]);
-  const { sucursalId } = useSucursalTienda();
+  const { sucursalId, sucursalActual } = useSucursalTienda();
   const sufijoSucursal = sucursalId ? `&sucursal=${sucursalId}` : '';
+  /** WhatsApp del local elegido: el contacto es de la sucursal, no de la empresa. */
+  const whatsappSucursal = linkWhatsApp(sucursalActual?.telefono);
   const shop = useShop();
   const router = useRouter();
 
@@ -652,23 +662,50 @@ export default function Home() {
             <motion.div className="footer-brand" variants={staggerItem}>
               <img src="/elevate.png" alt="Elevate" className="footer-logo-img" />
               <p>Comida saludable premium en Santa Cruz de la Sierra, Bolivia. Elevamos tu rendimiento con nutrición de alta calidad.</p>
+              {/* Redes: el WhatsApp es el del local elegido arriba, no uno de la
+                  empresa, así el cliente escribe a quien le va a cocinar. Si esa
+                  sucursal no tiene número cargado, el botón no se muestra. */}
               <div className="footer-socials">
-                {[{ label: 'Instagram', icon: Icons.instagram }, { label: 'Facebook', icon: Icons.facebook }, { label: 'WhatsApp', icon: Icons.whatsapp }].map((social, i) => (
-                  <motion.a key={social.label} href="#" className="footer-social-btn" aria-label={social.label} whileHover={{ scale: 1.2, rotate: 5 }} whileTap={{ scale: 0.9 }} initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: 0.3 + i * 0.1 }}>
+                {[
+                  { label: 'Instagram', icon: Icons.instagram, href: INSTAGRAM_URL },
+                  { label: 'Facebook', icon: Icons.facebook, href: null },
+                  { label: 'WhatsApp', icon: Icons.whatsapp, href: whatsappSucursal },
+                ].filter(s => s.href).map((social, i) => (
+                  <motion.a key={social.label} href={social.href!} target="_blank" rel="noopener noreferrer" className="footer-social-btn" aria-label={social.label} whileHover={{ scale: 1.2, rotate: 5 }} whileTap={{ scale: 0.9 }} initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: 0.3 + i * 0.1 }}>
                     {social.icon}
                   </motion.a>
                 ))}
               </div>
             </motion.div>
-            {[
-              { title: 'Menús', links: ['Elevate × Fitbull', 'Catering Elevate', 'Bowls', 'Ensaladas', 'Smoothies'] },
-              { title: 'Empresa', links: ['Sobre nosotros', 'Nuestro equipo', 'Blog', 'Trabaja con nosotros'] },
-              { title: 'Contacto', links: ['Santa Cruz, Bolivia', 'info@elevate.bo', '+591 XXX XXX XX', 'Lun - Sáb: 7am - 9pm'] },
-            ].map((column) => (
+            {([
+              { title: 'Menús', links: ['Elevate × Fitbull', 'Catering Elevate', 'Bowls', 'Ensaladas', 'Smoothies'].map(label => ({ label })) },
+              { title: 'Empresa', links: ['Sobre nosotros', 'Nuestro equipo', 'Blog', 'Trabaja con nosotros'].map(label => ({ label })) },
+              {
+                title: 'Contacto',
+                links: [
+                  { label: 'Santa Cruz, Bolivia' },
+                  { label: 'info@elevate.bo' },
+                  // El número dejó de estar escrito: es el logo de WhatsApp y
+                  // abre el chat de la sucursal elegida. Un número en texto hay
+                  // que copiarlo a mano; el logo se toca y ya estás escribiendo.
+                  ...(whatsappSucursal ? [{ label: 'WhatsApp', href: whatsappSucursal, icon: Icons.whatsapp }] : []),
+                  { label: 'Lun - Sáb: 7am - 9pm' },
+                ],
+              },
+            ] as FooterColumn[]).map((column) => (
               <motion.div key={column.title} className="footer-column" variants={staggerItem}>
                 <h4>{column.title}</h4>
                 {column.links.map((link) => (
-                  <motion.a key={link} href="#" whileHover={{ x: 6, color: '#ff5c19' }} transition={{ duration: 0.2 }}>{link}</motion.a>
+                  <motion.a
+                    key={link.label}
+                    href={link.href ?? '#'}
+                    {...(link.href ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+                    aria-label={link.icon ? link.label : undefined}
+                    whileHover={{ x: 6, color: '#ff5c19' }}
+                    transition={{ duration: 0.2 }}
+                  >
+                    {link.icon ?? link.label}
+                  </motion.a>
                 ))}
               </motion.div>
             ))}

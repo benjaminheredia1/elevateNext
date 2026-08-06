@@ -1,19 +1,19 @@
 
-> elevatenextjs@0.1.0 dev
-> next dev
+> elevatenextjs@0.1.0 dev:local
+> dotenv -e .env.dev -- next dev
 
-⚠ Port 3000 is in use by process 44904, using available port 3001 instead.
+⚠ Port 3000 is in use by process 21900, using available port 3002 instead.
 ▲ Next.js 16.2.9 (Turbopack)
-- Local:         http://localhost:3001
-- Network:       http://192.168.56.1:3001
+- Local:         http://localhost:3002
+- Network:       http://192.168.56.1:3002
 - Environments: .env
-✓ Ready in 792ms
+✓ Ready in 2.6s
 ⨯ Another next dev server is already running.
 
 - Local:        http://localhost:3000
-- PID:          44904
+- PID:          21900
 - Dir:          C:\Users\alfre\Documents\Tarts\Trabajo\Elevate\elevateNext
 - Log:          .next\dev\logs\next-development.log
 
-Run taskkill /PID 44904 /F to stop it.
+Run taskkill /PID 21900 /F to stop it.
 [?25h
