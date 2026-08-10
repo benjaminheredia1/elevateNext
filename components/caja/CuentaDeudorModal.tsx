@@ -353,7 +353,13 @@ export default function CuentaDeudorModal({ deudor, onClose, onDone, permitirCob
         ? `Cobro registrado. ${deudor.nombre} no debe nada de lo seleccionado.`
         : `Cobro registrado. Saldo pendiente: Bs ${Number(restante).toFixed(2)}.`);
     };
-    const onError = () => setError('No se pudo registrar el cobro. ¿Hay caja abierta?');
+    // El servidor explica por qué rechazó el cobro (turno cerrado, monto que
+    // supera la deuda, datos inválidos...). Mostrar un texto fijo escondía la
+    // causa real y mandaba a la cajera a buscar un problema de caja que no era.
+    const onError = (e: unknown) => setError(
+      (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+      ?? 'No se pudo registrar el cobro. Intenta de nuevo.'
+    );
     if (esCuentaManual) {
       cobrarUna.mutate({ id: seleccionadas[0].id, pagos }, { onSuccess, onError });
     } else {

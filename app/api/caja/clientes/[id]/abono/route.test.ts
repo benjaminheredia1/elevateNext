@@ -11,6 +11,10 @@ import prisma from '@/lib/prisma';
 import { sucursalPorDefectoId } from '@/lib/server/sucursales/sucursal.service';
 
 const CONTRAPARTE = 'Cliente Abono Selectivo E2E';
+// Deudor con muchos fiados abiertos: reproduce el tope de cuenta_ids que en
+// producción impedía saldarle la cuenta completa a un cliente con 69 deudas.
+const CONTRAPARTE_MUCHAS = 'Cliente Muchas Deudas E2E';
+const CANTIDAD_DEUDAS = 69;
 
 let token: string;
 let sucursalId: number;
@@ -19,6 +23,7 @@ let turnoId: number;
 let clienteId: number;
 let deudaAntiguaId: number;
 let deudaRecienteId: number;
+let clienteMuchasId: number;
 let ventaFiadaId: number;
 
 function reqAbono(cliente: number, body: unknown, tk?: string) {
@@ -34,7 +39,7 @@ function reqAbono(cliente: number, body: unknown, tk?: string) {
 }
 
 async function limpiarFixtures() {
-  const cuentas = await prisma.cuentaCorriente.findMany({ where: { contraparte: CONTRAPARTE }, select: { id: true, transaccion_id: true } });
+  const cuentas = await prisma.cuentaCorriente.findMany({ where: { contraparte: { in: [CONTRAPARTE, CONTRAPARTE_MUCHAS] } }, select: { id: true, transaccion_id: true } });
   const ids = cuentas.map(c => c.id);
   const pagos = await prisma.cuentaCorrientePago.findMany({ where: { cuenta_id: { in: ids } }, select: { movimiento_caja_id: true } });
   await prisma.cuentaCorrientePago.deleteMany({ where: { cuenta_id: { in: ids } } });
@@ -85,6 +90,20 @@ beforeAll(async () => {
     data: { tipo: 'POR_COBRAR', contraparte: CONTRAPARTE, concepto: `Fiado venta #${ventaFiada.id}`, monto: 20, creado_por_id: cajeroUserId, cliente_id: clienteId, transaccion_id: ventaFiada.id },
   });
   deudaRecienteId = reciente.id;
+
+  const clienteMuchas = await prisma.cliente.upsert({
+    where: { telefono: '79999012' },
+    update: {},
+    create: { nombre: CONTRAPARTE_MUCHAS, telefono: '79999012' },
+  });
+  clienteMuchasId = clienteMuchas.id;
+  await prisma.cuentaCorriente.createMany({
+    data: Array.from({ length: CANTIDAD_DEUDAS }, (_, i) => ({
+      tipo: 'POR_COBRAR' as const, contraparte: CONTRAPARTE_MUCHAS,
+      concepto: `Fiado acumulado #${i + 1}`, monto: 10,
+      creado_por_id: cajeroUserId, cliente_id: clienteMuchasId,
+    })),
+  });
 });
 
 afterAll(async () => {
@@ -162,5 +181,32 @@ describe('POST /api/caja/clientes/[id]/abono — cobro selectivo y mixto', () =>
     const antigua = await prisma.cuentaCorriente.findUniqueOrThrow({ where: { id: deudaAntiguaId } });
     expect(antigua.estado).toBe('PARCIAL');
     expect(Number(antigua.monto_pagado)).toBe(4);
+  });
+});
+
+describe('POST /api/caja/clientes/[id]/abono — deudor con muchas deudas', () => {
+  it(`salda de una sola vez las ${CANTIDAD_DEUDAS} deudas seleccionadas`, async () => {
+    const deudas = await prisma.cuentaCorriente.findMany({
+      where: { cliente_id: clienteMuchasId, tipo: 'POR_COBRAR', estado: { not: 'PAGADA' } },
+      select: { id: true },
+    });
+    expect(deudas).toHaveLength(CANTIDAD_DEUDAS);
+
+    const res = await reqAbono(clienteMuchasId, {
+      pagos: [{ metodo_pago: 'QR', monto: CANTIDAD_DEUDAS * 10 }],
+      cuenta_ids: deudas.map(d => d.id),
+    }, token);
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.saldo_restante).toBe(0);
+
+    const pendientes = await prisma.cuentaCorriente.count({
+      where: { cliente_id: clienteMuchasId, tipo: 'POR_COBRAR', estado: { not: 'PAGADA' } },
+    });
+    expect(pendientes).toBe(0);
+    const pagos = await prisma.cuentaCorrientePago.count({
+      where: { cuenta_id: { in: deudas.map(d => d.id) } },
+    });
+    expect(pagos).toBe(CANTIDAD_DEUDAS);
   });
 });
