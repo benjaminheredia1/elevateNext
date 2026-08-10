@@ -12,10 +12,13 @@ const pagoItemSchema = z.object({
 // Formato nuevo: desglose por método (pago mixto) y deudas concretas a cobrar
 // (cuenta_ids; sin él aplica FIFO sobre todas). Se mantiene el formato viejo
 // { monto, metodo_pago } para clientes con la UI anterior abierta.
+// El tope de cuenta_ids es solo un freno a payloads absurdos: un fiado viejo
+// puede acumular decenas de deudas (en producción hubo uno con 69) y con 50
+// no se le podía saldar la cuenta completa.
 const abonoSchema = z.union([
   z.object({
     pagos: z.array(pagoItemSchema).min(1).max(3),
-    cuenta_ids: z.array(z.coerce.number().int().positive()).min(1).max(50).optional(),
+    cuenta_ids: z.array(z.coerce.number().int().positive()).min(1).max(500).optional(),
   }),
   z.object({
     monto: z.coerce.number().positive().multipleOf(0.01),
