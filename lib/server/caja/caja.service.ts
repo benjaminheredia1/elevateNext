@@ -419,11 +419,34 @@ async function aplicarAbonoDeudaFifo(tx: Prisma.TransactionClient, args: {
     throw new ValidationError(`El abono (Bs ${montoAbono.toFixed(2)}) supera la deuda seleccionada (Bs ${saldoTotal.toFixed(2)})`);
   }
 
-  // Cada método se reparte FIFO sobre las deudas; los saldos se van consumiendo
+  // Las cuentas financieras de los métodos cobrados, en una sola consulta.
+  const metodos = [...new Set(args.pagos.map(p => p.metodo_pago))];
+  const cuentasFin = await tx.cuentaFinanciera.findMany({
+    where: { sucursal_id: args.sucursal_id, tipo: { in: metodos } },
+  });
+  const cuentaDe = new Map(cuentasFin.map(c => [c.tipo, c]));
+  for (const metodo of metodos) {
+    if (!cuentaDe.has(metodo)) throw new NotFoundError(`No existe la cuenta ${metodo} para la sucursal`);
+  }
+
+  // El reparto FIFO se resuelve entero en memoria y recién después se escribe.
+  // Con una escritura por deuda, saldar una cuenta de 70 fiados eran ~280 idas
+  // y vueltas a la BD (~0,43 s por deuda medidos en producción): la transacción
+  // se pasaba de sus 20 s y se caía. Agrupadas, el costo deja de depender de
+  // cuántas deudas tenga el cliente.
   const saldos = new Map(deudas.map(d => [d.id, Number((Number(d.monto) - Number(d.monto_pagado)).toFixed(2))]));
   const pagadoAcum = new Map(deudas.map(d => [d.id, Number(d.monto_pagado.toFixed(2))]));
+  const aplicaciones: {
+    deuda: (typeof deudas)[number];
+    metodo_pago: TipoCuenta;
+    cuenta_fin_id: number;
+    aplicar: number;
+  }[] = [];
+  const estadoFinal = new Map<number, { monto_pagado: number; estado: 'PAGADA' | 'PARCIAL' }>();
+  const ventasSaldadas = new Set<number>();
+
   for (const pago of args.pagos) {
-    const cuentaFin = await getCuenta(tx, args.sucursal_id, pago.metodo_pago);
+    const cuentaFin = cuentaDe.get(pago.metodo_pago)!;
     let restante = pago.monto;
     for (const deuda of deudas) {
       if (restante <= 0) break;
@@ -432,35 +455,62 @@ async function aplicarAbonoDeudaFifo(tx: Prisma.TransactionClient, args: {
       const aplicar = Math.min(saldo, restante);
       const nuevoPagado = Number((pagadoAcum.get(deuda.id)! + aplicar).toFixed(2));
       const quedaPagada = nuevoPagado >= Number(deuda.monto.toFixed(2));
-      await tx.cuentaCorriente.update({
-        where: { id: deuda.id },
-        data: { monto_pagado: nuevoPagado, estado: quedaPagada ? 'PAGADA' : 'PARCIAL' },
-      });
+      aplicaciones.push({ deuda, metodo_pago: pago.metodo_pago, cuenta_fin_id: cuentaFin.id, aplicar });
+      estadoFinal.set(deuda.id, { monto_pagado: nuevoPagado, estado: quedaPagada ? 'PAGADA' : 'PARCIAL' });
       // Deuda saldada: la venta fiada que la originó deja de estar "pago pendiente"
-      if (quedaPagada && deuda.transaccion_id != null) {
-        await tx.transaccion.update({ where: { id: deuda.transaccion_id }, data: { payment_status: 'PAGADO' } });
-      }
-      const mov = await tx.movimientoCaja.create({
-        data: {
-          sucursal_id: args.sucursal_id, turno_id: args.turno_id, cuenta_id: cuentaFin.id, tipo: 'INGRESO_EXTRA',
-          metodo_pago: pago.metodo_pago, monto: aplicar,
-          concepto: `Cobro fiado — ${deuda.contraparte}: ${deuda.concepto}${args.venta_id ? ` (junto a venta #${args.venta_id})` : ''}`,
-          categoria: 'Cobro fiado',
-          transaccion_id: deuda.transaccion_id, creado_por_id: args.creado_por_id,
-        },
-      });
-      // Ledger: cada aplicación queda como pago individual de esa deuda
-      await tx.cuentaCorrientePago.create({
-        data: {
-          cuenta_id: deuda.id, monto: aplicar, metodo_pago: pago.metodo_pago,
-          movimiento_caja_id: mov.id, creado_por_id: args.creado_por_id,
-        },
-      });
+      if (quedaPagada && deuda.transaccion_id != null) ventasSaldadas.add(deuda.transaccion_id);
       saldos.set(deuda.id, Number((saldo - aplicar).toFixed(2)));
       pagadoAcum.set(deuda.id, nuevoPagado);
       restante = Number((restante - aplicar).toFixed(2));
     }
-    await tx.cuentaFinanciera.update({ where: { id: cuentaFin.id }, data: { saldo: { increment: pago.monto } } });
+  }
+
+  if (aplicaciones.length > 0) {
+    const movimientos = await tx.movimientoCaja.createManyAndReturn({
+      data: aplicaciones.map(a => ({
+        sucursal_id: args.sucursal_id, turno_id: args.turno_id, cuenta_id: a.cuenta_fin_id, tipo: 'INGRESO_EXTRA' as const,
+        metodo_pago: a.metodo_pago, monto: a.aplicar,
+        concepto: `Cobro fiado — ${a.deuda.contraparte}: ${a.deuda.concepto}${args.venta_id ? ` (junto a venta #${args.venta_id})` : ''}`,
+        categoria: 'Cobro fiado',
+        transaccion_id: a.deuda.transaccion_id, creado_por_id: args.creado_por_id,
+      })),
+      select: { id: true },
+    });
+    // Un INSERT toma los ids de la secuencia en el orden de las filas enviadas,
+    // así que ordenarlos reconstruye ese orden sin depender de cómo los devuelva
+    // el driver, y cada pago del ledger queda atado a su propio movimiento.
+    const movIds = movimientos.map(m => m.id).sort((a, b) => a - b);
+    // Ledger: cada aplicación queda como pago individual de esa deuda
+    await tx.cuentaCorrientePago.createMany({
+      data: aplicaciones.map((a, i) => ({
+        cuenta_id: a.deuda.id, monto: a.aplicar, metodo_pago: a.metodo_pago,
+        movimiento_caja_id: movIds[i], creado_por_id: args.creado_por_id,
+      })),
+    });
+
+    // Un solo UPDATE para todos los saldos. `update_at` va explícito porque
+    // @updatedAt lo resuelve Prisma, y este UPDATE no pasa por Prisma.
+    const filas = [...estadoFinal.entries()].map(([id, e]) =>
+      Prisma.sql`(${id}::int, ${e.monto_pagado}::numeric, ${e.estado}::"EstadoCuenta")`);
+    await tx.$executeRaw`
+      UPDATE "CuentaCorriente" AS cc
+      SET monto_pagado = v.monto_pagado, estado = v.estado, update_at = NOW()
+      FROM (VALUES ${Prisma.join(filas)}) AS v(id, monto_pagado, estado)
+      WHERE cc.id = v.id`;
+
+    if (ventasSaldadas.size > 0) {
+      await tx.transaccion.updateMany({
+        where: { id: { in: [...ventasSaldadas] } },
+        data: { payment_status: 'PAGADO' },
+      });
+    }
+  }
+
+  for (const pago of args.pagos) {
+    await tx.cuentaFinanciera.update({
+      where: { id: cuentaDe.get(pago.metodo_pago)!.id },
+      data: { saldo: { increment: pago.monto } },
+    });
   }
   return { saldo_anterior: saldoTotal, saldo_restante: Number((saldoTotal - montoAbono).toFixed(2)) };
 }
