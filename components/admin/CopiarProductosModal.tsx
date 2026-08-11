@@ -37,7 +37,6 @@ export default function CopiarProductosModal({ destino, destinoNombre, onClose, 
   const [origenElegido, setOrigenElegido] = useState<number | null>(null);
   const [elegidos, setElegidos] = useState<Set<number>>(new Set());
   const [busqueda, setBusqueda] = useState('');
-  const [copiarPrecio, setCopiarPrecio] = useState(true);
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState('');
 
@@ -94,7 +93,6 @@ export default function CopiarProductosModal({ destino, destinoNombre, onClose, 
         origen,
         destino,
         productos: Array.from(elegidos),
-        copiar_precio: copiarPrecio,
       });
       onCopiado(res.data?.copiados ?? elegidos.size);
     } catch (e: unknown) {
@@ -136,10 +134,11 @@ export default function CopiarProductosModal({ destino, destinoNombre, onClose, 
                 </div>
               </div>
 
-              <label className="form-check">
-                <input type="checkbox" checked={copiarPrecio} onChange={e => setCopiarPrecio(e.target.checked)} />
-                <span>Copiar también el precio de {otras.find(s => s.id === origen)?.nombre ?? 'origen'}</span>
-              </label>
+              <p className="form-hint">
+                Se copian los productos y sus recetas. El precio, el stock y el costo
+                entran en cero y el producto queda como borrador: cada sucursal carga
+                lo suyo, para no arrastrar la plata ni la mercaderia del otro local.
+              </p>
 
               <div className="copiar-lista">
                 {cargando ? (

@@ -9,6 +9,12 @@ export const usuarioCreateSchema = z.object({
   password: z.string().min(6),
   rol: z.enum(['DUENO', 'ADMIN', 'CAJERO', 'CLIENTE']),
   sucursal_id: z.coerce.number().int().positive().optional().nullable(),
+  /**
+   * Alcance completo: las sucursales que el usuario podra administrar. Reemplaza
+   * la asignacion anterior (no acumula). Si no se manda `sucursal_id`, la
+   * principal pasa a ser la primera de esta lista.
+   */
+  sucursal_ids: z.array(z.coerce.number().int().positive()).max(50).optional(),
 });
 
 export const usuarioUpdateSchema = z.object({
@@ -22,6 +28,12 @@ export const usuarioUpdateSchema = z.object({
   rol: z.enum(['DUENO', 'ADMIN', 'CAJERO', 'CLIENTE']).optional(),
   activo: z.boolean().optional(),
   sucursal_id: z.coerce.number().int().positive().optional().nullable(),
+  /**
+   * Alcance completo: las sucursales que el usuario podra administrar. Reemplaza
+   * la asignacion anterior (no acumula). Si no se manda `sucursal_id`, la
+   * principal pasa a ser la primera de esta lista.
+   */
+  sucursal_ids: z.array(z.coerce.number().int().positive()).max(50).optional(),
 });
 
 export const idSchema = z.object({

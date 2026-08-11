@@ -32,7 +32,7 @@ export const useAuth = {
 
   me: async () => {
     const res = await apiClient.get('/me'); // autenticado por cookie
-    return res.data as { id: number; nombre: string; rol: Rol; sucursal_id: number | null };
+    return res.data as { id: number; nombre: string; rol: Rol; sucursal_id: number | null; sucursales: number[] };
   },
 
   verify: async (token: string) => {

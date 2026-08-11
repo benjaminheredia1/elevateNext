@@ -3,7 +3,7 @@ import { requireAuth, requireRole, getClientIp } from '@/lib/server/auth/session
 import { logAudit } from '@/lib/server/audit/audit.service';
 import { handleApiError } from '@/lib/server/errors';
 import { ForbiddenError } from '@/lib/server/auth/session';
-import { ConflictError } from '@/lib/server/errors';
+import { ConflictError, ValidationError } from '@/lib/server/errors';
 import { usuarioCreateSchema, usuarioUpdateSchema, idSchema } from '@/lib/server/dto/usuarios.dto';
 import prisma from '@/lib/prisma';
 import bcrypt from 'bcryptjs';
@@ -16,6 +16,23 @@ function canAssignRole(actorRol: Rol, targetRol: Rol) {
   if (ROLES_SOLO_DUENO.includes(targetRol) && actorRol !== 'DUENO') return false;
   if (actorRol === 'ADMIN' && !['CAJERO'].includes(targetRol)) return false;
   return true;
+}
+
+/**
+ * Valida las sucursales pedidas y devuelve el alcance a guardar. Un id que no
+ * existe se rechaza en vez de ignorarse: un admin que crea tener tres locales y
+ * solo ve dos es peor que un error al guardar.
+ */
+async function normalizarAlcance(sucursalIds: number[] | undefined, principal: number | null | undefined) {
+  const ids = [...new Set(sucursalIds ?? [])];
+  if (ids.length > 0) {
+    const existentes = await prisma.sucursal.count({ where: { id: { in: ids } } });
+    if (existentes !== ids.length) throw new ValidationError('Alguna sucursal indicada no existe');
+  }
+  // La principal siempre forma parte del alcance; si no se indico, es la primera.
+  const nuevaPrincipal = principal ?? (ids.length > 0 ? ids[0] : null);
+  if (nuevaPrincipal != null && !ids.includes(nuevaPrincipal)) ids.push(nuevaPrincipal);
+  return { ids, principal: nuevaPrincipal };
 }
 
 function sanitize(u: { password: string; [k: string]: unknown }) {
@@ -33,10 +50,14 @@ export async function GET(req: NextRequest) {
         email: true, username: true, rol: true, activo: true,
         ultimo_acceso: true, sucursal_id: true, created_at: true,
         sucursal: { select: { nombre: true } },
+        sucursales_asignadas: { select: { sucursal: { select: { id: true, nombre: true } } } },
       },
       orderBy: [{ activo: 'desc' }, { rol: 'asc' }, { nombre: 'asc' }],
     });
-    return NextResponse.json({ items: usuarios });
+    // Se aplana la tabla puente para que el front reciba una lista de sucursales.
+    return NextResponse.json({
+      items: usuarios.map(u => ({ ...u, sucursales: u.sucursales_asignadas.map(a => a.sucursal) })),
+    });
   } catch (e) { return handleApiError(e); }
 }
 
@@ -54,6 +75,7 @@ export async function POST(req: NextRequest) {
     if (exists) throw new ConflictError('Email o username ya en uso');
 
     const hash = await bcrypt.hash(input.password, 10);
+    const alcance = await normalizarAlcance(input.sucursal_ids, input.sucursal_id);
     const usuario = await prisma.usuario.create({
       data: {
         nombre: input.nombre,
@@ -65,7 +87,8 @@ export async function POST(req: NextRequest) {
         token: crypto.randomUUID(),
         rol: input.rol,
         activo: true,
-        sucursal_id: input.sucursal_id ?? null,
+        sucursal_id: alcance.principal,
+        sucursales_asignadas: { create: alcance.ids.map(sucursal_id => ({ sucursal_id })) },
       },
     });
     await logAudit({
@@ -74,7 +97,7 @@ export async function POST(req: NextRequest) {
       accion: 'CREO',
       entidad: 'Usuario',
       entidadId: usuario.id,
-      detalle: `Creó usuario ${usuario.email} con rol ${usuario.rol}`,
+      detalle: `Creó usuario ${usuario.email} con rol ${usuario.rol}${alcance.ids.length ? ` — sucursales: ${alcance.ids.join(', ')}` : ''}`,
       ip: getClientIp(req),
       userAgent: req.headers.get('user-agent'),
     });
@@ -103,14 +126,47 @@ export async function PUT(req: NextRequest) {
     if (input.username !== undefined) data.username = input.username;
     if (input.rol !== undefined) data.rol = input.rol;
     if (input.activo !== undefined) data.activo = input.activo;
-    if (input.sucursal_id !== undefined) data.sucursal_id = input.sucursal_id;
     if (input.password) data.password = await bcrypt.hash(input.password, 10);
 
-    const updated = await prisma.usuario.update({ where: { id: input.id }, data });
+    // El alcance se reemplaza entero, no se acumula: destildar una sucursal en el
+    // formulario tiene que quitarla de verdad. Va en la misma transaccion que el
+    // resto para que nadie quede a medio asignar.
+    const tocaAlcance = input.sucursal_ids !== undefined || input.sucursal_id !== undefined;
+    const alcance = tocaAlcance
+      ? await normalizarAlcance(
+          input.sucursal_ids
+            ?? (await prisma.usuarioSucursal.findMany({
+                 where: { usuario_id: input.id }, select: { sucursal_id: true },
+               })).map(a => a.sucursal_id),
+          // Si le quitaron la sucursal que tenía como principal, la principal
+          // pasa a ser la primera de las nuevas: dejarla apuntando a un local
+          // que ya no administra le devolvería el acceso por la puerta de atrás.
+          input.sucursal_id !== undefined
+            ? input.sucursal_id
+            : (input.sucursal_ids?.includes(current.sucursal_id ?? -1) ?? true)
+              ? current.sucursal_id
+              : null,
+        )
+      : null;
+    if (alcance) data.sucursal_id = alcance.principal;
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const u = await tx.usuario.update({ where: { id: input.id }, data });
+      if (alcance) {
+        await tx.usuarioSucursal.deleteMany({ where: { usuario_id: input.id } });
+        if (alcance.ids.length > 0) {
+          await tx.usuarioSucursal.createMany({
+            data: alcance.ids.map(sucursal_id => ({ usuario_id: input.id, sucursal_id })),
+          });
+        }
+      }
+      return u;
+    });
 
     const cambios: string[] = [];
     if (input.rol && input.rol !== current.rol) cambios.push(`rol: ${current.rol}→${input.rol}`);
     if (input.activo !== undefined && input.activo !== current.activo) cambios.push(`activo: ${input.activo}`);
+    if (alcance) cambios.push(`sucursales: ${alcance.ids.length ? alcance.ids.join(', ') : 'ninguna'}`);
 
     await logAudit({
       usuarioId: session.id,

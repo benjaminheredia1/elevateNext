@@ -11,7 +11,8 @@ export interface RangoState {
   sucursal?: string;
 }
 
-function queryString(input: RangoState = { rango: 'mes' }) {
+/** Query string del filtro de período y sucursal, compartido con los exports. */
+export function queryString(input: RangoState = { rango: 'mes' }) {
   const params = new URLSearchParams();
   params.set('rango', input.rango);
   if (input.desde) params.set('desde', input.desde);

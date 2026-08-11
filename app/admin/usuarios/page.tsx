@@ -34,10 +34,17 @@ function RolBadge({ rol }: { rol: RolUsuario }) {
   );
 }
 
+/** Fila del listado, con el alcance ya aplanado por la API. */
+type FilaUsuario = {
+  rol: RolUsuario;
+  sucursal?: { nombre: string } | null;
+  sucursales?: { id: number; nombre: string }[];
+};
+
 const EMPTY_FORM: UsuarioPayload = {
   nombre: '', apellido_paterno: '', apellido_materno: '',
   email: '', username: '', password: '', rol: 'CAJERO',
-  activo: true, sucursal_id: null,
+  activo: true, sucursal_id: null, sucursal_ids: [],
 };
 
 function useSucursales() {
@@ -63,8 +70,19 @@ function FormModal({
 }) {
   const [form, setForm] = useState<UsuarioPayload>(EMPTY_FORM);
   const sucursales = useSucursales();
+  const listaSucursales: { id: number; nombre: string }[] =
+    sucursales.data?.items ?? sucursales.data ?? [];
 
-  useEffect(() => { if (value) setForm({ ...value, password: '' }); }, [value]);
+  useEffect(() => {
+    if (value) {
+      setForm({
+        ...value,
+        password: '',
+        // El listado trae `sucursales`; el formulario trabaja con ids.
+        sucursal_ids: value.sucursal_ids ?? value.sucursales?.map(s => s.id) ?? [],
+      });
+    }
+  }, [value]);
 
   if (!value) return null;
 
@@ -121,10 +139,49 @@ function FormModal({
               <label>Sucursal</label>
               <select value={form.sucursal_id ?? ''} onChange={e => setForm({ ...form, sucursal_id: e.target.value ? Number(e.target.value) : null })}>
                 <option value="">Sin asignar</option>
-                {(sucursales.data?.items ?? sucursales.data ?? []).map((s: { id: number; nombre: string }) => (
+                {listaSucursales.map(s => (
                   <option key={s.id} value={s.id}>{s.nombre}</option>
                 ))}
               </select>
+            </div>
+          )}
+          {form.rol === 'ADMIN' && (
+            <div className="form-group">
+              <label>Sucursales que administra</label>
+              <div className="check-list">
+                {listaSucursales.map(s => {
+                  const marcada = (form.sucursal_ids ?? []).includes(s.id);
+                  return (
+                    <label key={s.id} className="check-item">
+                      <input
+                        type="checkbox"
+                        checked={marcada}
+                        onChange={() => {
+                          const actuales = form.sucursal_ids ?? [];
+                          const siguientes = marcada
+                            ? actuales.filter(id => id !== s.id)
+                            : [...actuales, s.id];
+                          // La principal es la primera marcada: es la que se abre
+                          // por defecto al entrar al panel.
+                          setForm({
+                            ...form,
+                            sucursal_ids: siguientes,
+                            sucursal_id: siguientes.includes(form.sucursal_id ?? -1)
+                              ? form.sucursal_id
+                              : siguientes[0] ?? null,
+                          });
+                        }}
+                      />
+                      <span>{s.nombre}</span>
+                    </label>
+                  );
+                })}
+              </div>
+              <span className="form-hint">
+                {(form.sucursal_ids ?? []).length === 0
+                  ? 'Sin ninguna marcada no va a ver datos de ninguna sucursal.'
+                  : 'Solo va a ver y filtrar estas sucursales. El resto del negocio le queda fuera.'}
+              </span>
             </div>
           )}
           {form.id && (
@@ -199,7 +256,16 @@ export default function UsuariosPage() {
                 </div>
               )},
               { key: 'rol', header: 'Rol', render: (row: any) => <RolBadge rol={row.rol} /> },
-              { key: 'sucursal', header: 'Sucursal', render: (row: any) => row.sucursal?.nombre ?? '—' },
+              {
+                key: 'sucursal',
+                header: 'Sucursales',
+                render: (row: FilaUsuario) => {
+                  // El dueño no lleva asignaciones: su alcance es todo el negocio.
+                  if (row.rol === 'DUENO') return 'Todas';
+                  const nombres = (row.sucursales ?? []).map(s => s.nombre);
+                  return nombres.length > 0 ? nombres.join(', ') : (row.sucursal?.nombre ?? '—');
+                },
+              },
               { key: 'estado', header: 'Estado', render: (row: any) => <StatusBadge status={row.activo ? 'abierto' : 'cerrado'} label={row.activo ? 'Activo' : 'Inactivo'} /> },
               {
                 key: 'acciones',

@@ -204,9 +204,21 @@ describe('POST /api/caja/clientes/[id]/abono — deudor con muchas deudas', () =
       where: { cliente_id: clienteMuchasId, tipo: 'POR_COBRAR', estado: { not: 'PAGADA' } },
     });
     expect(pendientes).toBe(0);
-    const pagos = await prisma.cuentaCorrientePago.count({
+
+    // Las escrituras van agrupadas (un INSERT para todos los movimientos, otro
+    // para el ledger), así que hay que comprobar que cada pago quedó atado a SU
+    // movimiento: si el enlace se corriera, la plata se imputaría a otra deuda.
+    const pagos = await prisma.cuentaCorrientePago.findMany({
       where: { cuenta_id: { in: deudas.map(d => d.id) } },
+      include: { movimiento_caja: true },
     });
-    expect(pagos).toBe(CANTIDAD_DEUDAS);
+    expect(pagos).toHaveLength(CANTIDAD_DEUDAS);
+    expect(new Set(pagos.map(p => p.movimiento_caja_id)).size).toBe(CANTIDAD_DEUDAS);
+    for (const p of pagos) {
+      expect(p.movimiento_caja).not.toBeNull();
+      expect(Number(p.movimiento_caja!.monto)).toBe(Number(p.monto));
+      expect(p.movimiento_caja!.metodo_pago).toBe('QR');
+      expect(p.movimiento_caja!.turno_id).toBe(turnoId);
+    }
   });
 });

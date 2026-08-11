@@ -9,6 +9,7 @@
  */
 import prisma from '@/lib/prisma';
 import { NotFoundError, ValidationError } from '@/lib/server/errors';
+import { ForbiddenError } from '@/lib/server/auth/session';
 import type { Prisma } from '@prisma/client';
 
 type Db = Prisma.TransactionClient | typeof prisma;
@@ -52,22 +53,46 @@ export async function resolverSucursal(sucursalId: unknown, db: Db = prisma): Pr
  * Alcance de lectura de un usuario, aplicado en el servidor.
  *
  * - DUENO: ve todo el negocio. Sin `pedida` obtiene el consolidado; con `pedida`,
- *   esa sucursal. Es el único rol que puede comparar locales.
- * - Cualquier otro rol (ADMIN, CAJERO): queda encerrado en la sucursal que tiene
- *   asignada, ignorando lo que mande el query string. Esconder el selector en la
- *   interfaz no alcanza: la restricción tiene que vivir acá, porque la API se
- *   puede llamar a mano.
+ *   esa sucursal. Es el único rol que puede comparar todos los locales.
+ * - ADMIN: puede tener varias sucursales asignadas y elegir entre ellas. Si pide
+ *   una que no es suya, se corta con 403 en vez de caer a la principal: pedir el
+ *   local de al lado es un intento de evasión, no un descuido que haya que tapar.
+ *   Sin `pedida`, ve su sucursal principal (una a la vez, no el agregado).
+ * - CAJERO: una sola sucursal, la suya.
  *
- * Un usuario no-DUENO sin sucursal asignada devuelve `SIN_ALCANCE`, un id que no
+ * Esconder el selector en la interfaz no alcanza: la restricción tiene que vivir
+ * acá, porque la API se puede llamar a mano.
+ *
+ * Un usuario no-DUENO sin ninguna sucursal devuelve `SIN_ALCANCE`, un id que no
  * existe, para que las consultas no devuelvan nada. Es deliberado: ante una
  * asignación faltante, mostrar todo el negocio sería la falla peligrosa.
  */
 export const SIN_ALCANCE = -1;
 
-export function alcanceSucursal(
-  session: { rol: string; sucursal_id: number | null },
-  pedida?: number,
-): number | undefined {
+export interface SesionConAlcance {
+  rol: string;
+  sucursal_id: number | null;
+  /** Opcional: las sesiones viejas de los tests traen solo `sucursal_id`. */
+  sucursales?: number[];
+}
+
+/** Sucursales que el usuario puede ver, sin duplicados. */
+function sucursalesDe(session: SesionConAlcance): number[] {
+  const lista = [...(session.sucursales ?? [])];
+  if (session.sucursal_id != null && !lista.includes(session.sucursal_id)) {
+    lista.push(session.sucursal_id);
+  }
+  return lista;
+}
+
+export function alcanceSucursal(session: SesionConAlcance, pedida?: number): number | undefined {
   if (session.rol === 'DUENO') return pedida;
-  return session.sucursal_id ?? SIN_ALCANCE;
+
+  const propias = sucursalesDe(session);
+  if (propias.length === 0) return SIN_ALCANCE;
+  if (pedida == null) return session.sucursal_id ?? propias[0];
+  if (!propias.includes(pedida)) {
+    throw new ForbiddenError('No tenés acceso a esa sucursal');
+  }
+  return pedida;
 }

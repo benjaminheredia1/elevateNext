@@ -2,8 +2,9 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import BotonExportarExcel from '@/components/ui/BotonExportarExcel';
 import AdminPanel from '@/components/admin/AdminPanel';
-import { useAdminClientes, type PeriodoClientes } from '@/hooks/admin-clientes';
+import { useAdminClientes, type PeriodoClientes, paramsClientes } from '@/hooks/admin-clientes';
 import { useCrearCliente } from '@/hooks/privilegios';
 import apiClient from '@/hooks/api';
 import KpiCard from '@/components/ui/KpiCard';
@@ -455,6 +456,7 @@ export default function ClientesAdminPage() {
           <p>Historial y métricas de clientes registrados.</p>
         </div>
         <div style={{ display: 'flex', gap: 10 }}>
+          <BotonExportarExcel url={`/api/admin/clientes/export?${paramsClientes('', periodo)}`} />
           <button className="admin-btn secondary" onClick={() => setMergeOpen(true)} disabled={items.length < 2}>
             Fusionar duplicados
           </button>
