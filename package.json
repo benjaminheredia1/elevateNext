@@ -41,6 +41,7 @@
     "recharts": "^3.9.0",
     "resend": "^6.17.2",
     "tsx": "^4.22.4",
+    "write-excel-file": "^4.1.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {

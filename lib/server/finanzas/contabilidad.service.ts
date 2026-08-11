@@ -179,3 +179,46 @@ export async function balanceGeneral(sucursal?: number) {
     patrimonio: toNumber(patrimonio),
   };
 }
+
+/**
+ * Movimientos contables del período, en detalle, para la descarga en Excel.
+ *
+ * Las ventas se acompañan de los productos que se vendieron: un renglón que solo
+ * dice "Venta #908 — Bs 110" no permite auditar nada, y ese detalle es la razón
+ * por la que se baja el archivo en vez de mirar la pantalla.
+ */
+export async function movimientosContables(rango: RangoFechas, sucursal?: number) {
+  const movimientos = await prisma.movimientoCaja.findMany({
+    where: {
+      created_at: { gte: rango.desde, lte: rango.hasta },
+      ...(sucursal ? { sucursal_id: sucursal } : {}),
+    },
+    orderBy: { created_at: 'desc' },
+    include: {
+      transaccion: {
+        select: {
+          transaccionesDetalles_id: {
+            select: { cantidad: true, producto: { select: { nombre: true } } },
+          },
+        },
+      },
+    },
+  });
+
+  return movimientos.map(m => {
+    const productos = m.transaccion?.transaccionesDetalles_id
+      .map(d => (d.cantidad > 1 ? `${d.producto?.nombre ?? 'Producto'} x${d.cantidad}` : d.producto?.nombre ?? 'Producto'))
+      .join(', ');
+    const monto = Number(m.monto);
+    return {
+      fecha: m.created_at,
+      // El signo es lo que define si entró o salió plata: los egresos se guardan
+      // en negativo.
+      tipo: monto < 0 ? 'Egreso' : 'Ingreso',
+      concepto: m.concepto,
+      detalle: productos || m.categoria || '',
+      monto: Math.abs(monto),
+      metodo_pago: m.metodo_pago,
+    };
+  });
+}

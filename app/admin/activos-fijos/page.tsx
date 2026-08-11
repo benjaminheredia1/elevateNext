@@ -1,6 +1,7 @@
 'use client';
 
 import { FormEvent, useEffect, useState } from 'react';
+import BotonExportarExcel from '@/components/ui/BotonExportarExcel';
 import AdminPanel from '@/components/admin/AdminPanel';
 import {
   CATEGORIAS_ACTIVO,
@@ -262,7 +263,10 @@ export default function ActivosFijosPage() {
           <h1>Activos Fijos</h1>
           <p>Inventario de bienes del negocio con seguimiento de depreciación.</p>
         </div>
-        <button className="admin-btn primary" onClick={() => setEditing(EMPTY_FORM)}>Nuevo activo</button>
+        <div className="admin-toolbar" style={{ marginBottom: 0 }}>
+          <BotonExportarExcel url="/api/admin/activos-fijos/export" />
+          <button className="admin-btn primary" onClick={() => setEditing(EMPTY_FORM)}>Nuevo activo</button>
+        </div>
       </div>
 
       {activos.isLoading ? (

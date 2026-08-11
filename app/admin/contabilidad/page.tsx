@@ -1,9 +1,10 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import BotonExportarExcel from '@/components/ui/BotonExportarExcel';
 import AdminPanel from '@/components/admin/AdminPanel';
 import VentaDetalleModal from '@/components/admin/VentaDetalleModal';
-import { useBalance, useEstadoResultados, useFlujoCaja, type RangoState } from '@/hooks/finanzas';
+import { useBalance, useEstadoResultados, useFlujoCaja, queryString, type RangoState } from '@/hooks/finanzas';
 import KpiCard from '@/components/ui/KpiCard';
 import MoneyText from '@/components/ui/MoneyText';
 import RangeFilter from '@/components/ui/RangeFilter';
@@ -13,16 +14,6 @@ import EmptyState from '@/components/ui/EmptyState';
 
 type Tab = 'estado' | 'balance';
 
-function downloadCsv(filename: string, rows: (string | number)[][]) {
-  const csv = rows.map(row => row.map(cell => `"${String(cell).replaceAll('"', '""')}"`).join(',')).join('\n');
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
 
 export default function AdminContabilidadPage() {
   const [tab, setTab] = useState<Tab>('estado');
@@ -39,20 +30,6 @@ export default function AdminContabilidadPage() {
     [er],
   );
 
-  const handleExport = () => {
-    if (!er) return;
-    downloadCsv('estado-resultados.csv', [
-      ['Concepto', 'Monto'],
-      ['Ingresos (devengado)', er.ingresos?.total ?? 0],
-      ['Por cobrar (fiados del periodo)', er.ingresos?.por_cobrar ?? 0],
-      ['CMV (consumo por receta)', er.cmv ?? 0],
-      ['Utilidad bruta', er.utilidad_bruta ?? 0],
-      ['Gastos operativos', er.gastos_operativos ?? 0],
-      ['  - Gastos de caja', er.gastos_caja ?? 0],
-      ['  - Gastos fijos prorrateados', er.gastos_fijos_prorrateados ?? 0],
-      ['Utilidad neta', er.utilidad_neta ?? 0],
-    ]);
-  };
 
   return (
     <AdminPanel>
@@ -63,7 +40,13 @@ export default function AdminContabilidadPage() {
         </div>
         <div className="admin-toolbar" style={{ marginBottom: 0 }}>
           <RangeFilter value={rango} onChange={setRango} />
-          <button className="admin-btn secondary" onClick={handleExport} disabled={!er}>Exportar CSV</button>
+          {/* Un archivo por pestaña: el Estado de Resultados baja los movimientos
+              del período y el Balance, la foto patrimonial. */}
+          <BotonExportarExcel
+            url={tab === 'estado'
+              ? `/api/admin/contabilidad/estado-resultados/export?${queryString(rango)}`
+              : `/api/admin/contabilidad/balance/export${rango.sucursal ? `?sucursal=${rango.sucursal}` : ''}`}
+          />
         </div>
       </div>
 

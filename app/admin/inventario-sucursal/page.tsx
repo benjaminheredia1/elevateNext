@@ -1,6 +1,7 @@
 'use client';
 
 import { FormEvent, useEffect, useMemo, useState } from 'react';
+import BotonExportarExcel from '@/components/ui/BotonExportarExcel';
 import AdminPanel from '@/components/admin/AdminPanel';
 import apiClient from '@/hooks/api';
 import KpiCard from '@/components/ui/KpiCard';
@@ -171,6 +172,9 @@ export default function InventarioSucursalPage() {
           <p>Stock, costo y alertas de cada local por separado.</p>
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
+          <BotonExportarExcel
+            url={`/api/admin/inventario/sucursal/export${sucursalId ? `?sucursal=${sucursalId}` : ''}`}
+          />
           <label className="sucursal-selector">
             <span>Sucursal</span>
             <select

@@ -70,3 +70,6 @@ next-env.d.ts
 /onboarding_fase6.md
 /pendientes.md
 /actions/
+
+# exports de prueba generados por BotonExportarExcel (artefactos, no fuente)
+/excelsAux/

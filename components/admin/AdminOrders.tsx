@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import apiClient from '@/hooks/api';
 import { useCrearFiado } from '@/hooks/cuentas-corrientes';
 import { useSucursalAdmin } from '@/hooks/sucursal-admin';
+import BotonExportarExcel from '@/components/ui/BotonExportarExcel';
 
 type EstadoPedido = 'PENDIENTE' | 'EN_PREPARACION' | 'LISTO' | 'EN_LOCAL' | 'EN_CAMINO' | 'LLEGO' | 'ENTREGADO' | 'CANCELADO' | 'PAGADO';
 type FiltroEstado = 'Todos' | EstadoPedido;
@@ -365,9 +366,12 @@ export default function AdminOrders({ readOnly = false }: { readOnly?: boolean }
           <h1>Pedidos</h1>
           <p>{pedidos.length} pedidos totales{readOnly ? ' · solo lectura (los gestiona Caja)' : ''}</p>
         </div>
-        <button className="admin-btn secondary" onClick={fetchPedidos} type="button">
-          {loading ? 'Actualizando...' : 'Actualizar'}
-        </button>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <BotonExportarExcel url={`/api/admin/ventas/export${sucursal ? `?sucursal=${sucursal}` : ''}`} />
+          <button className="admin-btn secondary" onClick={fetchPedidos} type="button">
+            {loading ? 'Actualizando...' : 'Actualizar'}
+          </button>
+        </div>
       </div>
 
       {actionError && (

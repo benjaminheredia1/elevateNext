@@ -7,6 +7,7 @@ import {
 } from './inventoryData';
 import AdminProductWizard, { type WizardInitial, type CampoHeredable } from './AdminProductWizard';
 import ProductoSucursalesModal from './ProductoSucursalesModal';
+import BotonExportarExcel from '@/components/ui/BotonExportarExcel';
 import SucursalSelector from '@/components/ui/SucursalSelector';
 import CopiarProductosModal from '@/components/admin/CopiarProductosModal';
 import { useSucursales } from '@/hooks/sucursales';
@@ -304,6 +305,7 @@ export default function AdminProducts() {
           </p>
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
+          <BotonExportarExcel url={`/api/admin/productos/export${sucursal ? `?sucursal=${sucursal}` : ''}`} />
           {/* El precio, el costo y el rinde son siempre de UN local: sumarlos
               entre sucursales daría un número que no existe en ninguna. */}
           <SucursalSelector value={sucursal} onChange={setSucursal} permitirTodas={false} />

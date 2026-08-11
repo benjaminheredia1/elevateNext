@@ -1,9 +1,10 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import BotonExportarExcel from '@/components/ui/BotonExportarExcel';
 import AdminPanel from '@/components/admin/AdminPanel';
 import VentaDetalleModal, { renderMetodo } from '@/components/admin/VentaDetalleModal';
-import { useFlujoCaja, type RangoState } from '@/hooks/finanzas';
+import { useFlujoCaja, queryString, type RangoState } from '@/hooks/finanzas';
 import KpiCard from '@/components/ui/KpiCard';
 import MoneyText from '@/components/ui/MoneyText';
 import RangeFilter from '@/components/ui/RangeFilter';
@@ -37,7 +38,10 @@ export default function AdminFlujoCajaPage() {
           <h1>Flujo de Caja</h1>
           <p>Entradas, salidas y neto por metodo y categoria.</p>
         </div>
-        <RangeFilter value={rango} onChange={setRango} />
+        <div className="admin-toolbar" style={{ marginBottom: 0 }}>
+          <RangeFilter value={rango} onChange={setRango} />
+          <BotonExportarExcel url={`/api/admin/flujo-caja/export?${queryString(rango)}`} />
+        </div>
       </div>
 
       {ventaAbierta !== null && (
