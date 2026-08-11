@@ -12,14 +12,20 @@ export const CATEGORIAS_ACTIVO = [
 
 export type CategoriaActivo = (typeof CATEGORIAS_ACTIVO)[number];
 
+export type MetodoPagoActivo = 'EFECTIVO' | 'QR';
+
 export interface ActivoFijoPayload {
   id?: number;
   nombre: string;
   categoria: CategoriaActivo;
   fecha_compra: string;
   valor_original: number;
-  valor_actual: number;
+  /** Lo calcula el backend por depreciacion; el formulario ya no lo pide. */
+  valor_actual?: number;
   depreciacion_pct?: number | null;
+  /** Vida util cuando la depreciacion se cargo por anios en vez de por %. */
+  vida_util_anios?: number | null;
+  metodo_pago: MetodoPagoActivo;
   notas?: string | null;
 }
 

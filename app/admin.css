@@ -554,6 +554,11 @@
   transition: all 0.15s;
 }
 .pay-method-btn.active { background: var(--orange); border-color: var(--orange); color: #fff; }
+
+/* Depreciacion: input corto + lectura equivalente al lado (5 anios = 20% anual) */
+.depre-row { display: flex; align-items: center; gap: 12px; }
+.depre-row .depre-input { max-width: 120px; }
+.depre-hint { color: var(--slate); font-size: .88rem; font-weight: 600; }
 .admin-row-delete {
   border: none;
   background: transparent;

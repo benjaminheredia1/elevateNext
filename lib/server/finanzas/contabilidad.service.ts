@@ -2,6 +2,7 @@ import prisma from '@/lib/prisma';
 import { Prisma } from '@prisma/client';
 import type { RangoFechas } from './rango';
 import { ventasNetas, cmvPorReceta, gastosOperativos } from './metricas.service';
+import { valorEnLibros } from '@/lib/server/admin/activos.service';
 
 function toNumber(value: Prisma.Decimal): number {
   return Number(value.toFixed(2));
@@ -117,7 +118,7 @@ export async function balanceGeneral(sucursal?: number) {
     }),
     prisma.activoFijo.findMany({
       where: { activo: true },
-      select: { valor_actual: true },
+      select: { valor_original: true, valor_actual: true, depreciacion_pct: true, fecha_compra: true },
     }),
   ]);
 
@@ -143,8 +144,18 @@ export async function balanceGeneral(sucursal?: number) {
     .reduce((sum, cc) => sum.plus(saldoPendiente(cc)), new Prisma.Decimal(0));
 
   // Valor neto actual de los activos fijos (equipos, muebles, etc.).
+  // Mismo criterio que el panel de activos fijos: el valor en libros se deriva
+  // de la depreciacion acumulada, no del numero congelado al dar de alta.
   const activosFijos = activosFijosRows.reduce(
-    (sum, af) => sum.plus(af.valor_actual),
+    (sum, af) =>
+      sum.plus(
+        valorEnLibros(
+          Number(af.valor_original),
+          af.depreciacion_pct != null ? Number(af.depreciacion_pct) : null,
+          af.fecha_compra,
+          Number(af.valor_actual),
+        ),
+      ),
     new Prisma.Decimal(0),
   );
 
