@@ -115,7 +115,7 @@ export async function habilitarProductoEnSucursal(
 ) {
   const producto = await db.producto.findUnique({
     where: { id: productoId },
-    select: { id: true, precio: true, tipo: true },
+    select: { id: true, precio: true, tipo: true, insumo_reventa_id: true },
   });
   if (!producto) throw new NotFoundError('Producto no encontrado');
 
@@ -124,7 +124,14 @@ export async function habilitarProductoEnSucursal(
   if (!sucursal.activa) throw new ValidationError('La sucursal indicada está desactivada');
 
   const precio = input.precio ?? Number(producto.precio);
-  if (!(precio > 0)) throw new ValidationError('El precio de venta debe ser mayor a cero');
+  // Un producto traído de otra sucursal entra sin precio: el local le pone el
+  // suyo. Se admite el cero solo si además entra fuera de venta, para que nunca
+  // llegue a la carta a Bs 0; con `disponible` distinto de false se sigue
+  // exigiendo un precio real.
+  const entraFueraDeVenta = input.disponible === false;
+  if (!(precio > 0) && !(precio === 0 && entraFueraDeVenta)) {
+    throw new ValidationError('El precio de venta debe ser mayor a cero');
+  }
 
   const yaHabilitado = await db.productoSucursal.findUnique({
     where: { producto_id_sucursal_id: { producto_id: productoId, sucursal_id: sucursalId } },
@@ -153,10 +160,16 @@ export async function habilitarProductoEnSucursal(
     },
   });
 
-  // La copia de receta solo ocurre en el alta, y solo si la sucursal destino aún
-  // no tiene ficha propia: nunca pisa una receta ya ajustada por el local.
-  if (!yaHabilitado && producto.tipo === 'ELABORADO' && input.copiar_receta_de) {
-    await copiarReceta(productoId, input.copiar_receta_de, sucursalId, db);
+  // La copia de ficha técnica solo ocurre en el alta, y solo si la sucursal
+  // destino aún no tiene una propia: nunca pisa una receta ya ajustada.
+  if (!yaHabilitado && input.copiar_receta_de) {
+    if (producto.tipo === 'ELABORADO') {
+      await copiarReceta(productoId, input.copiar_receta_de, sucursalId, db);
+    } else if (producto.insumo_reventa_id != null) {
+      // Reventa: no hay receta, pero el producto ES un insumo. Sin darlo de alta
+      // acá, el local lo vendía sin descontar nada de su inventario y sin costo.
+      await habilitarInsumosEnSucursal([producto.insumo_reventa_id], sucursalId, db);
+    }
   }
 
   return habilitacion;
@@ -196,61 +209,46 @@ export async function copiarReceta(
   // ficha técnica que apunta a insumos que el local no maneja no puede
   // descontar stock ni calcular su costo, y el insumo ni siquiera aparecería
   // en su inventario. El stock no se copia — la mercadería no se mueve sola.
-  await habilitarInsumosEnSucursal(origen.map(i => i.insumo_id), desdeSucursal, haciaSucursal, db);
+  await habilitarInsumosEnSucursal(origen.map(i => i.insumo_id), haciaSucursal, db);
 
   return origen.length;
 }
 
 /**
- * Da de alta en el inventario de una sucursal los insumos indicados, con stock
- * en cero y los niveles de alerta que tienen en la sucursal de referencia. Los
- * que el local ya maneja no se tocan: sus mínimos son suyos.
+ * Da de alta en el inventario de una sucursal los insumos indicados, TODO en
+ * cero: stock, costo promedio y niveles de alerta.
+ *
+ * Nada se toma de la sucursal de origen a propósito. El costo promedio es lo que
+ * pagó ese otro local por su mercadería; heredarlo mete su plata en el CMV y el
+ * food cost del local nuevo, que todavía no compró nada. Cada sucursal carga su
+ * costo real al registrar su primera compra, y sus mínimos según cuánto venda.
+ *
+ * Los insumos que el local ya maneja no se tocan: esos números son suyos.
  */
 async function habilitarInsumosEnSucursal(
   insumoIds: number[],
-  desdeSucursal: number,
   haciaSucursal: number,
   db: Db = prisma,
 ) {
   if (insumoIds.length === 0) return 0;
 
-  const [enOrigen, yaEnDestino] = await Promise.all([
-    db.stockSucursal.findMany({
-      where: { sucursal_id: desdeSucursal, insumo_id: { in: insumoIds } },
-      select: { insumo_id: true, costo_promedio: true, stock_minimo: true, punto_critico: true },
-    }),
-    db.stockSucursal.findMany({
-      where: { sucursal_id: haciaSucursal, insumo_id: { in: insumoIds } },
-      select: { insumo_id: true },
-    }),
-  ]);
-
-  const referencia = new Map(enOrigen.map(f => [f.insumo_id, f]));
+  const yaEnDestino = await db.stockSucursal.findMany({
+    where: { sucursal_id: haciaSucursal, insumo_id: { in: insumoIds } },
+    select: { insumo_id: true },
+  });
   const yaEstan = new Set(yaEnDestino.map(f => f.insumo_id));
-  const faltantes = insumoIds.filter(id => !yaEstan.has(id));
+  const faltantes = [...new Set(insumoIds)].filter(id => !yaEstan.has(id));
   if (faltantes.length === 0) return 0;
 
-  // Sin fila en el origen (caso raro: receta vieja) se cae a los niveles del
-  // catálogo, que es lo que hace `obtenerOCrearStock`.
-  const delCatalogo = new Map(
-    (await db.insumo.findMany({
-      where: { id: { in: faltantes } },
-      select: { id: true, costo_promedio: true, stock_minimo: true, punto_critico: true },
-    })).map(i => [i.id, i]),
-  );
-
   await db.stockSucursal.createMany({
-    data: faltantes.map(id => {
-      const base = referencia.get(id) ?? delCatalogo.get(id);
-      return {
-        insumo_id: id,
-        sucursal_id: haciaSucursal,
-        stock_actual: 0,
-        costo_promedio: base?.costo_promedio ?? 0,
-        stock_minimo: base?.stock_minimo ?? 0,
-        punto_critico: base?.punto_critico ?? 0,
-      };
-    }),
+    data: faltantes.map(id => ({
+      insumo_id: id,
+      sucursal_id: haciaSucursal,
+      stock_actual: 0,
+      costo_promedio: 0,
+      stock_minimo: 0,
+      punto_critico: 0,
+    })),
     skipDuplicates: true,
   });
 

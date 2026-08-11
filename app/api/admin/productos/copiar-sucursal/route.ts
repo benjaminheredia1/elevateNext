@@ -14,8 +14,11 @@ const CopiarSchema = z.object({
   destino: z.number().int().positive(),
   /** Productos a habilitar. Vacío no hace nada: se exige elegir. */
   productos: z.array(z.number().int().positive()).min(1),
-  /** Copiar también el precio del origen; si no, se usa el del catálogo. */
-  copiar_precio: z.boolean().optional().default(true),
+  /**
+   * Se acepta por compatibilidad con clientes viejos, pero ya no copia nada: el
+   * precio del destino siempre arranca en cero. Ver el comentario de abajo.
+   */
+  copiar_precio: z.boolean().optional(),
 });
 
 /**
@@ -57,7 +60,12 @@ export async function POST(req: NextRequest) {
     const copiados = await prisma.$transaction(async (tx) => {
       for (const fila of enOrigen) {
         await habilitarProductoEnSucursal(fila.producto_id, input.destino, {
-          precio: input.copiar_precio ? Number(fila.precio) : undefined,
+          // Precio en cero y fuera de venta: lo que cuesta un plato depende de lo
+          // que ESTA sucursal paga por sus insumos, no de lo que paga la otra.
+          // Entra como borrador para que no aparezca en la carta a Bs 0 mientras
+          // el local le pone su precio.
+          precio: 0,
+          disponible: false,
           copiar_receta_de: input.origen,
           // La ficha que se trae es la que el origen tiene en pantalla: si le
           // puso nombre o descripción propios, el destino arranca con esos. Lo
@@ -68,7 +76,7 @@ export async function POST(req: NextRequest) {
           descripcion:        fila.descripcion,
           calorias:           fila.calorias,
           proteina:           fila.proteina,
-          estado_publicacion: fila.estado_publicacion,
+          estado_publicacion: 'BORRADOR',
         }, tx);
       }
       return enOrigen.length;
@@ -77,7 +85,7 @@ export async function POST(req: NextRequest) {
     await logAudit({
       usuarioId: session.id, rol: session.rol, accion: 'MODIFICO',
       entidad: 'Sucursal', entidadId: input.destino,
-      detalle: `Copió ${copiados} producto(s) desde la sucursal #${input.origen}`,
+      detalle: `Copió ${copiados} producto(s) desde la sucursal #${input.origen} (sin precio ni stock: los carga el local)`,
       ip: getClientIp(req), userAgent: req.headers.get('user-agent'),
     });
 
