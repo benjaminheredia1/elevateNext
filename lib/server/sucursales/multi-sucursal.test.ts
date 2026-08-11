@@ -6,6 +6,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import prisma from '@/lib/prisma';
 import { alcanceSucursal, resolverSucursal, sucursalPorDefectoId, SIN_ALCANCE } from './sucursal.service';
+import { ForbiddenError } from '@/lib/server/auth/session';
 import {
   habilitarProductoEnSucursal,
   precioEnSucursal,
@@ -69,18 +70,34 @@ describe('alcance por rol', () => {
     expect(alcanceSucursal({ rol: 'DUENO', sucursal_id: 1 }, undefined)).toBeUndefined();
   });
 
-  it('el admin queda encerrado en su sucursal aunque pida otra', () => {
-    expect(alcanceSucursal({ rol: 'ADMIN', sucursal_id: 2 }, 99)).toBe(2);
-    expect(alcanceSucursal({ rol: 'ADMIN', sucursal_id: 2 }, undefined)).toBe(2);
+  it('el admin con una sola sucursal solo puede verla a ella', () => {
+    expect(alcanceSucursal({ rol: 'ADMIN', sucursal_id: 2, sucursales: [2] }, undefined)).toBe(2);
+    // Pedir el local de al lado se corta acá, no se ignora en silencio.
+    expect(() => alcanceSucursal({ rol: 'ADMIN', sucursal_id: 2, sucursales: [2] }, 99)).toThrow(ForbiddenError);
+  });
+
+  it('el admin con varias sucursales elige entre las suyas, y solo entre esas', () => {
+    const admin = { rol: 'ADMIN', sucursal_id: 2, sucursales: [2, 5, 8] };
+    expect(alcanceSucursal(admin, 5)).toBe(5);
+    expect(alcanceSucursal(admin, 8)).toBe(8);
+    // Sin pedir nada cae a su principal: nunca al agregado de todo el negocio.
+    expect(alcanceSucursal(admin, undefined)).toBe(2);
+    expect(() => alcanceSucursal(admin, 99)).toThrow(ForbiddenError);
+  });
+
+  it('la sucursal principal cuenta como alcance aunque no esté en la lista', () => {
+    // Usuario dado de alta antes de la tabla puente: no puede quedarse ciego.
+    expect(alcanceSucursal({ rol: 'ADMIN', sucursal_id: 4, sucursales: [] }, 4)).toBe(4);
   });
 
   it('el cajero queda encerrado en su sucursal aunque pida otra', () => {
-    expect(alcanceSucursal({ rol: 'CAJERO', sucursal_id: 3 }, 99)).toBe(3);
+    expect(alcanceSucursal({ rol: 'CAJERO', sucursal_id: 3, sucursales: [3] }, undefined)).toBe(3);
+    expect(() => alcanceSucursal({ rol: 'CAJERO', sucursal_id: 3, sucursales: [3] }, 99)).toThrow(ForbiddenError);
   });
 
   it('sin sucursal asignada no ve nada, en vez de ver todo el negocio', () => {
-    expect(alcanceSucursal({ rol: 'ADMIN', sucursal_id: null })).toBe(SIN_ALCANCE);
-    expect(alcanceSucursal({ rol: 'CAJERO', sucursal_id: null })).toBe(SIN_ALCANCE);
+    expect(alcanceSucursal({ rol: 'ADMIN', sucursal_id: null, sucursales: [] })).toBe(SIN_ALCANCE);
+    expect(alcanceSucursal({ rol: 'CAJERO', sucursal_id: null, sucursales: [] })).toBe(SIN_ALCANCE);
   });
 });
 

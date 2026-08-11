@@ -123,8 +123,27 @@ model Usuario {
   horarios               HorarioTrabajador[]
   password_reset_tokens  PasswordResetToken[]
   pagos_cuenta_corriente CuentaCorrientePago[]
+  // Sucursales que el usuario puede ver. `sucursal_id` sigue siendo la principal
+  // (la del cajero y la que se elige por defecto); esta tabla es el alcance
+  // completo, para el admin que administra varios locales.
+  sucursales_asignadas   UsuarioSucursal[]
   created_at             DateTime              @default(now())
   update_at              DateTime              @updatedAt
+}
+
+/**
+ * Sucursales asignadas a un usuario (alcance de lectura del ADMIN).
+ * El DUENO no lleva filas acá: ve todo el negocio por rol.
+ */
+model UsuarioSucursal {
+  usuario_id  Int
+  sucursal_id Int
+  usuario     Usuario  @relation(fields: [usuario_id], references: [id], onDelete: Cascade)
+  sucursal    Sucursal @relation(fields: [sucursal_id], references: [id], onDelete: Cascade)
+  created_at  DateTime @default(now())
+
+  @@id([usuario_id, sucursal_id])
+  @@index([sucursal_id])
 }
 
 model PasswordResetToken {
@@ -735,6 +754,7 @@ model Sucursal {
   /// Hasta dónde reparte el local. Más lejos no se cotiza. Null = sin límite.
   envio_radio_km      Float?
   usuarios            Usuario[]
+  usuarios_asignados  UsuarioSucursal[]
   cuentas             CuentaFinanciera[]
   turnos              CajaTurno[]
   diasFeriados        DiaFeriado[]

@@ -24,5 +24,7 @@ export function useSesion() {
     cargando: isLoading,
     /** Único rol con visión de todo el negocio y capacidad de comparar locales. */
     esDueno: data?.rol === 'DUENO',
+    /** Sucursales que el usuario puede ver. Vacío en el dueño: las ve todas. */
+    misSucursales: (data?.sucursales ?? []) as number[],
   };
 }

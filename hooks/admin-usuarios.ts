@@ -13,7 +13,12 @@ export interface UsuarioPayload {
   password?: string;
   rol: RolUsuario;
   activo?: boolean;
+  /** Sucursal principal: la del cajero, y la que el admin ve por defecto. */
   sucursal_id?: number | null;
+  /** Alcance del admin: todas las sucursales que puede administrar. */
+  sucursal_ids?: number[];
+  /** Solo de lectura, lo devuelve el listado para pintar la tabla. */
+  sucursales?: { id: number; nombre: string }[];
 }
 
 export function useAdminUsuarios() {

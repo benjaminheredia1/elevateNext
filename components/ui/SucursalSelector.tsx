@@ -20,9 +20,15 @@ export default function SucursalSelector({ value, onChange, permitirTodas = true
   onChange: (sucursal?: string) => void;
   permitirTodas?: boolean;
 }) {
-  const { data: sucursales = [] } = useSucursales();
+  const { data: todas = [] } = useSucursales();
   const { sucursal: sucursalPanel, setSucursal: setSucursalPanel } = useSucursalAdmin();
-  const { esDueno } = useSesion();
+  const { esDueno, misSucursales } = useSesion();
+
+  // El admin solo elige entre las suyas. El servidor igual rechaza con 403 una
+  // sucursal ajena; acotar la lista evita ofrecer una opción que va a fallar.
+  const sucursales = esDueno || misSucursales.length === 0
+    ? todas
+    : todas.filter(s => misSucursales.includes(s.id));
 
   // La sucursal elegida en la barra lateral manda: la pantalla la adopta.
   //
@@ -30,6 +36,15 @@ export default function SucursalSelector({ value, onChange, permitirTodas = true
   // pantalla ambas corrían con `value` todavía en undefined y la segunda pisaba
   // a la primera: elegías "Sucursal Sur" en la barra y Productos igual se abría
   // en la principal.
+  useEffect(() => {
+    if (esDueno || misSucursales.length === 0 || !sucursalPanel) return;
+    if (!misSucursales.includes(Number(sucursalPanel))) {
+      // Quedó guardada de otra sesión o le quitaron esa sucursal.
+      setSucursalPanel(undefined);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sucursalPanel, esDueno, misSucursales]);
+
   useEffect(() => {
     if (sucursales.length === 0) return;
 
@@ -46,10 +61,10 @@ export default function SucursalSelector({ value, onChange, permitirTodas = true
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sucursalPanel, permitirTodas, sucursales]);
 
-  // Con una sola sucursal el selector no aporta nada y solo ocupa espacio.
-  // Y quien no es dueño no elige: el servidor lo encierra en la suya, que la
-  // barra lateral ya muestra.
-  if (sucursales.length < 2 || !esDueno) return null;
+  // Con una sola sucursal el selector no aporta nada y solo ocupa espacio. El
+  // admin con varios locales sí elige, pero solo entre los suyos; el cajero
+  // (una sola) no ve el control: la barra lateral ya muestra dónde está parado.
+  if (sucursales.length < 2) return null;
 
   return (
     <label className="sucursal-selector">
@@ -59,7 +74,7 @@ export default function SucursalSelector({ value, onChange, permitirTodas = true
         // Cambiar acá cambia la sucursal de todo el panel, no solo de esta pantalla.
         onChange={e => setSucursalPanel(e.target.value || undefined)}
       >
-        {permitirTodas && <option value="">Todas</option>}
+        {permitirTodas && esDueno && <option value="">Todas</option>}
         {sucursales.map(s => (
           <option key={s.id} value={String(s.id)}>{s.nombre}</option>
         ))}
