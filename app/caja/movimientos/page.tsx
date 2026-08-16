@@ -6,6 +6,9 @@ import EmptyState from '@/components/ui/EmptyState';
 import MethodPill from '@/components/ui/MethodPill';
 import MoneyText from '@/components/ui/MoneyText';
 import { armarLibro, type MovimientoLibro, type PedidoSinCobro } from '@/lib/shared/libro-caja';
+import BotonRecibo from '@/components/ui/BotonRecibo';
+import { useLocalesRecibo } from '@/hooks/recibo';
+import { desdeTransaccion, type TransaccionRecibo } from '@/lib/recibo/adaptadores';
 
 type Movimiento = Omit<MovimientoLibro, 'transaccion'> & {
   transaccion?: {
@@ -14,11 +17,22 @@ type Movimiento = Omit<MovimientoLibro, 'transaccion'> & {
     total?: string | number;
     cliente_nombre?: string | null;
     codigo_descuento?: string | null;
+    // Lo que sigue solo lo usa el recibo que se reimprime desde la fila.
+    numero_sucursal?: number | null;
+    turno_id?: number | null;
+    created_at?: string;
+    metodo_pago?: string | null;
+    payment_status?: string | null;
+    es_cortesia?: boolean;
+    cajero?: { nombre: string } | null;
+    cuenta_corriente?: { monto: string | number; monto_pagado?: string | number; vencimiento?: string | null } | null;
+    movimientos?: { metodo_pago: string | null; monto: string | number }[];
     transaccionesDetalles_id?: {
       cantidad: number;
       precio_unitario: string | number;
+      descuentoAplicado?: string | number;
       producto: { nombre: string };
-      combo: { nombre: string } | null;
+      combo: { id?: number; nombre: string } | null;
     }[];
   } | null;
 };
@@ -29,6 +43,10 @@ export default function MovimientosCajaPage() {
   const { data, isLoading, isError } = useMovimientos();
   const [filtro, setFiltro] = useState<Filtro>('TODOS');
   const [abierta, setAbierta] = useState<string | null>(null);
+  // El recibo se ofrece solo en los movimientos de tipo VENTA: un ingreso extra
+  // o un gasto no tienen venta detrás, y un cobro de fiado tampoco es la venta.
+  const { localDe } = useLocalesRecibo();
+  const local = localDe(data?.turno?.sucursal_id);
 
   const entradas = useMemo(() => {
     const movimientos = (data?.movimientos ?? []) as Movimiento[];
@@ -140,6 +158,15 @@ export default function MovimientosCajaPage() {
                             // Ingresos y gastos manuales no tienen venta detrás.
                             <div className="admin-cell-sub">
                               Movimiento manual de caja, sin venta asociada. Concepto: {m.concepto}
+                            </div>
+                          )}
+
+                          {m.tipo === 'VENTA' && m.transaccion && (
+                            <div>
+                              <BotonRecibo
+                                etiqueta="Reimprimir recibo"
+                                datos={desdeTransaccion(m.transaccion as unknown as TransaccionRecibo, local)}
+                              />
                             </div>
                           )}
                         </div>

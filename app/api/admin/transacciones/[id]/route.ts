@@ -19,9 +19,19 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         cajero: { select: { id: true, nombre: true } },
         usuario: { select: { id: true, nombre: true } },
         transaccionesDetalles_id: {
-          include: { producto: { select: { id: true, nombre: true } } },
+          include: {
+            producto: { select: { id: true, nombre: true } },
+            // El combo se agrupa al imprimir: en el papel es una línea con su
+            // contenido, no una por producto componente.
+            combo: { select: { id: true, nombre: true } },
+          },
           orderBy: { id: 'asc' },
         },
+        // La deuda y el desglose del pago mixto solo los consume el recibo: el
+        // método "MIXTO" no dice cuánto entró por cada lado, eso vive en los
+        // MovimientoCaja hijos.
+        cuenta_corriente: { select: { monto: true, monto_pagado: true, vencimiento: true } },
+        movimientos: { where: { tipo: 'VENTA' }, select: { metodo_pago: true, monto: true } },
       },
     });
     if (!venta) throw new NotFoundError('Venta no encontrada');
@@ -37,6 +47,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         precio_unitario: precio,
         descuento: descuento,
         subtotal: Number((precio * Number(d.cantidad) - descuento).toFixed(2)),
+        combo: d.combo ? { id: d.combo.id, nombre: d.combo.nombre } : null,
       };
     });
 
@@ -47,6 +58,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       id: venta.id,
       codigo: venta.codigo,
       numero_turno: venta.numero_turno,
+      // El correlativo del local es el número que ve el cliente y el que manda
+      // en el recibo; `id` queda como referencia interna.
+      numero_sucursal: venta.numero_sucursal,
+      sucursal_id: venta.sucursal_id,
       created_at: venta.created_at,
       canal: venta.canal,
       tipo_entrega: venta.tipo_entrega,
@@ -71,6 +86,15 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       subtotal: Number(subtotal.toFixed(2)),
       descuento_total: Number(descuentoTotal.toFixed(2)),
       total: Number(venta.total),
+      // Solo para reimprimir el recibo desde el panel.
+      cuenta_corriente: venta.cuenta_corriente
+        ? {
+            monto: Number(venta.cuenta_corriente.monto),
+            monto_pagado: Number(venta.cuenta_corriente.monto_pagado),
+            vencimiento: venta.cuenta_corriente.vencimiento,
+          }
+        : null,
+      movimientos: venta.movimientos.map(m => ({ metodo_pago: m.metodo_pago, monto: Number(m.monto) })),
     });
   } catch (e) { return handleApiError(e); }
 }

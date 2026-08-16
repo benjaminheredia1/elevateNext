@@ -245,10 +245,12 @@ export interface VentaCaja {
     descuento: number;
     combo: { id: number; nombre: string } | null;
   }[];
+  /** Desglose del pago mixto; solo se usa para reimprimir el recibo. */
+  movimientos?: { metodo_pago: string | null; monto: number }[];
 }
 
 export interface VentasCaja {
-  turno: { id: number; numero?: number } | null;
+  turno: { id: number; numero?: number; sucursal_id?: number } | null;
   ambito: 'TURNO' | 'DIA';
   fecha: string | null;
   ventas: VentaCaja[];

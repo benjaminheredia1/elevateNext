@@ -6,6 +6,10 @@ import apiClient from '@/hooks/api';
 import { useCrearFiado } from '@/hooks/cuentas-corrientes';
 import { useSucursalAdmin } from '@/hooks/sucursal-admin';
 import BotonExportarExcel from '@/components/ui/BotonExportarExcel';
+import BotonRecibo from '@/components/ui/BotonRecibo';
+import { useLocalesRecibo } from '@/hooks/recibo';
+import { desdeTransaccion, type TransaccionRecibo } from '@/lib/recibo/adaptadores';
+import type { LocalRecibo } from '@/lib/recibo/tipos';
 
 type EstadoPedido = 'PENDIENTE' | 'EN_PREPARACION' | 'LISTO' | 'EN_LOCAL' | 'EN_CAMINO' | 'LLEGO' | 'ENTREGADO' | 'CANCELADO' | 'PAGADO';
 type FiltroEstado = 'Todos' | EstadoPedido;
@@ -16,6 +20,8 @@ interface DetalleItem {
   precio_unitario: number;
   descuentoAplicado: number;
   producto: { nombre: string };
+  /** Las líneas de un combo lo comparten: el recibo las agrupa en una. */
+  combo?: { id: number; nombre: string } | null;
 }
 
 interface Pedido {
@@ -36,6 +42,15 @@ interface Pedido {
   driver_nombre?: string | null;
   driver_link_id?: string | null;
   transaccionesDetalles_id: DetalleItem[];
+  // Datos que solo consume el recibo impreso.
+  sucursal_id?: number;
+  numero_turno?: number | null;
+  turno_id?: number | null;
+  codigo_descuento?: string | null;
+  es_cortesia?: boolean;
+  costo_envio?: number | string | null;
+  cajero?: { nombre: string } | null;
+  cuenta_corriente?: { monto: number | string; monto_pagado?: number | string; vencimiento?: string | null } | null;
 }
 
 const PAYMENT_META: Record<string, { label: string; color: string; bg: string }> = {
@@ -165,10 +180,11 @@ function FiadoModal({
   );
 }
 
-function PedidoCard({ pedido, expanded, onToggle }: {
+function PedidoCard({ pedido, expanded, onToggle, local }: {
   pedido: Pedido;
   expanded: boolean;
   onToggle: () => void;
+  local: LocalRecibo | null;
 }) {
   const totalItems = pedido.transaccionesDetalles_id.reduce((sum, item) => sum + Number(item.cantidad || 0), 0);
   const payment = PAYMENT_LABELS[pedido.metodo_pago ?? ''] ?? pedido.metodo_pago ?? 'Efectivo';
@@ -269,6 +285,10 @@ function PedidoCard({ pedido, expanded, onToggle }: {
               </div>
             )}
 
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <BotonRecibo datos={desdeTransaccion(pedido as unknown as TransaccionRecibo, local)} />
+            </div>
+
             {/* Solo lectura: la venta ya está cobrada y registrada por caja.
                 Los estados intermedios (en preparación, en camino, repartidor
                 llegó…) se eliminaron con el seguimiento de pedidos. */}
@@ -300,6 +320,8 @@ export default function AdminOrders({ readOnly = false }: { readOnly?: boolean }
   // Los pedidos son los del local elegido en el panel: cada sucursal prepara
   // y entrega los suyos.
   const { sucursal } = useSucursalAdmin();
+  // Encabezado del recibo: cada pedido se imprime con los datos de SU local.
+  const { localDe } = useLocalesRecibo();
 
   const fetchPedidos = useCallback(async () => {
     try {
@@ -431,6 +453,7 @@ export default function AdminOrders({ readOnly = false }: { readOnly?: boolean }
             <PedidoCard
               key={pedido.id}
               pedido={pedido}
+              local={localDe(pedido.sucursal_id)}
               expanded={expandedId === pedido.id}
               onToggle={() => setExpandedId(current => current === pedido.id ? null : pedido.id)}
             />
