@@ -7,7 +7,11 @@ import AlertPopup from '@/components/AlertPopup';
 import MethodPill from '@/components/ui/MethodPill';
 import MoneyText from '@/components/ui/MoneyText';
 import EmptyState from '@/components/ui/EmptyState';
+import ReciboVentaModal from '@/components/caja/ReciboVentaModal';
 import { useAbonarDeuda, useBuscarClientes, useCrearClienteCaja, usePrivilegiosCaja, useRegistrarVenta, type ClienteResultado } from '@/hooks/caja';
+import { useLocalesRecibo } from '@/hooks/recibo';
+import { desdeTransaccion, type TransaccionRecibo } from '@/lib/recibo/adaptadores';
+import type { DatosRecibo } from '@/lib/recibo/tipos';
 
 type Metodo = 'EFECTIVO' | 'QR' | 'TARJETA' | 'MIXTO';
 
@@ -96,6 +100,13 @@ export default function VentaCajaPage() {
   const [abonoDeuda, setAbonoDeuda] = useState('');
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [alert, setAlert] = useState<{ title: string; description: string; type: 'success' | 'error' | 'warning' } | null>(null);
+  /**
+   * Venta recién cobrada, a la espera de que el cajero decida si imprime.
+   * Se arma con lo que devolvió el servidor, no con el carrito: los precios y
+   * el número de la venta son los que quedaron guardados.
+   */
+  const [reciboPendiente, setReciboPendiente] = useState<{ datos: DatosRecibo; titulo: string; detalle: string } | null>(null);
+  const { localDe } = useLocalesRecibo();
   // Clave de la última línea agregada: destaca su tarjeta un instante para que
   // el cajero vea que el toque entró, sin tener que bajar hasta el carrito.
   const [pulso, setPulso] = useState<string | null>(null);
@@ -357,14 +368,17 @@ export default function VentaCajaPage() {
       limpiarCliente();
       // Nº del turno como identificador principal; el global queda de referencia
       const numVenta = venta.numero_turno != null ? `#${venta.numero_turno} (global #${venta.id})` : `#${venta.id}`;
-      setAlert({
-        title: esFiado ? 'Fiado registrado' : 'Venta registrada',
-        description: esFiado
+      // El recibo se arma con la venta que devolvió el servidor: sus precios,
+      // su correlativo y su desglose de pago, no los del carrito.
+      const guardada = venta as TransaccionRecibo & { sucursal_id?: number };
+      setReciboPendiente({
+        datos: desdeTransaccion(guardada, localDe(guardada.sucursal_id)),
+        titulo: esFiado ? 'Fiado registrado' : 'Venta registrada',
+        detalle: esFiado
           ? `Venta ${numVenta} cargada a la cuenta del cliente.`
           : venta.abono_deuda
             ? `Venta ${numVenta} creada. Incluye abono a deuda de Bs ${Number(venta.abono_deuda).toFixed(2)}.`
             : `Venta ${numVenta} creada correctamente.`,
-        type: 'success',
       });
     } catch (error: unknown) {
       setConfirmOpen(false);
@@ -381,6 +395,14 @@ export default function VentaCajaPage() {
   return (
     <div className={`pos-page ${cart.length > 0 ? 'with-cart-bar' : ''}`}>
       <AlertPopup visible={!!alert} title={alert?.title ?? ''} description={alert?.description ?? ''} type={alert?.type ?? 'info'} onClose={() => setAlert(null)} />
+      {reciboPendiente && (
+        <ReciboVentaModal
+          datos={reciboPendiente.datos}
+          titulo={reciboPendiente.titulo}
+          detalle={reciboPendiente.detalle}
+          onClose={() => setReciboPendiente(null)}
+        />
+      )}
       <ConfirmDialog
         isOpen={confirmOpen}
         onClose={() => setConfirmOpen(false)}

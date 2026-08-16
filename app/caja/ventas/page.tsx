@@ -5,6 +5,9 @@ import { useVentasCaja, type VentaCaja } from '@/hooks/caja';
 import EmptyState from '@/components/ui/EmptyState';
 import MethodPill from '@/components/ui/MethodPill';
 import MoneyText from '@/components/ui/MoneyText';
+import BotonRecibo from '@/components/ui/BotonRecibo';
+import { useLocalesRecibo } from '@/hooks/recibo';
+import { desdeVentaCaja } from '@/lib/recibo/adaptadores';
 
 /**
  * Ventas de la caja.
@@ -71,6 +74,9 @@ export default function VentasCajaPage() {
   const { data, isLoading, isError } = useVentasCaja();
   const [filtro, setFiltro] = useState<Filtro>('TODAS');
   const [abierta, setAbierta] = useState<number | null>(null);
+  // Reimpresión: el papel se traba, se corta o el cliente lo pide después.
+  const { localDe } = useLocalesRecibo();
+  const local = localDe(data?.turno?.sucursal_id);
 
   const ventas = useMemo(
     () => (data?.ventas ?? []).filter(v => cumple(v, filtro)),
@@ -228,6 +234,13 @@ export default function VentasCajaPage() {
                             {venta.forma === 'CORTESIA' && (
                               <div className="admin-cell-sub">Cortesía: no entró dinero a caja ni suma a los ingresos.</div>
                             )}
+
+                            <div>
+                              <BotonRecibo
+                                datos={desdeVentaCaja(venta, local, { turnoId: data?.turno?.id ?? null })}
+                                etiqueta="Reimprimir recibo"
+                              />
+                            </div>
                           </div>
                         </td>
                       </tr>

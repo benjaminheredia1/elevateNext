@@ -5,6 +5,9 @@ import apiClient from '@/hooks/api';
 import MoneyText from '@/components/ui/MoneyText';
 import MethodPill from '@/components/ui/MethodPill';
 import EmptyState from '@/components/ui/EmptyState';
+import BotonRecibo from '@/components/ui/BotonRecibo';
+import { useLocalesRecibo } from '@/hooks/recibo';
+import { desdeDetalleAdmin, type DetalleAdminRecibo } from '@/lib/recibo/adaptadores';
 
 const PAYMENT_METHODS = ['EFECTIVO', 'QR', 'TARJETA'] as const;
 
@@ -35,6 +38,9 @@ function fechaLarga(value: string) {
 export default function VentaDetalleModal({ transaccionId, onClose }: { transaccionId: number; onClose: () => void }) {
   const [venta, setVenta] = useState<any | null>(null);
   const [error, setError] = useState('');
+  // Reimpresión desde el panel: es la única pantalla que llega a una venta
+  // vieja de cualquier turno filtrando por fecha y sucursal.
+  const { localDe } = useLocalesRecibo();
 
   useEffect(() => {
     let cancelado = false;
@@ -72,6 +78,11 @@ export default function VentaDetalleModal({ transaccionId, onClose }: { transacc
                 <div><span className="dim">Dirección:</span> {venta.cliente?.direccion ?? '—'}</div>
                 <div><span className="dim">Método de pago:</span> {venta.metodo_pago ? renderMetodo(venta.metodo_pago) : '—'}</div>
                 <div><span className="dim">Canal:</span> {venta.canal ? (CANAL_LABEL[venta.canal] ?? venta.canal) : '—'}</div>
+                {/* El "Pedido #N" del título es el correlativo dentro del turno y
+                    se repite en cada apertura de caja: sin decir de qué turno es,
+                    no se puede ubicar la venta en el arqueo. Los pedidos web no
+                    pasan por caja y no tienen turno. */}
+                <div><span className="dim">Turno de caja:</span> {venta.turno_id ? `#${venta.turno_id}` : '—'}</div>
                 <div><span className="dim">Entrega:</span> {venta.tipo_entrega ?? '—'}</div>
                 <div><span className="dim">Estado:</span> {venta.estado} · pago {venta.payment_status}</div>
                 {venta.es_cortesia && <div><span className="dim">Cortesía:</span> <strong>Sí</strong></div>}
@@ -115,6 +126,12 @@ export default function VentaDetalleModal({ transaccionId, onClose }: { transacc
         </div>
         <div className="admin-modal-footer">
           <button type="button" className="admin-btn ghost" onClick={onClose}>Cerrar</button>
+          {venta && (
+            <BotonRecibo
+              className="admin-btn secondary"
+              datos={desdeDetalleAdmin(venta as DetalleAdminRecibo, localDe(venta.sucursal_id))}
+            />
+          )}
         </div>
       </div>
     </div>

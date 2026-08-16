@@ -75,8 +75,12 @@ export async function GET(req: NextRequest) {
       where,
       include: {
         transaccionesDetalles_id: {
-          include: { producto: true },
+          // El combo se agrupa al imprimir el recibo: en el papel es una sola
+          // línea con su contenido, no una por producto componente.
+          include: { producto: true, combo: { select: { id: true, nombre: true } } },
         },
+        cajero: { select: { nombre: true } },
+        cuenta_corriente: { select: { monto: true, monto_pagado: true, vencimiento: true } },
         usuario: { select: { nombre: true, email: true } },
       },
       orderBy: { created_at: 'desc' },

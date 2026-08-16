@@ -181,11 +181,18 @@ export async function getMovimientos(session: Session) {
           id: true, numero_turno: true,
           // Detalle que se despliega al abrir la fila.
           total: true, cliente_nombre: true, codigo_descuento: true,
+          // El resto lo consume el recibo que se reimprime desde esta pantalla,
+          // que solo se ofrece en los movimientos de tipo VENTA.
+          numero_sucursal: true, turno_id: true, created_at: true,
+          metodo_pago: true, payment_status: true, es_cortesia: true,
+          cajero: { select: { nombre: true } },
+          cuenta_corriente: { select: { monto: true, monto_pagado: true, vencimiento: true } },
+          movimientos: { where: { tipo: 'VENTA' }, select: { metodo_pago: true, monto: true } },
           transaccionesDetalles_id: {
             select: {
-              cantidad: true, precio_unitario: true,
+              cantidad: true, precio_unitario: true, descuentoAplicado: true,
               producto: { select: { nombre: true } },
-              combo: { select: { nombre: true } },
+              combo: { select: { id: true, nombre: true } },
             },
           },
         },
@@ -236,6 +243,11 @@ export async function getVentasDeCaja(session: Session, fechaISO?: string | null
       cajero: { select: { id: true, nombre: true } },
       // La deuda explica un fiado: cuánto queda y cuándo vence.
       cuenta_corriente: { select: { id: true, monto: true, monto_pagado: true, estado: true, vencimiento: true } },
+      // Desglose del pago mixto para reimprimir el recibo: cuánto entró por
+      // efectivo y cuánto por QR solo existe acá, la venta guarda "MIXTO" y
+      // nada más. Se filtran los de VENTA porque un abono a deuda cobrado en
+      // la misma operación también cuelga de esta transacción.
+      movimientos: { where: { tipo: 'VENTA' }, select: { metodo_pago: true, monto: true } },
     },
   });
 
@@ -284,6 +296,8 @@ export async function getVentasDeCaja(session: Session, fechaISO?: string | null
           // Las líneas de un combo comparten combo_id: la pantalla las agrupa.
           combo: d.combo ? { id: d.combo.id, nombre: d.combo.nombre } : null,
         })),
+        // Solo se usa para reimprimir el recibo de un pago mixto.
+        movimientos: v.movimientos.map(m => ({ metodo_pago: m.metodo_pago, monto: Number(m.monto) })),
       };
     }),
   };
@@ -375,9 +389,18 @@ export async function getTurnoDetalle(session: Session, turnoId: number) {
     where: { turno_id: turnoId },
     orderBy: { created_at: 'asc' },
     include: {
-      transaccionesDetalles_id: { include: { producto: { select: { nombre: true } } } },
+      transaccionesDetalles_id: {
+        include: {
+          producto: { select: { nombre: true } },
+          // El combo se agrupa al reimprimir el recibo: el cliente compró una
+          // sola cosa y así tiene que verla en el papel.
+          combo: { select: { id: true, nombre: true } },
+        },
+      },
       cajero: { select: { nombre: true, apellido_paterno: true } },
-      cuenta_corriente: { select: { id: true, estado: true, monto: true, monto_pagado: true } },
+      cuenta_corriente: { select: { id: true, estado: true, monto: true, monto_pagado: true, vencimiento: true } },
+      // Desglose del pago mixto, que la venta no guarda: solo para el recibo.
+      movimientos: { where: { tipo: 'VENTA' }, select: { metodo_pago: true, monto: true } },
     },
   });
 
@@ -777,7 +800,28 @@ export async function registrarVentaFisica(session: Session, dto: VentaFisicaInp
       monto: Number(total) + abono, ip: meta.ip, userAgent: meta.userAgent,
     }, tx);
 
-    return { ...venta, abono_deuda: abono > 0 ? abono : undefined };
+    // El POS imprime el recibo con lo que devuelve esta llamada, así que la
+    // venta vuelve con sus líneas, su cajero y sus movimientos: el ticket tiene
+    // que salir con los precios y el desglose que calculó el servidor, no con
+    // los del carrito del navegador.
+    const impresa = await tx.transaccion.findUniqueOrThrow({
+      where: { id: venta.id },
+      include: {
+        cajero: { select: { nombre: true } },
+        cuenta_corriente: { select: { monto: true, monto_pagado: true, vencimiento: true } },
+        movimientos: { where: { tipo: 'VENTA' }, select: { metodo_pago: true, monto: true } },
+        transaccionesDetalles_id: {
+          select: {
+            cantidad: true, precio_unitario: true, descuentoAplicado: true,
+            producto: { select: { nombre: true } },
+            combo: { select: { id: true, nombre: true } },
+          },
+          orderBy: { id: 'asc' },
+        },
+      },
+    });
+
+    return { ...impresa, abono_deuda: abono > 0 ? abono : undefined };
   }, { maxWait: 10000, timeout: 20000 });
 }
 

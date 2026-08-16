@@ -5,6 +5,9 @@ import Link from 'next/link';
 import EmptyState from '@/components/ui/EmptyState';
 import MoneyText from '@/components/ui/MoneyText';
 import { useHistorial, useTurnoActivo, useTurnoDetalle } from '@/hooks/caja';
+import BotonRecibo from '@/components/ui/BotonRecibo';
+import { useLocalesRecibo } from '@/hooks/recibo';
+import { desdeTransaccion, type TransaccionRecibo } from '@/lib/recibo/adaptadores';
 import { estadoDiferencia } from '@/lib/shared/caja-calc';
 
 interface TurnoResumen {
@@ -17,6 +20,7 @@ interface TurnoResumen {
   diferencia_qr?: string | number | null;
   observaciones?: string | null;
   pedidos_count: number;
+  sucursal_id?: number;
   sucursal?: { nombre: string } | null;
   cajero?: { nombre: string; apellido_paterno: string } | null;
 }
@@ -24,12 +28,20 @@ interface TurnoResumen {
 interface Detalle {
   cantidad: number;
   precio_unitario: number;
+  descuentoAplicado?: number;
   producto: { nombre: string };
+  /** Las líneas de un combo lo comparten: el recibo las agrupa en una. */
+  combo?: { id: number; nombre: string } | null;
 }
 
 interface Pedido {
   id: number;
   numero_turno?: number | null;
+  numero_sucursal?: number | null;
+  turno_id?: number | null;
+  payment_status?: string | null;
+  codigo_descuento?: string | null;
+  cliente_nombre?: string | null;
   created_at: string;
   total: number;
   metodo_pago?: string | null;
@@ -37,7 +49,9 @@ interface Pedido {
   es_cortesia?: boolean;
   cajero?: { nombre: string; apellido_paterno: string } | null;
   transaccionesDetalles_id: Detalle[];
-  cuenta_corriente?: { id: number; estado: string } | null;
+  cuenta_corriente?: { id: number; estado: string; monto?: number | string; monto_pagado?: number | string; vencimiento?: string | null } | null;
+  /** Desglose del pago mixto; solo se usa para reimprimir el recibo. */
+  movimientos?: { metodo_pago: string | null; monto: number | string }[];
 }
 
 function asNumber(value: unknown): number {
@@ -94,6 +108,9 @@ function pedidoResumen(pedido: Pedido) {
 function DetalleTurno({ turnoId, onClose }: { turnoId: number; onClose: () => void }) {
   const { data, isLoading } = useTurnoDetalle(turnoId);
   const [verPedidos, setVerPedidos] = useState(false);
+  // Reimpresión de una venta de un turno ya cerrado: es el caso de "me pidieron
+  // el recibo al día siguiente".
+  const { localDe } = useLocalesRecibo();
   const turno = data?.turno as (TurnoResumen & {
     apertura_efectivo: string | number;
     apertura_qr: string | number;
@@ -176,6 +193,15 @@ function DetalleTurno({ turnoId, onClose }: { turnoId: number; onClose: () => vo
                           )}
                         </div>
                         <span className="historial-pedido-sub">{pedidoResumen(pedido)}</span>
+                        <BotonRecibo
+                          className="admin-btn ghost"
+                          etiqueta="Reimprimir recibo"
+                          datos={desdeTransaccion(
+                            pedido as unknown as TransaccionRecibo,
+                            localDe(turno.sucursal_id),
+                            { cajero: pedido.cajero?.nombre ?? null, nombreLocal: turno.sucursal?.nombre },
+                          )}
+                        />
                       </div>
                     ))}
                   </div>
