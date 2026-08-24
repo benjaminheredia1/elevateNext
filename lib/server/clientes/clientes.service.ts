@@ -6,7 +6,7 @@
  */
 import prisma from '@/lib/prisma';
 import { Prisma } from '@prisma/client';
-import { ConflictError } from '@/lib/server/errors';
+import { ConflictError, NotFoundError } from '@/lib/server/errors';
 
 type Db = Prisma.TransactionClient | typeof prisma;
 
@@ -139,4 +139,56 @@ export async function getClienteAnonimo(db: Db = prisma): Promise<number> {
     data: { nombre: 'Cliente Anónimo', es_anonimo: true },
   });
   return creado.id;
+}
+
+export interface EditarClienteData {
+  nombre: string;
+  telefono?: string | null;
+  email?: string | null;
+  nit?: string | null;
+  /** `undefined` = no lo mandaron (no se toca); `null` = lo vaciaron. */
+  direccion?: string | null;
+}
+
+/**
+ * Edición de datos de contacto de un cliente, compartida por caja y admin.
+ * Devuelve también el detalle antes→después de lo que cambió: la auditoría la
+ * escribe cada handler, que es quien conoce el rol y la IP de quien editó.
+ * `cambios` vacío significa que no hubo nada que guardar (no auditar un no-op).
+ */
+export async function editarCliente(clienteId: number, input: EditarClienteData) {
+  // El cliente anónimo es un centinela del sistema, no una ficha editable.
+  const actual = await prisma.cliente.findFirst({ where: { id: clienteId, es_anonimo: false } });
+  if (!actual) throw new NotFoundError('Cliente no encontrado');
+
+  const datos: Prisma.ClienteUpdateInput = {
+    nombre: input.nombre.trim(),
+    telefono: normTelefono(input.telefono),
+    email: normEmail(input.email),
+    nit: normNit(input.nit),
+  };
+  // Solo la pantalla de admin manda dirección; desde caja llega `undefined` y
+  // se mantiene la que ya tenía.
+  if (input.direccion !== undefined) datos.direccion = input.direccion?.trim() || null;
+
+  // Detalle antes→después solo de lo que cambió (para la auditoría)
+  const cambios: string[] = [];
+  const campos = ['nombre', 'telefono', 'email', 'nit', 'direccion'] as const;
+  for (const campo of campos) {
+    if (!(campo in datos)) continue;
+    const antes = actual[campo] ?? null;
+    const despues = (datos[campo] as string | null) ?? null;
+    if (antes !== despues) cambios.push(`${campo}: "${antes ?? '—'}" → "${despues ?? '—'}"`);
+  }
+  if (cambios.length === 0) return { cliente: actual, cambios };
+
+  try {
+    const cliente = await prisma.cliente.update({ where: { id: clienteId }, data: datos });
+    return { cliente, cambios };
+  } catch (e) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+      throw new ConflictError('Ese celular ya pertenece a otro cliente');
+    }
+    throw e;
+  }
 }

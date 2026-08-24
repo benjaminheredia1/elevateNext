@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAuth, requireRole } from '@/lib/server/auth/session';
-import { handleApiError } from '@/lib/server/errors';
+import { requireAuth, requireRole, getClientIp } from '@/lib/server/auth/session';
+import { logAudit } from '@/lib/server/audit/audit.service';
+import { handleApiError, ValidationError } from '@/lib/server/errors';
 import { NotFoundError } from '@/lib/server/errors';
+import { editarClienteSchema } from '@/lib/server/dto/clientes.dto';
+import { editarCliente } from '@/lib/server/clientes/clientes.service';
 import prisma from '@/lib/prisma';
 
 export async function GET(
@@ -46,6 +49,8 @@ export async function GET(
         id: cliente.id,
         nombre: cliente.nombre,
         telefono: cliente.telefono,
+        email: cliente.email,
+        nit: cliente.nit,
         direccion: cliente.direccion,
         created_at: cliente.created_at,
         pedidos: txs.length,
@@ -69,4 +74,32 @@ export async function GET(
   } catch (e) {
     return handleApiError(e);
   }
+}
+
+/**
+ * Edición de la ficha del cliente desde admin. Mismo service que caja, pero
+ * acá sí se corrige la dirección: es el único lugar donde se muestra y hasta
+ * ahora solo podía cargarse al dar de alta al cliente, nunca arreglarse.
+ */
+export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    const session = await requireAuth(req);
+    requireRole(session, ['DUENO', 'ADMIN']);
+    const { id } = await params;
+    const clienteId = Number(id);
+    if (!Number.isInteger(clienteId)) throw new ValidationError('Id de cliente inválido');
+    const input = editarClienteSchema.parse(await req.json());
+
+    const { cliente, cambios } = await editarCliente(clienteId, input);
+    if (cambios.length === 0) return NextResponse.json({ data: cliente });
+
+    await logAudit({
+      usuarioId: session.id, rol: session.rol, accion: 'MODIFICO',
+      entidad: 'Cliente', entidadId: clienteId,
+      detalle: `Editó datos del cliente "${cliente.nombre}" (#${clienteId}): ${cambios.join(', ')}`,
+      ip: getClientIp(req), userAgent: req.headers.get('user-agent'),
+    });
+
+    return NextResponse.json({ data: cliente });
+  } catch (e) { return handleApiError(e); }
 }
