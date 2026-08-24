@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import apiClient from '@/hooks/api';
 
 /** Único período de la pantalla: filtra la lista y las métricas. */
@@ -33,6 +33,29 @@ export function useAdminClientes(q = '', periodo?: PeriodoClientes) {
     queryFn: async () => {
       const qs = paramsClientes(q, periodo);
       return (await apiClient.get(`/api/admin/clientes${qs ? `?${qs}` : ''}`)).data;
+    },
+  });
+}
+
+export interface EditarClienteAdminInput {
+  nombre: string;
+  telefono?: string | null;
+  email?: string | null;
+  nit?: string | null;
+  direccion?: string | null;
+}
+
+/**
+ * Edición de la ficha del cliente desde admin. A diferencia de la de caja,
+ * manda también la dirección (el único campo que solo se ve en esta pantalla).
+ */
+export function useEditarClienteAdmin() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ clienteId, datos }: { clienteId: number; datos: EditarClienteAdminInput }) =>
+      (await apiClient.put(`/api/admin/clientes/${clienteId}`, datos)).data.data,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin', 'clientes'] });
     },
   });
 }

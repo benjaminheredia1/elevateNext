@@ -107,6 +107,10 @@ export async function GET(req: NextRequest) {
           id: c.id,
           nombre: c.nombre,
           telefono: c.telefono,
+          // La ficha y el formulario de edición se arman con esta fila: sin
+          // email/NIT el detalle mostraba siempre "—" aunque el cliente los tuviera.
+          email: c.email,
+          nit: c.nit,
           direccion: c.direccion,
           pedidos: txs.length,
           total_gastado: Number(total_gastado.toFixed(2)),

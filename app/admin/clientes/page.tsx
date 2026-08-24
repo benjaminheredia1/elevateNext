@@ -4,7 +4,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import BotonExportarExcel from '@/components/ui/BotonExportarExcel';
 import AdminPanel from '@/components/admin/AdminPanel';
-import { useAdminClientes, type PeriodoClientes, paramsClientes } from '@/hooks/admin-clientes';
+import { useAdminClientes, useEditarClienteAdmin, type PeriodoClientes, paramsClientes } from '@/hooks/admin-clientes';
 import { useCrearCliente } from '@/hooks/privilegios';
 import apiClient from '@/hooks/api';
 import KpiCard from '@/components/ui/KpiCard';
@@ -266,7 +266,103 @@ function ComprasDelCliente({ clienteId }: { clienteId: number }) {
   );
 }
 
-function ClienteDetalleModal({ cliente, onClose }: { cliente: any; onClose: () => void }) {
+/** Ficha del cliente tal como la edita el formulario de admin. */
+interface ClienteEditable {
+  id: number;
+  nombre: string;
+  telefono: string | null;
+  email: string | null;
+  nit: string | null;
+  direccion: string | null;
+}
+
+/** Mensaje de error de la API sin acoplarse al tipo de error de axios. */
+function errorApi(e: unknown, fallback: string) {
+  return (e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? fallback;
+}
+
+function EditarClienteModal({ cliente, onClose, onSaved }: {
+  cliente: ClienteEditable;
+  onClose: () => void;
+  onSaved: (cliente: ClienteEditable) => void;
+}) {
+  const editar = useEditarClienteAdmin();
+  const [form, setForm] = useState({
+    nombre: cliente.nombre ?? '',
+    telefono: cliente.telefono ?? '',
+    nit: cliente.nit ?? '',
+    email: cliente.email ?? '',
+    direccion: cliente.direccion ?? '',
+  });
+  const [error, setError] = useState('');
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    setError('');
+    if (!form.nombre.trim()) { setError('El nombre es obligatorio.'); return; }
+    editar.mutate(
+      {
+        clienteId: cliente.id,
+        // Se manda todo, incluso vacío: borrar un dato mal cargado es una
+        // edición válida y el service lo guarda como null.
+        datos: {
+          nombre: form.nombre.trim(),
+          telefono: form.telefono.trim(),
+          nit: form.nit.trim(),
+          email: form.email.trim(),
+          direccion: form.direccion.trim(),
+        },
+      },
+      {
+        onSuccess: (data: ClienteEditable) => { onSaved(data); onClose(); },
+        onError: (e: unknown) => setError(errorApi(e, 'No se pudo guardar el cliente.')),
+      },
+    );
+  };
+
+  return (
+    <div className="admin-modal-overlay" onClick={onClose}>
+      <form className="admin-modal" onClick={e => e.stopPropagation()} onSubmit={submit}>
+        <div className="admin-modal-header">
+          <h2>Editar cliente</h2>
+          <button type="button" className="admin-modal-close" onClick={onClose}>&times;</button>
+        </div>
+        <div className="admin-modal-body">
+          <div className="form-grid">
+            <div className="form-group full">
+              <label>Nombre o razón social</label>
+              <input value={form.nombre} onChange={e => setForm(f => ({ ...f, nombre: e.target.value }))} required />
+            </div>
+            <div className="form-group">
+              <label>Celular</label>
+              <input inputMode="numeric" value={form.telefono} placeholder="Sin registrar" onChange={e => setForm(f => ({ ...f, telefono: e.target.value.replace(/\D/g, '') }))} />
+            </div>
+            <div className="form-group">
+              <label>NIT / C.I.</label>
+              <input inputMode="numeric" value={form.nit} placeholder="Sin registrar" onChange={e => setForm(f => ({ ...f, nit: e.target.value.replace(/\D/g, '') }))} />
+            </div>
+            <div className="form-group">
+              <label>Correo</label>
+              <input value={form.email} placeholder="Sin registrar" onChange={e => setForm(f => ({ ...f, email: e.target.value }))} />
+            </div>
+            <div className="form-group">
+              <label>Dirección</label>
+              <input value={form.direccion} placeholder="Sin registrar" onChange={e => setForm(f => ({ ...f, direccion: e.target.value }))} />
+            </div>
+            <span className="form-hint">El cambio queda registrado en auditoría con el antes y el después.</span>
+          </div>
+          {error && <div className="gate-warning" style={{ marginTop: 10 }}>{error}</div>}
+        </div>
+        <div className="admin-modal-footer">
+          <button type="button" className="admin-btn ghost" onClick={onClose}>Cancelar</button>
+          <button type="submit" className="admin-btn primary" disabled={editar.isPending}>{editar.isPending ? 'Guardando...' : 'Guardar'}</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function ClienteDetalleModal({ cliente, onClose, onEditar }: { cliente: any; onClose: () => void; onEditar: () => void }) {
   return (
     <div className="admin-modal-overlay" onClick={onClose}>
       <div className="admin-modal" onClick={e => e.stopPropagation()}>
@@ -293,6 +389,7 @@ function ClienteDetalleModal({ cliente, onClose }: { cliente: any; onClose: () =
         </div>
         <div className="admin-modal-footer">
           <button type="button" className="admin-btn ghost" onClick={onClose}>Cerrar</button>
+          <button type="button" className="admin-btn primary" onClick={onEditar}>Editar datos</button>
         </div>
       </div>
     </div>
@@ -314,6 +411,7 @@ export default function ClientesAdminPage() {
   const [mergeOpen, setMergeOpen] = useState(false);
   const [nuevoOpen, setNuevoOpen] = useState(false);
   const [detalle, setDetalle] = useState<any | null>(null);
+  const [editando, setEditando] = useState<ClienteEditable | null>(null);
   const [seleccionado, setSeleccionado] = useState<any | null>(null);
   const [sugerenciasAbiertas, setSugerenciasAbiertas] = useState(false);
   const [resaltada, setResaltada] = useState(0);
@@ -479,7 +577,28 @@ export default function ClientesAdminPage() {
         />
       )}
 
-      {detalle && <ClienteDetalleModal cliente={detalle} onClose={() => setDetalle(null)} />}
+      {detalle && (
+        <ClienteDetalleModal
+          cliente={detalle}
+          onClose={() => setDetalle(null)}
+          onEditar={() => setEditando(detalle)}
+        />
+      )}
+
+      {editando && (
+        <EditarClienteModal
+          cliente={editando}
+          onClose={() => setEditando(null)}
+          onSaved={cliente => {
+            // La ficha abierta detrás tiene que mostrar lo recién guardado sin
+            // esperar a que vuelva la lista.
+            // Se conservan las métricas de la fila (pedidos, gasto) y solo se
+            // pisan los datos de contacto recién guardados.
+            setDetalle((d: ClienteEditable | null) => (d && d.id === cliente.id ? { ...d, ...cliente } : d));
+            setSeleccionado((c: ClienteEditable | null) => (c && c.id === cliente.id ? { ...c, ...cliente } : c));
+          }}
+        />
+      )}
 
       {isLoading ? (
         <EmptyState title="Cargando clientes..." />
@@ -718,6 +837,17 @@ export default function ClientesAdminPage() {
               { key: 'gastado_periodo', header: 'Gastado período', className: 'num', render: (row: any) => <MoneyText value={row.gastado_periodo ?? 0} /> },
               { key: 'favorito_periodo', header: 'Compra más', render: (row: any) => <FavoriteProduct product={row.producto_favorito_periodo} /> },
               { key: 'gasto_promedio', header: 'Gasto prom.', className: 'num', render: (row: any) => <MoneyText value={row.gasto_promedio} /> },
+              { key: 'acciones', header: '', render: row => (
+                <div className="admin-actions">
+                  {/* La fila abre la ficha: sin frenar el clic, editar abriría los dos modales. */}
+                  <button
+                    className="admin-btn ghost"
+                    onClick={e => { e.stopPropagation(); setEditando(row); }}
+                  >
+                    Editar
+                  </button>
+                </div>
+              )},
             ]}
           />
         </>
