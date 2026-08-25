@@ -333,6 +333,14 @@ model TransaccionesDetalles {
   transaccion_id    Int
   precio_unitario   Decimal                @db.Decimal(12, 2)
   descuentoAplicado Decimal                @default(0) @db.Decimal(12, 2)
+  /**
+   * Costo de la ficha técnica de este producto AL MOMENTO de esta venta
+   * (costo_promedio del insumo en esa sucursal × consumo de la receta). Se
+   * escribe una sola vez, al crear la venta, y nunca se recalcula: es lo que
+   * hace que el CMV de un período cerrado no cambie si después se edita el
+   * costo de un insumo. Null en ventas anteriores a este campo.
+   */
+  costo_unitario    Float?
   producto_id       Int
   cantidad          Float
   /**
