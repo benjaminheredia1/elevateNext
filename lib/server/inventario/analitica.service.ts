@@ -141,6 +141,13 @@ export async function getAnalitica(
 
   // ── Ventas por producto ───────────────────────────────────────
   const productoVentas = new Map<number, { nombre: string; ventas: number; totalVentas: number; precio: number }>();
+  // Costo por producto: promedio ponderado del costo CONGELADO de cada línea
+  // (el que tenía la ficha técnica al momento de esa venta), no el de hoy —
+  // así el reporte de un período cerrado no cambia si después se edita un
+  // insumo. Las líneas sin costo congelado (de antes de este cambio) caen al
+  // costo en vivo, cacheado por producto para no repetir el cálculo.
+  const costoAcumuladoPorProducto = new Map<number, { costoTotal: number; cantidad: number }>();
+  const costoEnVivoCache = new Map<number, Promise<number>>();
 
   for (const t of transacciones) {
     for (const d of t.transaccionesDetalles_id) {
@@ -158,10 +165,25 @@ export async function getAnalitica(
         ventas:      prev.ventas + d.cantidad,
         totalVentas: prev.totalVentas + Number(d.precio_unitario) * d.cantidad,
       });
+
+      let costoLinea: number;
+      if (d.costo_unitario != null) {
+        costoLinea = d.costo_unitario;
+      } else {
+        if (!costoEnVivoCache.has(pid)) {
+          costoEnVivoCache.set(pid, costoFichaTecnica(pid, undefined, sucursalId));
+        }
+        costoLinea = await costoEnVivoCache.get(pid)!;
+      }
+      const acumulado = costoAcumuladoPorProducto.get(pid) ?? { costoTotal: 0, cantidad: 0 };
+      costoAcumuladoPorProducto.set(pid, {
+        costoTotal: acumulado.costoTotal + costoLinea * d.cantidad,
+        cantidad:   acumulado.cantidad + d.cantidad,
+      });
     }
   }
 
-  // ── Costos por receta (una sola pasada, en paralelo) ──────────
+  // ── Costos por producto (ya acumulados arriba) y CMV del período ──────
   const prodIds = Array.from(productoVentas.keys());
 
   // Precio de venta DE ESTE LOCAL. Con el precio del catálogo, un plato que en
@@ -174,18 +196,19 @@ export async function getAnalitica(
     const actual = productoVentas.get(fila.producto_id);
     if (actual) actual.precio = Number(fila.precio);
   }
+
   const costosPorProducto = new Map<number, number>(
-    await Promise.all(
-      // Mismo local que las ventas: es lo que hace comparables los dos ejes de
-      // la ingeniería de menú (popularidad y rentabilidad).
-      prodIds.map(async (id): Promise<[number, number]> => [id, await costoFichaTecnica(id, undefined, sucursalId)]),
-    ),
+    prodIds.map((id): [number, number] => {
+      const acumulado = costoAcumuladoPorProducto.get(id);
+      const costoPromedio = acumulado && acumulado.cantidad > 0 ? acumulado.costoTotal / acumulado.cantidad : 0;
+      return [id, costoPromedio];
+    }),
   );
 
   // ── CMV, food cost y margen bruto del período ─────────────────
   let cmvTotal = 0;
-  for (const [pid, data] of productoVentas.entries()) {
-    cmvTotal += (costosPorProducto.get(pid) ?? 0) * data.ventas;
+  for (const acumulado of costoAcumuladoPorProducto.values()) {
+    cmvTotal += acumulado.costoTotal;
   }
   const foodCostTotal = totalVentas > 0 ? (cmvTotal / totalVentas) * 100 : 0;
   const margenBruto = totalVentas > 0 ? ((totalVentas - cmvTotal) / totalVentas) * 100 : 0;
