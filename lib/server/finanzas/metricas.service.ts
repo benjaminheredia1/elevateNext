@@ -81,37 +81,39 @@ export async function ventasNetas(rango: RangoFechas, sucursal?: number): Promis
 }
 
 /**
- * CMV del período: consumo por receta de lo vendido × costo_promedio actual.
- * Productos sin receta (o de reventa sin insumo espejo) aportan 0.
+ * CMV del período: suma el costo CONGELADO de cada línea vendida
+ * (costo_unitario × cantidad). Las líneas de antes de este cambio no tienen
+ * costo congelado (quedaron en null) y caen al costo actual del insumo, igual
+ * que se comportaba todo el sistema hasta ahora — sin eso, un reporte de un
+ * período viejo se quedaría en blanco en vez de aproximar.
  */
 export async function cmvPorReceta(rango: RangoFechas, sucursal?: number): Promise<number> {
   const detalles = await prisma.transaccionesDetalles.findMany({
     where: { transaccion: whereVentasNetas(rango, sucursal) },
-    select: { producto_id: true, cantidad: true, transaccion: { select: { sucursal_id: true } } },
+    select: {
+      producto_id: true, cantidad: true, costo_unitario: true,
+      transaccion: { select: { sucursal_id: true } },
+    },
   });
 
-  // Se agrupa por (producto, sucursal) porque la ficha técnica es de cada local:
-  // el mismo plato puede llevar gramajes —y por tanto costos— distintos.
-  const cantidades = new Map<string, { productoId: number; sucursalId: number; cantidad: number }>();
-  for (const detalle of detalles) {
-    const sucursalId = detalle.transaccion.sucursal_id;
-    const clave = `${detalle.producto_id}:${sucursalId}`;
-    const previo = cantidades.get(clave);
-    if (previo) previo.cantidad += Number(detalle.cantidad);
-    else cantidades.set(clave, { productoId: detalle.producto_id, sucursalId, cantidad: Number(detalle.cantidad) });
-  }
-
-  const costos = await Promise.all(
-    Array.from(cantidades.values()).map(async (item) => ({
-      ...item,
-      costo: await costoFichaTecnica(item.productoId, undefined, item.sucursalId),
-    })),
-  );
+  // Costo en vivo cacheado por (producto, sucursal), solo para líneas sin
+  // costo congelado — evita recalcular la misma ficha técnica dos veces.
+  const costoEnVivo = new Map<string, Promise<number>>();
 
   let cmv = 0;
-  for (const { costo, cantidad } of costos) {
-    cmv += costo * cantidad;
+  for (const detalle of detalles) {
+    if (detalle.costo_unitario != null) {
+      cmv += detalle.costo_unitario * Number(detalle.cantidad);
+      continue;
+    }
+    const sucursalId = detalle.transaccion.sucursal_id;
+    const clave = `${detalle.producto_id}:${sucursalId}`;
+    if (!costoEnVivo.has(clave)) {
+      costoEnVivo.set(clave, costoFichaTecnica(detalle.producto_id, undefined, sucursalId));
+    }
+    cmv += (await costoEnVivo.get(clave)!) * Number(detalle.cantidad);
   }
+
   return Number(cmv.toFixed(2));
 }
 
