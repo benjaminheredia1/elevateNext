@@ -5,8 +5,10 @@
  *
  * - Ventas (devengado): Transaccion ENTREGADO/PAGADO, sin cortesías ni
  *   canceladas. Incluye fiados y pagos online aunque no hayan tocado caja.
- * - CMV: consumo por receta de lo vendido × costo_promedio actual del insumo
- *   (no las compras del período; esas pertenecen al flujo de caja).
+ * - CMV: consumo por receta de lo vendido × costo CONGELADO en cada línea al
+ *   momento de vender; las líneas anteriores a ese campo (sin costo congelado)
+ *   caen al costo actual del insumo (no las compras del período; esas
+ *   pertenecen al flujo de caja).
  * - Gastos operativos: MovimientoCaja GASTO_OPERATIVO (sin categoría Insumos)
  *   + gastos fijos prorrateados por día.
  */
@@ -96,22 +98,28 @@ export async function cmvPorReceta(rango: RangoFechas, sucursal?: number): Promi
     },
   });
 
-  // Costo en vivo cacheado por (producto, sucursal), solo para líneas sin
-  // costo congelado — evita recalcular la misma ficha técnica dos veces.
-  const costoEnVivo = new Map<string, Promise<number>>();
+  // Las líneas sin costo congelado necesitan el costo en vivo. Se resuelven todas
+  // juntas antes de sumar: con `await` dentro del bucle, cada ficha técnica esperaba
+  // a la anterior, y como las ventas previas a este campo nunca se backfillean, ese
+  // camino es el de TODOS los reportes con datos viejos — serializarlo son cientos
+  // de consultas en fila contra una base remota.
+  const clavesPendientes = new Map<string, { productoId: number; sucursalId: number }>();
+  for (const detalle of detalles) {
+    if (detalle.costo_unitario != null) continue;
+    const sucursalId = detalle.transaccion.sucursal_id;
+    clavesPendientes.set(`${detalle.producto_id}:${sucursalId}`, { productoId: detalle.producto_id, sucursalId });
+  }
+  const costoEnVivo = new Map(await Promise.all(
+    Array.from(clavesPendientes, async ([clave, { productoId, sucursalId }]): Promise<[string, number]> =>
+      [clave, await costoFichaTecnica(productoId, undefined, sucursalId)]),
+  ));
 
   let cmv = 0;
   for (const detalle of detalles) {
-    if (detalle.costo_unitario != null) {
-      cmv += detalle.costo_unitario * Number(detalle.cantidad);
-      continue;
-    }
-    const sucursalId = detalle.transaccion.sucursal_id;
-    const clave = `${detalle.producto_id}:${sucursalId}`;
-    if (!costoEnVivo.has(clave)) {
-      costoEnVivo.set(clave, costoFichaTecnica(detalle.producto_id, undefined, sucursalId));
-    }
-    cmv += (await costoEnVivo.get(clave)!) * Number(detalle.cantidad);
+    const costo = detalle.costo_unitario != null
+      ? detalle.costo_unitario
+      : (costoEnVivo.get(`${detalle.producto_id}:${detalle.transaccion.sucursal_id}`) ?? 0);
+    cmv += costo * Number(detalle.cantidad);
   }
 
   return Number(cmv.toFixed(2));

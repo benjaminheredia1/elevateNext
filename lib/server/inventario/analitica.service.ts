@@ -147,7 +147,12 @@ export async function getAnalitica(
   // insumo. Las líneas sin costo congelado (de antes de este cambio) caen al
   // costo en vivo, cacheado por producto para no repetir el cálculo.
   const costoAcumuladoPorProducto = new Map<number, { costoTotal: number; cantidad: number }>();
-  const costoEnVivoCache = new Map<number, Promise<number>>();
+  // Líneas de venta aplanadas: se recorren dos veces porque el costo en vivo
+  // (líneas sin costo congelado) se resuelve todo junto antes de acumular —
+  // con `await` dentro del bucle, cada ficha técnica esperaba a la anterior,
+  // y como las ventas previas a este campo nunca se backfillean, ese camino
+  // es el de TODOS los reportes con datos viejos.
+  const lineasParaCosto: { pid: number; cantidad: number; costoUnitario: number | null }[] = [];
 
   for (const t of transacciones) {
     for (const d of t.transaccionesDetalles_id) {
@@ -166,21 +171,26 @@ export async function getAnalitica(
         totalVentas: prev.totalVentas + Number(d.precio_unitario) * d.cantidad,
       });
 
-      let costoLinea: number;
-      if (d.costo_unitario != null) {
-        costoLinea = d.costo_unitario;
-      } else {
-        if (!costoEnVivoCache.has(pid)) {
-          costoEnVivoCache.set(pid, costoFichaTecnica(pid, undefined, sucursalId));
-        }
-        costoLinea = await costoEnVivoCache.get(pid)!;
-      }
-      const acumulado = costoAcumuladoPorProducto.get(pid) ?? { costoTotal: 0, cantidad: 0 };
-      costoAcumuladoPorProducto.set(pid, {
-        costoTotal: acumulado.costoTotal + costoLinea * d.cantidad,
-        cantidad:   acumulado.cantidad + d.cantidad,
-      });
+      lineasParaCosto.push({ pid, cantidad: d.cantidad, costoUnitario: d.costo_unitario });
     }
+  }
+
+  const pidsPendientes = new Set<number>();
+  for (const linea of lineasParaCosto) {
+    if (linea.costoUnitario == null) pidsPendientes.add(linea.pid);
+  }
+  const costoEnVivoCache = new Map(await Promise.all(
+    Array.from(pidsPendientes, async (pid): Promise<[number, number]> =>
+      [pid, await costoFichaTecnica(pid, undefined, sucursalId)]),
+  ));
+
+  for (const linea of lineasParaCosto) {
+    const costoLinea = linea.costoUnitario != null ? linea.costoUnitario : (costoEnVivoCache.get(linea.pid) ?? 0);
+    const acumulado = costoAcumuladoPorProducto.get(linea.pid) ?? { costoTotal: 0, cantidad: 0 };
+    costoAcumuladoPorProducto.set(linea.pid, {
+      costoTotal: acumulado.costoTotal + costoLinea * linea.cantidad,
+      cantidad:   acumulado.cantidad + linea.cantidad,
+    });
   }
 
   // ── Costos por producto (ya acumulados arriba) y CMV del período ──────
