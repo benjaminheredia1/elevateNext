@@ -415,6 +415,8 @@ model Insumo {
   // Detalle por sucursal. stock_actual/costo_promedio de arriba quedan como
   // agregado del negocio (suma de todas las sucursales).
   stocks                StockSucursal[]
+  stocksCentro          StockCentro[]        @relation("StockCentroInsumo")
+  movimientosCentro     MovimientoCentro[]   @relation("MovimientoCentroInsumo")
   created_at            DateTime             @default(now())
   update_at             DateTime             @updatedAt
 }
@@ -540,6 +542,66 @@ model StockSucursal {
 
   @@unique([insumo_id, sucursal_id])
   @@index([sucursal_id])
+}
+
+/**
+ * Centro de Producción: compra y guarda insumo bruto, y (desde la fase 2) lo
+ * transforma en productos terminados que se despachan a las sucursales. No
+ * vende, así que no tiene caja, turnos ni menú.
+ */
+model CentroProduccion {
+  id          Int                @id @default(autoincrement())
+  nombre      String
+  direccion   String?
+  activo      Boolean            @default(true)
+  stocks      StockCentro[]
+  movimientos MovimientoCentro[]
+  created_at  DateTime           @default(now())
+  update_at   DateTime           @updatedAt
+}
+
+/**
+ * Stock de un insumo en el Centro de Producción. Mismo shape que
+ * StockSucursal — misma tabla en espíritu, distinto dueño. Acá vive el insumo
+ * bruto que el Centro compra (fideo, avena…); desde la fase 2 también va a
+ * vivir acá el insumo espejo de cada producto terciado ya producido,
+ * esperando despacho.
+ */
+model StockCentro {
+  id             Int              @id @default(autoincrement())
+  centro_id      Int
+  insumo_id      Int
+  stock_actual   Float            @default(0)
+  costo_promedio Float            @default(0)
+  stock_minimo   Float            @default(0)
+  punto_critico  Float            @default(0)
+  activo         Boolean          @default(true)
+  fecha_baja     DateTime?
+  motivo_baja    String?
+  centro         CentroProduccion @relation(fields: [centro_id], references: [id])
+  insumo         Insumo           @relation("StockCentroInsumo", fields: [insumo_id], references: [id], onDelete: Cascade)
+  created_at     DateTime         @default(now())
+  update_at      DateTime         @updatedAt
+
+  @@unique([centro_id, insumo_id])
+  @@index([centro_id])
+}
+
+/** Kardex del Centro de Producción. Mismo shape que MovimientoInterno. */
+model MovimientoCentro {
+  id              Int              @id @default(autoincrement())
+  centro_id       Int
+  insumo_id       Int
+  tipo_movimiento Tipo_movimiento
+  cantidad        Float
+  descripcion     String
+  costo_unitario  Float?
+  responsable     String?
+  centro          CentroProduccion @relation(fields: [centro_id], references: [id])
+  insumo          Insumo           @relation("MovimientoCentroInsumo", fields: [insumo_id], references: [id])
+  created_at      DateTime         @default(now())
+
+  @@index([centro_id, created_at])
 }
 
 model MovimientoInterno {
