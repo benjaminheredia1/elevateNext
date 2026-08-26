@@ -131,13 +131,19 @@ export interface ItemInventarioCentro {
 }
 
 /**
- * Inventario del Centro, con los datos del catálogo ya resueltos. Incluye las
- * filas dadas de baja (apagadas, con nivel 'baja') — igual que el inventario
- * de sucursal, para que se puedan reactivar sin perder el historial.
+ * Inventario del Centro, con los datos del catálogo ya resueltos. Se rige por
+ * la propia fila de StockCentro, no por Insumo.activo: ese campo es el
+ * agregado del negocio que apaga sincronizarAgregados cuando TODAS las
+ * sucursales dan de baja el insumo, y no dice nada sobre si el Centro sigue
+ * teniéndolo en stock. Filtrar por ahí haría desaparecer del inventario del
+ * Centro insumos con stock, costo y niveles de alerta todavía cargados.
+ * Por eso se listan también las filas dadas de baja localmente (apagadas,
+ * con nivel 'baja') — a diferencia de inventarioDeSucursal, que no expone
+ * ese estado — para poder reactivarlas sin perder el historial.
  */
 export async function inventarioDeCentro(centroId: number, db: Db = prisma): Promise<ItemInventarioCentro[]> {
   const filas = await db.stockCentro.findMany({
-    where: { centro_id: centroId, insumo: { activo: true } },
+    where: { centro_id: centroId },
     include: { insumo: { select: { id: true, nombre: true, unidad_medida: true, categoria_insumo: true, proveedor: true } } },
     orderBy: { insumo: { nombre: 'asc' } },
   });
