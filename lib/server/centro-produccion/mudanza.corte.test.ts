@@ -248,4 +248,81 @@ describe('mudanza del insumo bruto al Centro', () => {
       expect(filaAlla.costo_promedio).toBeCloseTo(costoAlla, 4);
     });
   }, 120_000);
+
+  /**
+   * El agujero que encontro el usuario mirando /admin/centro-produccion: el
+   * corte movia el insumo bruto, pero dejaba al Centro SIN NINGUNA forma de
+   * abastecer los productos de reventa. Medido sobre el sandbox: de 75
+   * productos vivos, el Centro podia producir 19 y despachar 0. Los otros 56
+   * —Coca Cola, alfajores, brownies— se venderian hasta agotar el stock de la
+   * sucursal y nadie podria reponerlos: la sucursal perdio la compra en la
+   * fase 3 y el Centro no los tenia.
+   *
+   * Despues del corte, TODO producto vivo tiene que tener fila en el Centro,
+   * aunque sea en cero, para que el Centro pueda producirlo o comprarlo y
+   * despacharlo.
+   */
+  it('deja a TODO producto vivo con origen en el Centro', async () => {
+    await enTransaccionRevertida(async (tx) => {
+      const sufijo = Date.now() + 4;
+
+      // Un elaborado con receta: el Centro lo produce.
+      const harina = await tx.insumo.create({
+        data: { nombre: `Harina origen ${sufijo}`, unidad_medida: 'GR', stock_actual: 500, stock_minimo: 0, costo_promedio: 0.02 },
+      });
+      await tx.stockSucursal.create({
+        data: { insumo_id: harina.id, sucursal_id: sucursalId, stock_actual: 500, costo_promedio: 0.02 },
+      });
+      const elaborado = await tx.producto.create({
+        data: { nombre: `Torta origen ${sufijo}`, descripcion: 'x', precio: 30, tipo: 'ELABORADO', estado_publicacion: 'PUBLICADO' },
+      });
+      await tx.recetasProducto.create({
+        data: { producto_id: elaborado.id, insumo_id: harina.id, cantidad_utilizada: 100, sucursal_id: sucursalId },
+      });
+
+      // Un producto de reventa con su espejo y stock en la sucursal: el Centro
+      // no lo produce, lo compra.
+      const espejoReventa = await tx.insumo.create({
+        data: { nombre: `Gaseosa origen ${sufijo}`, unidad_medida: 'UNIDAD', stock_actual: 12, stock_minimo: 0, costo_promedio: 7 },
+      });
+      const reventa = await tx.producto.create({
+        data: {
+          nombre: `Gaseosa origen ${sufijo}`, descripcion: 'x', precio: 12,
+          tipo: 'REVENTA', estado_publicacion: 'PUBLICADO', insumo_reventa_id: espejoReventa.id,
+        },
+      });
+      await tx.stockSucursal.create({
+        data: { insumo_id: espejoReventa.id, sucursal_id: sucursalId, stock_actual: 12, costo_promedio: 7 },
+      });
+
+      await ejecutarMudanza(centroId, usuarioId, tx);
+
+      // Ni un producto vivo puede quedar sin forma de reponerse.
+      const vivos = await tx.producto.findMany({
+        where: { estado_publicacion: { not: 'BAJA' } },
+        select: { id: true, nombre: true, tipo: true, insumo_reventa_id: true },
+      });
+      const enCentro = new Set((await tx.stockCentro.findMany({
+        where: { centro_id: centroId }, select: { insumo_id: true },
+      })).map(f => f.insumo_id));
+
+      const sinOrigen = vivos.filter(p => p.insumo_reventa_id == null || !enCentro.has(p.insumo_reventa_id));
+      expect(sinOrigen.map(p => p.nombre)).toEqual([]);
+
+      // La sucursal NO se queda sin nada que vender: lo que tenia en gondola
+      // sigue siendo suyo. El Centro arranca en cero y repone.
+      const gondola = await tx.stockSucursal.findUniqueOrThrow({
+        where: { insumo_id_sucursal_id: { insumo_id: espejoReventa.id, sucursal_id: sucursalId } },
+      });
+      expect(gondola.stock_actual).toBe(12);
+
+      // El tipo en la BD es la verdad DEL CENTRO —si lo compra o lo produce— y
+      // el corte no lo toca. "Terciado" es solo como lo ve la sucursal, y de
+      // eso se encarga etiquetaTipo() al dibujar, no una escritura.
+      const elaboradoDespues = await tx.producto.findUniqueOrThrow({ where: { id: elaborado.id } });
+      const reventaDespues = await tx.producto.findUniqueOrThrow({ where: { id: reventa.id } });
+      expect(elaboradoDespues.tipo).toBe('ELABORADO');
+      expect(reventaDespues.tipo).toBe('REVENTA');
+    });
+  }, 120_000);
 });

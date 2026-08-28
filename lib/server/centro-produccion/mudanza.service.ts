@@ -133,7 +133,7 @@ export async function ejecutarMudanza(centroId: number, usuarioId: number, db: D
     select: { id: true },
   });
   if (yaHecha) {
-    return { insumosMudados: 0, espejosCreados: 0, recetasCopiadas: 0, yaEjecutada: true };
+    return { insumosMudados: 0, espejosCreados: 0, recetasCopiadas: 0, productosConOrigen: 0, yaEjecutada: true };
   }
 
   // ── Precondición: nada en movimiento ───────────────────────────────
@@ -252,7 +252,7 @@ export async function ejecutarMudanza(centroId: number, usuarioId: number, db: D
     insumosMudados++;
   }
 
-  // ── Paso 4: recetas al Centro y TERCIADO → ELABORADO ───────────────
+  // ── Paso 4: las recetas al Centro ──────────────────────────────────
   // La receta local NO se borra: queda como histórico de cómo se costeó lo que
   // ya se vendió. Desde acá la que manda para producir es la del Centro.
   const recetasLocales = await db.recetasProducto.findMany();
@@ -272,9 +272,49 @@ export async function ejecutarMudanza(centroId: number, usuarioId: number, db: D
     });
     recetasCopiadas++;
   }
-  // Ya no hay diferencia entre "lo hago yo" y "me lo hacen": todo lo que la
-  // sucursal vende viene terminado del Centro.
-  await db.producto.updateMany({ where: { tipo: 'TERCIADO' }, data: { tipo: 'ELABORADO' } });
+  // El `tipo` del producto NO se toca. Es la verdad DEL CENTRO —si lo produce o
+  // lo compra—, y es lo que necesita para operar. "Terciado" es solo cómo lo ve
+  // la sucursal, a la que todo le llega hecho, y de eso se encarga
+  // `etiquetaTipo()` al dibujar la pantalla. Reescribirlo acá borraba esa
+  // distinción justo donde hace falta.
+
+  // ── Paso 5: todo producto tiene que poder reponerse ────────────────
+  // Sin esto el corte dejaba huérfano a todo el catálogo de reventa: la
+  // sucursal pierde la compra en la fase 3 y el Centro no tenía esos productos,
+  // así que se vendían hasta agotar el stock del local y nadie podía reponerlos.
+  // Medido antes del arreglo: de 75 productos vivos, el Centro podía producir
+  // 19 y despachar 0.
+  //
+  // La fila nace en CERO: no se le saca nada a la góndola de la sucursal, que
+  // sigue vendiendo lo que ya tiene. Lo que gana el Centro es la posibilidad de
+  // comprarlo o producirlo y despacharlo.
+  const vivos = await db.producto.findMany({
+    where: { estado_publicacion: { not: 'BAJA' }, insumo_reventa_id: { not: null } },
+    select: { insumo_reventa_id: true },
+  });
+  let productosConOrigen = 0;
+  for (const p of vivos) {
+    const espejoId = p.insumo_reventa_id!;
+    const yaEsta = await db.stockCentro.findUnique({
+      where: { centro_id_insumo_id: { centro_id: centroId, insumo_id: espejoId } },
+    });
+    if (yaEsta) { productosConOrigen++; continue; }
+
+    // Hereda el costo del catálogo para que la primera compra tenga contra qué
+    // ponderar; con stock 0 no aporta valor al inventario.
+    const espejo = await db.insumo.findUniqueOrThrow({
+      where: { id: espejoId },
+      select: { costo_promedio: true, stock_minimo: true, punto_critico: true },
+    });
+    await db.stockCentro.create({
+      data: {
+        centro_id: centroId, insumo_id: espejoId,
+        stock_actual: 0, costo_promedio: espejo.costo_promedio,
+        stock_minimo: espejo.stock_minimo, punto_critico: espejo.punto_critico,
+      },
+    });
+    productosConOrigen++;
+  }
 
   // ── Verificación: la plata cambia de casillero, no de monto ────────
   const valorDespues = await valorizadoTotal(db);
@@ -291,10 +331,10 @@ export async function ejecutarMudanza(centroId: number, usuarioId: number, db: D
     accion: 'MODIFICO',
     entidad: 'CentroProduccion',
     entidadId: centroId,
-    detalle: `Mudanza de insumo bruto al Centro: ${insumosMudados} insumos, ${espejosCreados} espejos, ${recetasCopiadas} recetas`,
+    detalle: `Mudanza de insumo bruto al Centro: ${insumosMudados} insumos, ${espejosCreados} espejos, ${recetasCopiadas} recetas, ${productosConOrigen} productos con origen en el Centro`,
   }, db as Prisma.TransactionClient);
 
-  return { insumosMudados, espejosCreados, recetasCopiadas, yaEjecutada: false };
+  return { insumosMudados, espejosCreados, recetasCopiadas, productosConOrigen, yaEjecutada: false };
 }
 
 /**

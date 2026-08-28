@@ -40,6 +40,7 @@ async function main() {
   console.log(`Insumos mudados:   ${r.insumosMudados}`);
   console.log(`Espejos creados:   ${r.espejosCreados}`);
   console.log(`Recetas copiadas:  ${r.recetasCopiadas}`);
+  console.log(`Productos con origen en el Centro: ${r.productosConOrigen}`);
   console.log(`Valorizado después: Bs ${(await valorizadoTotal()).toFixed(2)}`);
 }
 
