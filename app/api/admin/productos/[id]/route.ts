@@ -9,6 +9,7 @@ import { costoFichaTecnica } from '@/lib/server/inventario/inventario.service';
 import { logAudit } from '@/lib/server/audit/audit.service';
 import { assertPublicable } from '@/lib/server/productos/publicacion';
 import { resolverSucursal, alcanceSucursal } from '@/lib/server/sucursales/sucursal.service';
+import { obtenerOCrearStock } from '@/lib/server/inventario/stock-sucursal.service';
 import { bajaInsumoExclusivoDeReventa, reactivarInsumoDeReventaSiCascada } from '@/lib/server/insumos/insumos.service';
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -158,6 +159,23 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
           // inventario. Correcciones de stock → módulo de inventario (AJUSTE),
           // que sí deja MovimientoInterno y no pisa ventas concurrentes.
           await tx.insumo.update({ where: { id: insumoReventaId }, data: insumoData });
+
+          // El costo y los umbrales que de verdad se usan para costear (food
+          // cost, rinde, alertas) son los de StockSucursal desde
+          // multi-sucursal; el Insumo de arriba quedó como catálogo/fallback
+          // para un local que todavía no maneja este insumo. Sin escribir
+          // también acá, corregir el costo del producto se guardaba pero no
+          // movía nada: al reabrir el wizard volvía a salir el viejo, porque
+          // el listado devuelve el de la sucursal.
+          await obtenerOCrearStock(insumoReventaId, sucursalId, tx);
+          await tx.stockSucursal.update({
+            where: { insumo_id_sucursal_id: { insumo_id: insumoReventaId, sucursal_id: sucursalId } },
+            data: {
+              costo_promedio: n.costo_unitario,
+              stock_minimo:   n.punto_reorden,
+              punto_critico:  n.nivel_critico,
+            },
+          });
         } else {
           const insumo = await tx.insumo.create({
             data: { es_mixto: false, stock_actual: n.stock, ...insumoData },
