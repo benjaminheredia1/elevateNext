@@ -7,6 +7,8 @@ import MoneyText from '@/components/ui/MoneyText';
 import DataTable from '@/components/ui/DataTable';
 import EmptyState from '@/components/ui/EmptyState';
 import StatusBadge from '@/components/ui/StatusBadge';
+import ProduccionCentro from '@/components/admin/ProduccionCentro';
+import EnviosCentro from '@/components/admin/EnviosCentro';
 import {
   useCentrosProduccion, useCrearCentro, useInventarioCentro, useAltaInsumoCentro,
   useCompraCentro, useMermaCentro, useConteoCentro, useBajaInsumoCentro, useReactivarInsumoCentro,
@@ -270,12 +272,21 @@ function AccionModal({ centroId, item, accion, onClose }: {
   );
 }
 
+type Pestana = 'inventario' | 'produccion' | 'envios';
+
+const PESTANAS: { id: Pestana; label: string }[] = [
+  { id: 'inventario', label: 'Insumo bruto' },
+  { id: 'produccion', label: 'Producción' },
+  { id: 'envios',     label: 'Envíos a sucursal' },
+];
+
 export default function CentroProduccionPage() {
   const { data: centros = [] } = useCentrosProduccion();
   const [centroId, setCentroId] = useState<number | null>(null);
   const [crearCentroAbierto, setCrearCentroAbierto] = useState(false);
   const [altaInsumoAbierto, setAltaInsumoAbierto] = useState(false);
   const [accion, setAccion] = useState<{ item: ItemStockCentro; tipo: AccionRapida } | null>(null);
+  const [tab, setTab] = useState<Pestana>('inventario');
   const [error, setError] = useState('');
   const reactivar = useReactivarInsumoCentro();
 
@@ -304,7 +315,7 @@ export default function CentroProduccionPage() {
       <div className="admin-page-header">
         <div>
           <h1>Centro de Producción</h1>
-          <p>Insumo bruto del centro: stock, costo y alertas.</p>
+          <p>Compra de insumo bruto, producción de terminados y despacho a las sucursales.</p>
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
           {centros.length > 0 && (
@@ -318,7 +329,7 @@ export default function CentroProduccionPage() {
           <button className="admin-btn ghost" onClick={() => setCrearCentroAbierto(true)}>
             + Nuevo centro
           </button>
-          {centroId != null && (
+          {centroId != null && tab === 'inventario' && (
             <button className="admin-btn primary" onClick={() => setAltaInsumoAbierto(true)}>
               + Nuevo insumo
             </button>
@@ -336,10 +347,28 @@ export default function CentroProduccionPage() {
 
       {error && <div className="gate-warning" style={{ marginBottom: 12 }}>{error}</div>}
 
+      {centros.length > 0 && centroId != null && (
+        <div className="admin-tabs">
+          {PESTANAS.map(p => (
+            <button
+              key={p.id}
+              className={`admin-tab${tab === p.id ? ' active' : ''}`}
+              onClick={() => setTab(p.id)}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+      )}
+
       {centros.length === 0 ? (
         <EmptyState title="Todavía no hay ningún centro de producción" hint="Creá el primero para empezar a cargarle insumo bruto." />
       ) : centroId == null || isLoading ? (
         <EmptyState title="Cargando inventario…" />
+      ) : tab === 'produccion' ? (
+        <ProduccionCentro centroId={centroId} />
+      ) : tab === 'envios' ? (
+        <EnviosCentro centroId={centroId} />
       ) : (
         <>
           <div className="kpi-grid">

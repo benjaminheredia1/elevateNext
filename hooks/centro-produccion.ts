@@ -125,3 +125,67 @@ export function useEditarUmbralesCentro() {
     '/api/admin/centros-produccion/umbrales',
   );
 }
+
+// ── Fase 2: producción ─────────────────────────────────────────────
+
+export interface ItemRecetaCentro {
+  insumo_id: number;
+  cantidad_utilizada: number;
+  nombre: string;
+  unidad_medida: string;
+  costo_promedio: number;
+  stock_actual: number;
+}
+
+export interface RindeProducto {
+  producto_id: number;
+  nombre: string;
+  unidades_posibles: number;
+  costo_unitario: number;
+  insumos: ItemRecetaCentro[];
+}
+
+/** Rinde de todos los productos con receta de producción en el centro. */
+export function useRindeCentro(centroId: number | null) {
+  return useQuery({
+    queryKey: ['centro-produccion', 'rinde', centroId],
+    enabled: centroId != null,
+    queryFn: async (): Promise<RindeProducto[]> =>
+      (await apiClient.get(`/api/admin/centros-produccion/recetas?centro_id=${centroId}`)).data?.items ?? [],
+  });
+}
+
+export function useDefinirRecetaCentro(centroId: number | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      producto_id: number;
+      lineas: { insumo_id: number; cantidad_utilizada: number }[];
+    }) => (await apiClient.post('/api/admin/centros-produccion/recetas', { centro_id: centroId, ...input })).data,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['centro-produccion', 'rinde', centroId] });
+      qc.invalidateQueries({ queryKey: ['centro-produccion', 'inventario', centroId] });
+    },
+  });
+}
+
+export function useRegistrarProduccion(centroId: number | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      producto_id: number; cantidad: number; nota?: string; idempotency_key?: string;
+    }) => {
+      const { idempotency_key, ...body } = input;
+      return (await apiClient.post('/api/admin/centros-produccion/produccion',
+        { centro_id: centroId, ...body },
+        { headers: idempotency_key ? { 'Idempotency-Key': idempotency_key } : undefined },
+      )).data;
+    },
+    onSuccess: () => {
+      // Producir mueve las dos caras del inventario del centro: baja el insumo
+      // bruto y sube el terminado, así que se refrescan ambas vistas.
+      qc.invalidateQueries({ queryKey: ['centro-produccion', 'rinde', centroId] });
+      qc.invalidateQueries({ queryKey: ['centro-produccion', 'inventario', centroId] });
+    },
+  });
+}
