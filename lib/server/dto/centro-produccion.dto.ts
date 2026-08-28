@@ -91,3 +91,33 @@ export const RegistrarProduccionSchema = z.object({
   nota:        z.string().optional(),
 });
 export type RegistrarProduccionInput = z.infer<typeof RegistrarProduccionSchema>;
+
+// ── Fase 3: traslados ──────────────────────────────────────────────
+export const CrearEnvioSchema = z.object({
+  centro_id:     z.number().int().positive(),
+  sucursal_id:   z.number().int().positive(),
+  lineas: z.array(z.object({
+    insumo_id: z.number().int().positive(),
+    cantidad:  z.number().positive(),
+  })).min(1),
+  observaciones: z.string().optional(),
+});
+export type CrearEnvioInput = z.infer<typeof CrearEnvioSchema>;
+
+export const RecibirTrasladoSchema = z.object({
+  traslado_id: z.number().int().positive(),
+  // Las líneas que no se declaran se dan por recibidas completas.
+  recibido: z.array(z.object({
+    insumo_id:         z.number().int().positive(),
+    cantidad_recibida: z.number().min(0),
+  })).default([]),
+});
+export type RecibirTrasladoInput = z.infer<typeof RecibirTrasladoSchema>;
+
+export const AnularTrasladoSchema = z.object({
+  traslado_id: z.number().int().positive(),
+  motivo:      z.string().min(1),
+});
+export type AnularTrasladoInput = z.infer<typeof AnularTrasladoSchema>;
+
+export const ESTADOS_TRASLADO = ['EN_TRANSITO', 'RECIBIDO', 'ANULADO'] as const;
