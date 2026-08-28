@@ -71,3 +71,23 @@ export const EditarUmbralesCentroSchema = z.object({
   punto_critico: z.number().min(0),
 });
 export type EditarUmbralesCentroInput = z.infer<typeof EditarUmbralesCentroSchema>;
+
+// ── Fase 2: producción ─────────────────────────────────────────────
+export const DefinirRecetaCentroSchema = z.object({
+  centro_id:   z.number().int().positive(),
+  producto_id: z.number().int().positive(),
+  lineas: z.array(z.object({
+    insumo_id:          z.number().int().positive(),
+    cantidad_utilizada: z.number().positive(),
+  })).min(1),
+});
+export type DefinirRecetaCentroInput = z.infer<typeof DefinirRecetaCentroSchema>;
+
+export const RegistrarProduccionSchema = z.object({
+  centro_id:   z.number().int().positive(),
+  producto_id: z.number().int().positive(),
+  // Entero: no se producen 2.5 unidades de un producto terminado.
+  cantidad:    z.number().int().positive(),
+  nota:        z.string().optional(),
+});
+export type RegistrarProduccionInput = z.infer<typeof RegistrarProduccionSchema>;

@@ -326,6 +326,7 @@ model Producto {
   marcas                   ProductoMarca[]
   sucursales               ProductoSucursal[]
   combos                   ComboItem[]
+  recetasCentro            RecetaCentro[]
 }
 
 model TransaccionesDetalles {
@@ -417,6 +418,7 @@ model Insumo {
   stocks                StockSucursal[]
   stocksCentro          StockCentro[]        @relation("StockCentroInsumo")
   movimientosCentro     MovimientoCentro[]   @relation("MovimientoCentroInsumo")
+  recetasCentro         RecetaCentro[]       @relation("RecetaCentroInsumo")
   created_at            DateTime             @default(now())
   update_at             DateTime             @updatedAt
 }
@@ -556,6 +558,7 @@ model CentroProduccion {
   activo      Boolean            @default(true)
   stocks      StockCentro[]
   movimientos MovimientoCentro[]
+  recetas     RecetaCentro[]
   created_at  DateTime           @default(now())
   update_at   DateTime           @updatedAt
 }
@@ -588,6 +591,26 @@ model StockCentro {
 }
 
 /** Kardex del Centro de Producción. Mismo shape que MovimientoInterno. */
+// BOM de producción: de qué insumos brutos sale UNA unidad de un producto, en
+// este centro. Es a la producción lo que RecetasProducto es a la venta, y por
+// eso lleva centro_id igual que aquella lleva sucursal_id: dos centros pueden
+// producir el mismo producto con gramajes distintos.
+model RecetaCentro {
+  id                 Int              @id @default(autoincrement())
+  centro_id          Int
+  producto_id        Int
+  insumo_id          Int
+  cantidad_utilizada Float
+  centro             CentroProduccion @relation(fields: [centro_id], references: [id])
+  producto           Producto         @relation(fields: [producto_id], references: [id])
+  insumo             Insumo           @relation("RecetaCentroInsumo", fields: [insumo_id], references: [id])
+  created_at         DateTime         @default(now())
+  update_at          DateTime         @updatedAt
+
+  @@unique([centro_id, producto_id, insumo_id])
+  @@index([centro_id, producto_id])
+}
+
 model MovimientoCentro {
   id              Int              @id @default(autoincrement())
   // Clave de idempotencia: la manda el cliente (header `Idempotency-Key`) y
