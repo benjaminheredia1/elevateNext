@@ -74,3 +74,8 @@ next-env.d.ts
 # exports de prueba generados por BotonExportarExcel (artefactos, no fuente)
 /excelsAux/
 /recibo-muestra.html
+# Playwright: reportes y artefactos de corridas fallidas
+/test-results/
+/playwright-report/
+/blob-report/
+/.playwright/

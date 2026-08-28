@@ -35,7 +35,24 @@ export async function GET(req: NextRequest) {
         // ve todo el inventario del negocio.
         ...(sucursal
           ? { OR: [{ stocks: { some: { sucursal_id: sucursal } } }, ...(siempre.length > 0 ? [{ id: { in: siempre } }] : [])] }
-          : {}),
+          // En consolidado se esconden los insumos que viven SOLO en el Centro
+          // de Producción (tienen StockCentro y ninguna fila de sucursal). Si
+          // aparecieran, alguien podría armar una ficha técnica con uno de
+          // ellos desde el modo consolidado; al vender, el descuento golpearía
+          // StockSucursal —que no existe para ese insumo— y dejaría un negativo
+          // fantasma en el local.
+          //
+          // La condición pide las DOS cosas a la vez a propósito: un insumo
+          // viejo sin filas en ningún lado (anterior a multi-sucursal) tiene
+          // que seguir viéndose.
+          : {
+              NOT: {
+                AND: [
+                  { stocks: { none: {} } },
+                  { stocksCentro: { some: {} } },
+                ],
+              },
+            }),
       },
       orderBy: { nombre: 'asc' },
       ...(sucursal ? { include: { stocks: { where: { sucursal_id: sucursal } } } } : {}),

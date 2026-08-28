@@ -23,9 +23,14 @@ function useProductos() {
   return useQuery({
     queryKey: ['admin', 'productos', 'para-produccion'],
     queryFn: async (): Promise<ProductoBase[]> => {
-      const data = (await apiClient.get('/api/admin/productos')).data;
-      const items = Array.isArray(data) ? data : data?.items ?? [];
-      return items.map((p: ProductoBase) => ({ id: p.id, nombre: p.nombre }));
+      // El endpoint responde { data: [...] }; se contemplan también las otras
+      // dos formas que usan endpoints vecinos ({ items } y arreglo pelado) para
+      // que el selector no quede vacío en silencio si alguno cambia.
+      const cuerpo = (await apiClient.get('/api/admin/productos')).data;
+      const items: ProductoBase[] = Array.isArray(cuerpo)
+        ? cuerpo
+        : cuerpo?.data ?? cuerpo?.items ?? [];
+      return items.map((p) => ({ id: p.id, nombre: p.nombre }));
     },
   });
 }

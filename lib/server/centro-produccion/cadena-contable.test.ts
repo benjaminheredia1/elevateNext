@@ -212,9 +212,12 @@ describe('cadena contable centro → sucursal → caja', () => {
     expect(ventasEnCaja[0].monto).toBeCloseTo(150, 2);
     expect(ventasEnCaja[0].metodo_pago).toBe('EFECTIVO');
 
-    // La venta aparece del lado de las entradas, no neteada contra nada.
-    const efectivo = flujo.por_metodo.find(m => m.metodo === 'EFECTIVO');
-    expect(efectivo!.monto).toBeGreaterThanOrEqual(150);
+    // La venta aparece del lado de las ENTRADAS. Se mira `entradas` y no
+    // `por_metodo`, que es el neto del día: cualquier gasto que otro test
+    // registre en la misma jornada lo vuelve negativo sin que esta venta tenga
+    // nada que ver.
+    expect(flujo.entradas).toBeGreaterThanOrEqual(150);
+    expect(ventasEnCaja[0].metodo_pago).toBe('EFECTIVO');
   });
 
   it('7. el estado de resultados refleja ingreso, CMV y margen de esta venta', async () => {
