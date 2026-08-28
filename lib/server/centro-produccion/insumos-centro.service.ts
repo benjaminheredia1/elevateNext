@@ -46,6 +46,22 @@ export async function altaInsumoEnCentro(
       where: { centro_id_insumo_id: { centro_id: centroId, insumo_id: insumo.id } },
     });
     if (yaEnCentro) throw new ConflictError(`"${insumo.nombre}" ya está en el inventario de este centro`);
+
+    // Reutilizar el insumo del catálogo es el camino común acá (fideo, avena y
+    // carne ya vienen cargados desde las sucursales). Aceptar en silencio una
+    // unidad distinta a la catalogada dejaría al Centro sumando litros sobre
+    // mililitros en el mismo promedio ponderado móvil: el stock y el costo
+    // quedan mal por un factor de 1000 y nada avisa. Mejor frenar acá.
+    // Comparación normalizada: `Insumo.unidad_medida` es texto libre alimentado
+    // por el catálogo administrable de unidades, así que "kg" y "KG" son la
+    // misma unidad y no deben disparar un 409 falso.
+    const misma = insumo.unidad_medida.trim().toUpperCase() === input.unidad_medida.trim().toUpperCase();
+    if (!misma) {
+      throw new ConflictError(
+        `"${insumo.nombre}" ya existe en el catálogo con unidad ${insumo.unidad_medida}, no ${input.unidad_medida}. ` +
+        `Dalo de alta en ${insumo.unidad_medida} o corregí la unidad del insumo en el catálogo.`,
+      );
+    }
   } else {
     insumo = await tx.insumo.create({
       data: {

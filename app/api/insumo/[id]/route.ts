@@ -115,6 +115,12 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
       where: { insumo_reventa_id: insumoId },
     });
 
+    // Verificar inventario del Centro de Producción. Sin este conteo el borrado
+    // pasaba: StockCentro es ON DELETE CASCADE (la fila del centro desaparecía
+    // sin auditoría) y MovimientoCentro es RESTRICT (P2003 → 500 genérico en
+    // vez del 409 explicativo que damos para todos los demás usos).
+    const enCentros = await prisma.stockCentro.count({ where: { insumo_id: insumoId } });
+
     // Verificar insumos mixtos
     const [comoHijo, comoPadre] = await Promise.all([
       prisma.insumoMixtoDetalle.count({ where: { insumo_hijo_id: insumoId } }),
@@ -133,6 +139,14 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     }
     if (comoHijo || comoPadre) {
       usos.push('insumos mixtos — quita esas referencias primero');
+    }
+    if (enCentros) {
+      usos.push(
+        // No se ofrece salida: dar de baja en el centro conserva la fila de
+        // StockCentro (activo: false), así que no destraba el borrado. Hoy no
+        // existe un "quitar del centro" equivalente al de sucursales.
+        `${enCentros} centro(s) de producción — el insumo es parte de su inventario y no puede eliminarse del catálogo`
+      );
     }
 
     if (usos.length > 0) {

@@ -61,12 +61,12 @@ describe('/api/admin/centros-produccion/[id]/insumos', () => {
     expect(res.status).toBe(403);
   });
 
-  // Hallazgo del review de Task 4: si el nombre ya existe en el catálogo con
-  // otra unidad de medida, altaInsumoEnCentro reutiliza el insumo existente y
-  // la unidad pedida se ignora en silencio (gana la del catálogo). Este test
-  // no corrige ese comportamiento — solo lo deja aseverado para que un cambio
-  // futuro no lo rompa sin que nadie se entere.
-  it('si el nombre ya existe en el catálogo con otra unidad, reutiliza el insumo y prevalece la unidad del catálogo', async () => {
+  // Reutilizar un insumo del catálogo es el camino común en el Centro (fideo,
+  // avena y carne ya están cargados desde las sucursales). Si la unidad pedida
+  // difiere de la catalogada hay que rechazar: aceptarla en silencio mezcla
+  // litros con mililitros en el mismo promedio ponderado y el costo queda mal
+  // por un factor de 1000 sin que nadie se entere.
+  it('si el nombre ya existe en el catálogo con otra unidad, rechaza con 409', async () => {
     const access_token = await token();
     const nombre = `Insumo unidad mixta ${Date.now()}`;
 
@@ -93,10 +93,19 @@ describe('/api/admin/centros-produccion/[id]/insumos', () => {
       { params: Promise.resolve({ id: String(otroCentroId) }) },
     );
     const segundoBody = await segundaAlta.json();
-    expect(segundaAlta.status).toBe(201);
-    expect(segundoBody.data.insumo.id).toBe(primerBody.data.insumo.id);
-    // La unidad pedida (LT) se ignora: gana la ya catalogada (KG).
-    expect(segundoBody.data.insumo.unidad_medida).toBe('KG');
+    expect(segundaAlta.status).toBe(409);
+    expect(segundoBody.error).toMatch(/KG/);
+
+    // Con la unidad correcta sí entra, reutilizando el insumo del catálogo.
+    const tercerAlta = await POST(
+      pedir(`/api/admin/centros-produccion/${otroCentroId}/insumos`, 'POST', access_token, {
+        nombre, unidad_medida: 'KG', stock_inicial: 2, costo_unitario: 3,
+      }),
+      { params: Promise.resolve({ id: String(otroCentroId) }) },
+    );
+    const tercerBody = await tercerAlta.json();
+    expect(tercerAlta.status).toBe(201);
+    expect(tercerBody.data.insumo.id).toBe(primerBody.data.insumo.id);
 
     await prisma.movimientoCentro.deleteMany({ where: { centro_id: otroCentroId } });
     await prisma.stockCentro.deleteMany({ where: { centro_id: otroCentroId } });
