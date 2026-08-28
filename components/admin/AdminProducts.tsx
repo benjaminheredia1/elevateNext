@@ -12,14 +12,10 @@ import SucursalSelector from '@/components/ui/SucursalSelector';
 import CopiarProductosModal from '@/components/admin/CopiarProductosModal';
 import { useSucursales } from '@/hooks/sucursales';
 import { useSucursalAdmin } from '@/hooks/sucursal-admin';
+import { etiquetaTipo } from './etiqueta-tipo';
 
 type Tipo = 'ELABORADO' | 'REVENTA' | 'TERCIADO';
 
-const ETIQUETA_TIPO: Record<string, string> = {
-  ELABORADO: 'Elaborado',
-  REVENTA:   'Reventa',
-  TERCIADO:  'Terciado',
-};
 type Estado = 'BORRADOR' | 'PUBLICADO' | 'ARCHIVADO' | 'BAJA';
 
 interface ApiProducto {
@@ -502,7 +498,10 @@ export default function AdminProducts() {
                       <span className="product-cell-desc">{(p.descripcion ?? '').slice(0, 50)}{(p.descripcion ?? '').length > 50 ? '…' : ''}</span>
                     </div>
                   </td>
-                  <td><span className="cat-badge">{ETIQUETA_TIPO[p.tipo] ?? p.tipo}</span></td>
+                  {/* Este catálogo es el de la sucursal: todo le llega hecho del
+                      Centro, así que se rotula terciado sin importar si allá lo
+                      hornean o lo compran. El tipo real sigue en la BD. */}
+                  <td><span className="cat-badge">{etiquetaTipo(p.tipo, 'sucursal')}</span></td>
                   <td className="num">Bs {p.precio}</td>
                   <td className="num dim">Bs {costo.toFixed(1)}</td>
                   <td className="num"><span className="margin-badge" style={{ color: foodCostColor(fc), background: 'var(--canvas)' }}>{p.precio > 0 ? Math.round(fc) : '—'}%</span></td>

@@ -13,7 +13,6 @@ import {
   errorMsg,
   medidaInfo,
   money,
-  number,
   stockState,
   type EstadoStock,
   type Insumo,
@@ -29,19 +28,12 @@ import {
  * pestañas de recetas y unidades.
  */
 
-type Tab = 'insumos' | 'movimientos' | 'recetas' | 'unidades';
+// Sin 'recetas': desde el corte la sucursal no arma nada, recibe producto
+// terminado. La ficha técnica vive en el Centro, que es quien produce.
+type Tab = 'insumos' | 'movimientos' | 'unidades';
 // El alta salió: los insumos de la sucursal son los espejos de sus
 // productos, y esos nacen en el Centro junto con el producto.
 type ModalAction = 'editar' | 'baja' | null;
-
-interface Receta {
-  id: number;
-  producto_id: number;
-  insumo_id: number;
-  cantidad_utilizada: number;
-  producto: { id: number; nombre: string; precio?: number };
-  insumo: { id: number; nombre: string; unidad_medida: string; costo_promedio: number; stock_actual: number };
-}
 
 interface FormState {
   categoria_insumo: string;
@@ -84,7 +76,6 @@ export default function AdminInsumos({ readOnly = false, soloAjustes = false }: 
   // recibe para armar los KPIs de cabecera con exactamente los mismos datos
   // que muestra la tabla.
   const [insumos, setInsumos] = useState<Insumo[]>([]);
-  const [recetas, setRecetas] = useState<Receta[]>([]);
   const [selected, setSelected] = useState<Insumo | null>(null);
   const [modalAction, setModalAction] = useState<ModalAction>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
@@ -113,25 +104,20 @@ export default function AdminInsumos({ readOnly = false, soloAjustes = false }: 
   const reactivar = useReactivarInsumo();
 
   /**
-   * Datos que son del marco: las recetas y el catálogo de unidades.
+   * Datos que son del marco: el catálogo de unidades.
    *
-   * Va aparte de la carga del núcleo a propósito. Antes del refactor las cuatro
-   * peticiones compartían un `Promise.all` y un `catch`, así que un fallo de
-   * `/api/recetas` —una pestaña secundaria— vaciaba también la tabla de stock.
-   * Ahora cada mitad falla sola: que se caiga el catálogo de recetas no puede
-   * dejar al usuario sin ver su inventario, que es a lo que entró.
+   * Va aparte de la carga del núcleo a propósito. Antes del refactor las
+   * peticiones compartían un `Promise.all` y un `catch`, así que un fallo de una
+   * pestaña secundaria vaciaba también la tabla de stock. Ahora cada mitad falla
+   * sola: que se caiga el catálogo de unidades no puede dejar al usuario sin ver
+   * su inventario, que es a lo que entró.
    */
   const loadMarco = useCallback(async () => {
     try {
-      const [recetasRes, unidadesRes] = await Promise.all([
-        apiClient.get('/api/recetas'),
-        apiClient.get('/api/unidades-medida'),
-      ]);
-      setRecetas(recetasRes.data?.data ?? []);
+      const unidadesRes = await apiClient.get('/api/unidades-medida');
       setUnidades(Array.isArray(unidadesRes.data) ? unidadesRes.data : []);
     } catch (err) {
       console.error(err);
-      setRecetas([]);
       setUnidades([]);
     }
   }, []);
@@ -158,17 +144,6 @@ export default function AdminInsumos({ readOnly = false, soloAjustes = false }: 
       return acc;
     }, { ok: 0, bajo: 0, critico: 0, agotado: 0 } as Record<EstadoStock, number>);
   }, [insumosActivos]);
-
-  const recipesByProduct = useMemo(() => {
-    const groups = new Map<number, { producto: Receta['producto']; items: Receta[]; costo: number }>();
-    for (const receta of recetas) {
-      const group = groups.get(receta.producto_id) ?? { producto: receta.producto, items: [], costo: 0 };
-      group.items.push(receta);
-      group.costo += Number(receta.cantidad_utilizada || 0) * Number(receta.insumo?.costo_promedio || 0);
-      groups.set(receta.producto_id, group);
-    }
-    return Array.from(groups.values()).sort((a, b) => a.producto.nombre.localeCompare(b.producto.nombre));
-  }, [recetas]);
 
   const openUnidadModal = (action: 'crear' | 'editar', unidad?: UnidadMedidaRow) => {
     setUnidadError('');
@@ -434,7 +409,6 @@ export default function AdminInsumos({ readOnly = false, soloAjustes = false }: 
         {[
           ['insumos', 'Insumos'],
           ['movimientos', 'Movimientos'],
-          ['recetas', 'Recetas'],
           // Unidades es solo una pantalla de administración (crear/editar unidades)
           ...(readOnly ? [] : [['unidades', 'Unidades']]),
         ].map(([key, label]) => (
@@ -508,31 +482,6 @@ export default function AdminInsumos({ readOnly = false, soloAjustes = false }: 
           >↩</button>
         )}
       />
-
-      {tab === 'recetas' && (
-        recipesByProduct.length === 0 ? (
-          <div className="empty-state"><h4>Sin recetas registradas</h4><p>Las fichas técnicas de productos aparecerán aquí cuando tengan insumos asociados.</p></div>
-        ) : (
-          <div className="dashboard-grid">
-            {recipesByProduct.map(group => (
-              <div key={group.producto.id} className="dash-card span-6">
-                <div className="dash-card-header">
-                  <h3>{group.producto.nombre}</h3>
-                  <span className="dash-card-sub">{money(group.costo)} costo receta</span>
-                </div>
-                <div className="alert-card-list">
-                  {group.items.map(item => (
-                    <div key={item.id} className="alert-row">
-                      <span className="alert-row-name">{item.insumo.nombre}</span>
-                      <span className="alert-row-qty">{number(item.cantidad_utilizada)} {item.insumo.unidad_medida}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        )
-      )}
 
       {tab === 'unidades' && (
         <>
