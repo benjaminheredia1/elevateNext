@@ -71,7 +71,7 @@ const EMPTY_FORM: FormState = {
   unidad_medida: 'KG',
 };
 
-export default function AdminInsumos({ readOnly = false }: { readOnly?: boolean }) {
+export default function AdminInsumos({ readOnly = false, soloAjustes = false }: { readOnly?: boolean; soloAjustes?: boolean }) {
   const [tab, setTab] = useState<Tab>('insumos');
   // Local cuyo stock se está viendo y operando. Sin sucursal elegida se muestra
   // el agregado del negocio, que es el comportamiento previo a multi-sucursal.
@@ -452,6 +452,7 @@ export default function AdminInsumos({ readOnly = false }: { readOnly?: boolean 
         vista={tab === 'insumos' || tab === 'movimientos' ? tab : 'oculto'}
         habilitado={listo}
         readOnly={readOnly}
+        soloAjustes={soloAjustes}
         estadoNoEsReal={consolidado}
         onInsumos={setInsumos}
         refresco={refresco}

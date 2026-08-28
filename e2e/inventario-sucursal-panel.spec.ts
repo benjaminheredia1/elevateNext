@@ -1,5 +1,5 @@
 import { test, expect, type Page, type Locator } from '@playwright/test';
-import { DUENO, ingresar, unico, fijarStockEnSucursal, sembrarProductoConEspejo } from './helpers';
+import { DUENO, CAJERO, ingresar, unico, fijarStockEnSucursal, sembrarProductoConEspejo } from './helpers';
 
 /**
  * Caracterizacion del panel de inventario ANTES de extraerlo a un componente
@@ -8,6 +8,9 @@ import { DUENO, ingresar, unico, fijarStockEnSucursal, sembrarProductoConEspejo 
  */
 const INSUMO = unico('E2E Panel');
 const SUCURSAL_A = unico('E2E Panel Local A');
+// El cajero del seed trabaja en la sucursal principal, no en las que crea
+// este spec: su insumo se siembra ahi, sin pasarle sucursalNombre.
+const INSUMO_CAJERO = unico('E2E Brownie cajero');
 const SUCURSAL_B = unico('E2E Panel Local B');
 
 const STOCK_INICIAL = 20;
@@ -106,6 +109,12 @@ test.describe('panel de inventario de sucursal', () => {
     await sembrarProductoConEspejo(page, {
       nombre: INSUMO, stock: STOCK_INICIAL, costo: COSTO_INICIAL, minimo: STOCK_MINIMO,
       sucursalNombre: SUCURSAL_A,
+    });
+
+    // El del cajero va en su propia sucursal (la principal): se siembra acá,
+    // aprovechando que ya hay sesión de dueño.
+    await sembrarProductoConEspejo(page, {
+      nombre: INSUMO_CAJERO, stock: 8, costo: 5, minimo: 1,
     });
 
     await irAInsumos(page);
@@ -252,5 +261,35 @@ test.describe('panel de inventario de sucursal', () => {
     await page.locator('.cat-filter-btn', { hasText: 'Activos' }).click();
     const filaActiva = await filaDelInsumo(page);
     await expect(celda(filaActiva, COL_INSUMO)).not.toContainText('INACTIVO');
+  });
+
+  test('el cajero puede mermar en su local pero no comprar ni editar la ficha', async ({ page }) => {
+    // Desde la fase 3 la merma y el conteo son del cajero: es quien ve caerse
+    // el brownie y quien cuenta la vitrina al cerrar turno. Comprar, editar la
+    // ficha y dar de baja siguen sin ser suyos.
+    await ingresar(page, CAJERO);
+    await page.goto('/caja/insumos');
+    await expect(page.getByPlaceholder(/buscar insumo/i)).toBeVisible({ timeout: 30_000 });
+    await page.getByPlaceholder(/buscar insumo/i).fill(INSUMO_CAJERO);
+
+    const fila = page.locator('tr', { hasText: INSUMO_CAJERO }).first();
+    await expect(fila).toBeVisible({ timeout: 20_000 });
+
+    // Tiene merma y conteo…
+    await expect(fila.getByTitle(/merma/i)).toBeVisible();
+    await expect(fila.getByTitle(/corregir stock/i)).toBeVisible();
+    // …y no tiene compra, edición de ficha ni baja.
+    await expect(fila.getByTitle(/^compra$/i)).toHaveCount(0);
+    await expect(fila.getByTitle(/editar insumo/i)).toHaveCount(0);
+
+    await fila.getByTitle(/merma/i).first().click();
+    const modal = page.locator('.admin-modal');
+    await expect(modal).toBeVisible();
+    await campoModal(page, 'Cantidad').fill('2');
+    await modal.getByRole('button', { name: /guardar/i }).click();
+    await expect(modal).toBeHidden({ timeout: 20_000 });
+
+    // 8 − 2 = 6.
+    await expect(page.locator('tr', { hasText: INSUMO_CAJERO }).first()).toContainText('6', { timeout: 20_000 });
   });
 });

@@ -20,6 +20,13 @@ async function enTransaccionRevertida<T>(fn: (tx: Parameters<Parameters<typeof p
   let salida: T | undefined;
   try {
     await prisma.$transaction(async (tx) => {
+      // La mudanza aborta con un turno de caja abierto, y la BD de tests es
+      // compartida: un E2E de caja deja el suyo abierto y haria fallar a todos
+      // los casos de este archivo por una razon que no es la que prueban. Se
+      // cierran DENTRO de la transaccion, que se revierte igual: en la base no
+      // queda cerrado nada. La guarda en si tiene su propio test, mas abajo,
+      // que abre uno a proposito.
+      await tx.cajaTurno.updateMany({ where: { estado: 'ABIERTO' }, data: { estado: 'CERRADO' } });
       salida = await fn(tx);
       throw new Revertir();
     }, { timeout: 120_000 });

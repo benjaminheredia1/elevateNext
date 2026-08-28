@@ -69,6 +69,14 @@ export interface PropsNucleoInventario {
   /** Vista del cajero: sin columna de acciones ni modales. */
   readOnly?: boolean;
   /**
+   * Deja al cajero registrar merma y conteo aunque el resto sea de solo
+   * lectura. Es quien ve caerse el brownie y quien cuenta la vitrina al cerrar
+   * turno: sin esto tendría que llamar al admin por 3 unidades, no lo haría, y
+   * el stock derivaría. Lo que sigue sin poder es comprar, editar la ficha o
+   * dar de baja.
+   */
+  soloAjustes?: boolean;
+  /**
    * Cuando la fila suma varios contextos (el consolidado de sucursales), el
    * semáforo de nivel mentiría: puede decir "OK" mientras un local está en
    * cero. En ese caso se muestra la leyenda y no se ofrece filtrar por estado.
@@ -109,6 +117,7 @@ export default function NucleoInventario({
   vista,
   habilitado = true,
   readOnly = false,
+  soloAjustes = false,
   estadoNoEsReal = false,
   onInsumos,
   refresco = 0,
@@ -461,7 +470,7 @@ export default function NucleoInventario({
                     <th className="num">Costo unit.</th>
                     <th className="num">Valor</th>
                     <th>Proveedor</th>
-                    {!readOnly && <th>Acciones</th>}
+                    {(!readOnly || soloAjustes) && <th>Acciones</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -506,20 +515,20 @@ export default function NucleoInventario({
                         <td className="num">{money(insumo.costo_promedio)}</td>
                         <td className="num">{money(value)}</td>
                         <td>{insumo.proveedor || '—'}</td>
-                        {!readOnly && <td>
+                        {(!readOnly || soloAjustes) && <td>
                           <div className="action-btns">
                             {insumo.activo ? (
                               <>
-                                {accionesFicha?.(insumo)}
-                                {ambito.permiteCompra && (
+                                {!soloAjustes && accionesFicha?.(insumo)}
+                                {!soloAjustes && ambito.permiteCompra && (
                                   <button className="action-btn edit" title="Compra" onClick={() => openModal('compra', insumo)} type="button">↥</button>
                                 )}
                                 <button className="action-btn delete" title="Merma" onClick={() => openModal('merma', insumo)} type="button">⌫</button>
                                 <button className="action-btn" title="Corregir stock (conteo físico) — usa esto si te equivocaste en una cantidad" onClick={() => openModal('conteo', insumo)} type="button">✓</button>
-                                {accionesAlcance?.(insumo)}
+                                {!soloAjustes && accionesAlcance?.(insumo)}
                               </>
                             ) : (
-                              accionesInactivo?.(insumo)
+                              !soloAjustes && accionesInactivo?.(insumo)
                             )}
                           </div>
                         </td>}
