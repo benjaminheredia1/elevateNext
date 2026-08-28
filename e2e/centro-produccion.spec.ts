@@ -84,6 +84,11 @@ test.describe('centro de producción de punta a punta', () => {
     // 401 acá se leería como "el alta falló" cuando en realidad faltó la sesión.
     await page.goto('/admin/centro-produccion');
     const alta = await page.evaluate(async (nombre) => {
+      // Desde la fase 3 el alta exige el centro que lo produce: sin centro_id
+      // el servidor responde 422.
+      const centros = await (await fetch('/api/admin/centros-produccion', { credentials: 'include' })).json();
+      const centroId = centros?.items?.[0]?.id;
+
       const res = await fetch('/api/admin/productos', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -92,6 +97,7 @@ test.describe('centro de producción de punta a punta', () => {
           nombre, descripcion: 'Producto de prueba e2e', precio: 12,
           tipo: 'TERCIADO', estado_publicacion: 'BORRADOR',
           categorias: [], marcas: [], receta: [],
+          centro_id: centroId,
         }),
       });
       return { ok: res.ok, status: res.status, cuerpo: await res.text() };

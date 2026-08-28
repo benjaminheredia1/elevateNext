@@ -8,7 +8,12 @@ import { DUENO, CAJERO, ingresar, unico } from './helpers';
  * completar el circuito y que los números que VE en pantalla sean los correctos
  * — que es donde se descubre que un endpoint anda pero la tabla muestra otra
  * cosa, o que el formulario manda un campo de menos.
+ *
+ * Desde la fase 3 la compra la hace el CENTRO: la sucursal ya no le compra a
+ * proveedores, recibe traslados. El egreso de caja y su aparición en el flujo
+ * no cambian — el que paga sigue siendo el cajero del local.
  */
+const CENTRO = unico('Centro E2E Compra');
 const NOMBRE_INSUMO = unico('E2E Aceite');
 const STOCK_INICIAL = 10;
 const COSTO_INICIAL = 8;
@@ -32,31 +37,45 @@ async function accionDeFila(page: Page, insumo: string, titulo: string) {
   await fila.getByTitle(new RegExp(titulo, 'i')).first().click();
 }
 
-async function irAInsumos(page: Page) {
-  await page.goto('/admin/insumos');
-  await expect(page.getByPlaceholder(/buscar insumo/i)).toBeVisible({ timeout: 30_000 });
+/** Pestaña "Insumo bruto" del Centro, que es donde vive la compra. */
+async function irAlCentro(page: Page) {
+  await page.goto('/admin/centro-produccion');
+  await expect(page.getByRole('heading', { level: 1, name: /centro de producción/i }))
+    .toBeVisible({ timeout: 30_000 });
+  await page.locator('.sucursal-selector select').selectOption({ label: CENTRO });
+  await page.getByRole('button', { name: 'Insumo bruto' }).click();
+}
+
+/** Campo de un modal del Centro: el label es hermano del input, no lo envuelve. */
+function campoModal(page: Page, etiqueta: string) {
+  return page.locator('.admin-modal').locator('.form-group', { hasText: etiqueta })
+    .locator('input, select').first();
 }
 
 test.describe.configure({ mode: 'serial' });
 
 test.describe('compra de insumo, inventario y caja', () => {
-  test('el dueño da de alta un insumo con stock y costo', async ({ page }) => {
+  test('el dueño da de alta un insumo con stock y costo en el Centro', async ({ page }) => {
     await ingresar(page, DUENO);
-    await irAInsumos(page);
 
-    await page.getByRole('button', { name: '+ Insumo' }).first().click();
+    await page.goto('/admin/centro-produccion');
+    await page.getByRole('button', { name: /nuevo centro/i }).click();
+    await campoModal(page, 'Nombre').fill(CENTRO);
+    await page.locator('.admin-modal').getByRole('button', { name: /crear centro/i }).click();
+    await expect(page.locator('.admin-modal')).toBeHidden({ timeout: 20_000 });
+    await expect(page.locator('.sucursal-selector select option', { hasText: CENTRO }))
+      .toHaveCount(1, { timeout: 20_000 });
+
+    await irAlCentro(page);
+    await page.getByRole('button', { name: /nuevo insumo/i }).first().click();
     const modal = page.locator('.admin-modal');
     await expect(modal).toBeVisible();
-
-    await modal.locator('label:has-text("Nombre") input').fill(NOMBRE_INSUMO);
-    await modal.locator('label:has-text("Stock") input').first().fill(String(STOCK_INICIAL));
-    await modal.locator('label:has-text("Costo unitario") input').fill(String(COSTO_INICIAL));
-    await modal.locator('label:has-text("Stock mínimo") input').fill('2');
-    await modal.getByRole('button', { name: /guardar|crear|confirmar/i }).click();
-
+    await campoModal(page, 'Nombre').fill(NOMBRE_INSUMO);
+    await campoModal(page, 'Stock inicial').fill(String(STOCK_INICIAL));
+    await campoModal(page, 'Costo unitario').fill(String(COSTO_INICIAL));
+    await modal.getByRole('button', { name: /dar de alta/i }).click();
     await expect(modal).toBeHidden({ timeout: 20_000 });
 
-    await page.getByPlaceholder(/buscar insumo/i).fill(NOMBRE_INSUMO);
     const fila = page.locator('tr', { hasText: NOMBRE_INSUMO }).first();
     await expect(fila).toBeVisible({ timeout: 20_000 });
     await expect(fila).toContainText(String(STOCK_INICIAL));
@@ -64,8 +83,7 @@ test.describe('compra de insumo, inventario y caja', () => {
 
   test('una compra sube el stock y mueve el costo promedio ponderado', async ({ page }) => {
     await ingresar(page, DUENO);
-    await irAInsumos(page);
-    await page.getByPlaceholder(/buscar insumo/i).fill(NOMBRE_INSUMO);
+    await irAlCentro(page);
 
     await accionDeFila(page, NOMBRE_INSUMO, 'compra');
     const modal = page.locator('.admin-modal');

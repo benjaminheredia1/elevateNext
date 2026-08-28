@@ -276,6 +276,22 @@ export default function CentroProduccionPage() {
 
   const cerrarAccion = () => { setAccion(null); setRefresco(r => r + 1); };
 
+  /**
+   * Producir y despachar cambian el stock del Centro, pero lo hacen desde otras
+   * pestañas y por React Query, que no alcanza al núcleo —este trae su lista por
+   * su cuenta—. Al volver a "Insumo bruto" hay que pedirle que recargue, o la
+   * tabla sigue mostrando el stock de antes de producir.
+   *
+   * Solo al volver DE esas dos pestañas: entrar y salir de "Insumo bruto" no
+   * cuesta una recarga, que era el motivo de montar el núcleo siempre.
+   */
+  const cambiarTab = (destino: Pestana) => {
+    if (destino === 'inventario' && (tab === 'produccion' || tab === 'envios')) {
+      setRefresco(r => r + 1);
+    }
+    setTab(destino);
+  };
+
   useEffect(() => {
     if (centroId == null && centros.length > 0) setCentroId(centros[0].id);
   }, [centros, centroId]);
@@ -334,7 +350,7 @@ export default function CentroProduccionPage() {
             <button
               key={p.id}
               className={`admin-tab${tab === p.id ? ' active' : ''}`}
-              onClick={() => setTab(p.id)}
+              onClick={() => cambiarTab(p.id)}
             >
               {p.label}
             </button>

@@ -12,6 +12,11 @@ import { defineConfig, devices } from '@playwright/test';
  * process.env antes de que Next cargue sus archivos, la DATABASE_URL de `.env`
  * —que apunta a PRODUCCIÓN— no puede pisarlas.
  *
+ * `dev:e2e` COMPILA antes de servir. `next start` sirve el último build, no el
+ * código fuente: sin el build por delante, editar un componente y correr los
+ * E2E probaba la versión anterior y pasaba en verde sin tocar el cambio. Pasó
+ * el 2026-08-28 y costó media fase de verificaciones que no verificaban nada.
+ *
  * Puerto 3100 y no 3000 para poder correr los e2e con el sandbox levantado al
  * mismo tiempo.
  */

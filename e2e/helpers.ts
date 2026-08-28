@@ -80,3 +80,112 @@ export async function esperarFila(page: Page, texto: string) {
   await expect(fila).toBeVisible({ timeout: 20_000 });
   return fila;
 }
+
+/**
+ * Siembra un item de inventario en la sucursal, como se hace desde el corte:
+ * creando un PRODUCTO en el Centro. Su insumo espejo es lo que la sucursal ve
+ * y opera —merma, conteo, corrección de costo, baja—, porque desde la fase 3
+ * el local ya no da de alta insumo bruto ni le compra a proveedores.
+ *
+ * Se usa `fetch` DENTRO de la página y no `page.request`: la sesión viaja en
+ * una cookie httpOnly que el contexto de request no siempre arrastra, y un 401
+ * acá se leería como "el alta falló" cuando en realidad faltó la sesión.
+ */
+export async function sembrarProductoConEspejo(
+  page: Page,
+  datos: { nombre: string; stock: number; costo: number; minimo?: number; sucursalNombre?: string },
+): Promise<number> {
+  await page.goto('/admin/centro-produccion');
+
+  const resultado = await page.evaluate(async (d) => {
+    // El espejo nace en la sucursal del alta. Sin esto iria a la principal, y
+    // un spec que trabaja sobre un local propio no veria nunca su fila.
+    let sucursalId: number | undefined;
+    if (d.sucursalNombre) {
+      const sucs = await (await fetch('/api/sucursales', { credentials: 'include' })).json();
+      sucursalId = (sucs?.data ?? []).find((x: { nombre: string }) => x.nombre === d.sucursalNombre)?.id;
+    }
+
+    const centros = await (await fetch('/api/admin/centros-produccion', { credentials: 'include' })).json();
+    let centroId: number | undefined = centros?.items?.[0]?.id;
+    if (!centroId) {
+      const creado = await (await fetch('/api/admin/centros-produccion', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ nombre: `Centro seed ${Date.now()}` }),
+      })).json();
+      centroId = creado?.data?.id;
+    }
+
+    const res = await fetch('/api/admin/productos', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        nombre: d.nombre,
+        descripcion: 'Sembrado por el E2E',
+        precio: Math.max(1, Math.round(d.costo * 2)),
+        tipo: 'REVENTA',
+        // Borrador a propósito: publicar exige una carta donde aparecer, y lo que
+        // se siembra acá es inventario, no catálogo de cara al cliente.
+        estado_publicacion: 'BORRADOR',
+        categorias: [], marcas: [], receta: [],
+        permitir_duplicado: true,
+        centro_id: centroId,
+        sucursal_id: sucursalId,
+        nuevo_insumo_reventa: {
+          unidad_medida: 'UNIDAD',
+          stock: d.stock,
+          costo_unitario: d.costo,
+          punto_reorden: d.minimo ?? 1,
+        },
+      }),
+    });
+    return { ok: res.ok, status: res.status, cuerpo: await res.text() };
+  }, datos);
+
+  if (!resultado.ok) {
+    throw new Error(`No se pudo sembrar "${datos.nombre}": ${resultado.status} ${resultado.cuerpo}`);
+  }
+  return JSON.parse(resultado.cuerpo).data.id as number;
+}
+
+/**
+ * Fija el stock de un insumo en una sucursal por API (conteo fisico).
+ *
+ * Es como un local que todavia no maneja ese insumo termina teniendolo: el
+ * servicio crea la fila si falta. Reemplaza a "Agregar de otra sucursal", que
+ * la fase 3 quito —copiar insumo bruto entre locales dejo de tener sentido
+ * cuando el bruto vive solo en el Centro—.
+ */
+export async function fijarStockEnSucursal(
+  page: Page,
+  datos: { insumoNombre: string; sucursalNombre: string; stock: number },
+): Promise<void> {
+  const resultado = await page.evaluate(async (d) => {
+    const sucs = await (await fetch('/api/sucursales', { credentials: 'include' })).json();
+    const sucursalId = (sucs?.data ?? []).find((x: { nombre: string }) => x.nombre === d.sucursalNombre)?.id;
+
+    const lista = await (await fetch('/api/insumo?incluir_inactivos=1', { credentials: 'include' })).json();
+    const insumo = (Array.isArray(lista) ? lista : lista?.data ?? [])
+      .find((i: { nombre: string }) => i.nombre === d.insumoNombre);
+
+    const res = await fetch('/api/admin/insumos/conteo', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        insumo_id: insumo?.id,
+        nuevo_stock: d.stock,
+        sucursal_id: sucursalId,
+        descripcion: 'Conteo sembrado por el E2E',
+      }),
+    });
+    return { ok: res.ok, status: res.status, cuerpo: await res.text() };
+  }, datos);
+
+  if (!resultado.ok) {
+    throw new Error(`No se pudo fijar el stock de "${datos.insumoNombre}": ${resultado.status} ${resultado.cuerpo}`);
+  }
+}

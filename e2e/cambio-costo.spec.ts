@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { DUENO, ingresar, unico } from './helpers';
+import { DUENO, ingresar, unico, sembrarProductoConEspejo } from './helpers';
 
 /**
  * Cambiar el costo de un insumo desde la pantalla.
@@ -37,17 +37,14 @@ test.describe.configure({ mode: 'serial' });
 test.describe('cambio del costo de un insumo', () => {
   test('se crea el insumo con su costo inicial', async ({ page }) => {
     await ingresar(page, DUENO);
+
+    // Desde la fase 3 la sucursal no da de alta insumo: lo que maneja son los
+    // espejos de sus productos, y esos nacen en el Centro. Lo que este archivo
+    // prueba —que editar el costo lo mueva de verdad— sigue siendo de la
+    // sucursal, así que solo cambia de dónde sale el dato.
+    await sembrarProductoConEspejo(page, { nombre: INSUMO, stock: 50, costo: COSTO_INICIAL, minimo: 1 });
+
     await irAInsumos(page);
-
-    await page.getByRole('button', { name: '+ Insumo' }).first().click();
-    await expect(page.locator('.admin-modal')).toBeVisible();
-    await campoModal(page, 'Nombre').fill(INSUMO);
-    await campoModal(page, 'Stock').fill('50');
-    await campoModal(page, 'Costo unitario').fill(String(COSTO_INICIAL));
-    await campoModal(page, 'Stock mínimo').fill('1');
-    await page.locator('.admin-modal').getByRole('button', { name: /guardar|crear|confirmar/i }).click();
-    await expect(page.locator('.admin-modal')).toBeHidden({ timeout: 20_000 });
-
     const fila = await filaDelInsumo(page);
     await expect(fila).toContainText(String(COSTO_INICIAL));
   });

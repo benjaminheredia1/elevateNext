@@ -1,5 +1,5 @@
 import { test, expect, type Page, type Locator } from '@playwright/test';
-import { DUENO, ingresar, unico } from './helpers';
+import { DUENO, ingresar, unico, fijarStockEnSucursal, sembrarProductoConEspejo } from './helpers';
 
 /**
  * Caracterizacion del panel de inventario ANTES de extraerlo a un componente
@@ -99,18 +99,17 @@ test.describe('panel de inventario de sucursal', () => {
     await crearSucursal(page, SUCURSAL_A);
     await crearSucursal(page, SUCURSAL_B);
 
+    // El alta de insumo salió de la sucursal en la fase 3: su inventario son los
+    // espejos de sus productos, sembrados desde el Centro. Todo lo demás que
+    // prueba este archivo —merma, conteo, baja, reactivación— sigue siendo de
+    // la sucursal y se ejerce igual.
+    await sembrarProductoConEspejo(page, {
+      nombre: INSUMO, stock: STOCK_INICIAL, costo: COSTO_INICIAL, minimo: STOCK_MINIMO,
+      sucursalNombre: SUCURSAL_A,
+    });
+
     await irAInsumos(page);
     await elegirSucursal(page, SUCURSAL_A);
-
-    await page.getByRole('button', { name: '+ Insumo' }).first().click();
-    const modal = page.locator('.admin-modal');
-    await expect(modal).toBeVisible();
-    await campoModal(page, 'Nombre').fill(INSUMO);
-    await campoModal(page, 'Stock').fill(String(STOCK_INICIAL));
-    await campoModal(page, 'Costo unitario').fill(String(COSTO_INICIAL));
-    await campoModal(page, 'Stock mínimo').fill(String(STOCK_MINIMO));
-    await modal.getByRole('button', { name: /guardar|crear|confirmar/i }).click();
-    await expect(modal).toBeHidden({ timeout: 20_000 });
 
     const fila = await filaDelInsumo(page);
     await expect(celda(fila, COL_STOCK)).toContainText(String(STOCK_INICIAL));
@@ -172,26 +171,17 @@ test.describe('panel de inventario de sucursal', () => {
     await irAInsumos(page);
     await elegirSucursal(page, SUCURSAL_B);
 
-    // El insumo nace en Local A: para verlo en Local B primero hay que
-    // traerlo, que es como el panel puebla el inventario de un local nuevo.
-    await page.getByRole('button', { name: /agregar de otra sucursal/i }).click();
-    const copiar = page.locator('.admin-modal-lg');
-    await expect(copiar).toBeVisible();
-    await copiar.locator('.form-group', { hasText: 'Traer desde' }).locator('select').selectOption({ label: SUCURSAL_A });
-    await copiar.locator('.form-group', { hasText: 'Buscar' }).locator('input').fill(INSUMO);
-    await copiar.locator('.copiar-fila', { hasText: INSUMO }).locator('input[type="checkbox"]').check();
-    await copiar.getByRole('button', { name: /^agregar/i }).click();
-    await expect(copiar).toBeHidden({ timeout: 20_000 });
+    // El insumo nace en Local A. "Agregar de otra sucursal" se fue con la fase 3
+    // —copiar insumo bruto entre locales dejo de tener sentido cuando el bruto
+    // vive solo en el Centro—, asi que B lo recibe con un conteo, que crea su
+    // fila con un valor propio, distinto del de A.
+    await fijarStockEnSucursal(page, {
+      insumoNombre: INSUMO, sucursalNombre: SUCURSAL_B, stock: CONTEO_B,
+    });
+    await page.reload();
+    await elegirSucursal(page, SUCURSAL_B);
 
-    // Llega con stock cero; un conteo le da un valor propio, distinto del de A.
     await page.getByPlaceholder(/buscar insumo/i).fill(INSUMO);
-    await accionDeFila(page, INSUMO, 'corregir stock');
-    const modal = page.locator('.admin-modal');
-    await expect(modal).toBeVisible();
-    await campoModal(page, 'Stock real').fill(String(CONTEO_B));
-    await modal.getByRole('button', { name: /guardar/i }).click();
-    await expect(modal).toBeHidden({ timeout: 20_000 });
-
     const filaB = await filaDelInsumo(page);
     await expect(celda(filaB, COL_STOCK)).toContainText(String(CONTEO_B));
 
