@@ -13,7 +13,13 @@ import CopiarProductosModal from '@/components/admin/CopiarProductosModal';
 import { useSucursales } from '@/hooks/sucursales';
 import { useSucursalAdmin } from '@/hooks/sucursal-admin';
 
-type Tipo = 'ELABORADO' | 'REVENTA';
+type Tipo = 'ELABORADO' | 'REVENTA' | 'TERCIADO';
+
+const ETIQUETA_TIPO: Record<string, string> = {
+  ELABORADO: 'Elaborado',
+  REVENTA:   'Reventa',
+  TERCIADO:  'Terciado',
+};
 type Estado = 'BORRADOR' | 'PUBLICADO' | 'ARCHIVADO' | 'BAJA';
 
 interface ApiProducto {
@@ -479,7 +485,9 @@ export default function AdminProducts() {
               const margin = p.precio - costo;
               const clazz = classifyMenu(p.ventas_acumuladas || 0, margin, avgSales, avgMargin);
               const noRecipe = p.tipo === 'ELABORADO' && p.recetaProducto_id.length === 0;
-              const rinde = p.tipo === 'REVENTA'
+              // Ni reventa ni terciado tienen receta local: su rinde no se
+              // calcula desde insumos, es el stock del insumo vinculado.
+              const rinde = p.tipo !== 'ELABORADO'
                 ? '—'
                 // El rinde es el del local seleccionado, no el total del negocio.
                 : buildablePortions(p.recetaProducto_id.map(r => ({ stock: r.insumo?.stocks?.[0]?.stock_actual ?? 0, cantidad: r.cantidad_utilizada })));
@@ -495,7 +503,7 @@ export default function AdminProducts() {
                       <span className="product-cell-desc">{(p.descripcion ?? '').slice(0, 50)}{(p.descripcion ?? '').length > 50 ? '…' : ''}</span>
                     </div>
                   </td>
-                  <td><span className="cat-badge">{p.tipo === 'REVENTA' ? 'Reventa' : 'Elaborado'}</span></td>
+                  <td><span className="cat-badge">{ETIQUETA_TIPO[p.tipo] ?? p.tipo}</span></td>
                   <td className="num">Bs {p.precio}</td>
                   <td className="num dim">Bs {costo.toFixed(1)}</td>
                   <td className="num"><span className="margin-badge" style={{ color: foodCostColor(fc), background: 'var(--canvas)' }}>{p.precio > 0 ? Math.round(fc) : '—'}%</span></td>

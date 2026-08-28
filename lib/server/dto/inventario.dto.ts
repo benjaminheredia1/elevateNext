@@ -72,7 +72,7 @@ export const ProductoConFichaSchema = z.object({
   precio:             z.number().positive(),
   imagen_url:         ImagenProductoSchema.optional(),
   disponible:         z.boolean().optional().default(true),
-  tipo:               z.enum(['ELABORADO', 'REVENTA']).optional().default('ELABORADO'),
+  tipo:               z.enum(['ELABORADO', 'REVENTA', 'TERCIADO']).optional().default('ELABORADO'),
   estado_publicacion: z.enum(['BORRADOR', 'PUBLICADO', 'ARCHIVADO']).optional().default('BORRADOR'),
   calorias:           z.number().int().positive().optional(),
   proteina:           z.string().optional(),
@@ -97,14 +97,16 @@ export const ProductoConFichaSchema = z.object({
   // usuario confirma que igual quiere uno nuevo (dos platos parecidos).
   permitir_duplicado: z.boolean().optional().default(false),
 }).superRefine((data, ctx) => {
-  // Exclusión de tipos: REVENTA descuenta 1:1 de su insumo vinculado; si
-  // además tuviera receta, el descuento de stock usaría la receta e ignoraría
-  // el insumo de reventa (comportamiento ambiguo).
-  if (data.tipo === 'REVENTA' && data.receta.length > 0) {
+  // Exclusión de tipos: REVENTA y TERCIADO descuentan 1:1 de su insumo
+  // vinculado; si además tuvieran receta, el descuento de stock usaría la
+  // receta e ignoraría el insumo (comportamiento ambiguo). La receta de un
+  // terciado vive en el Centro (RecetaCentro) y se consume al producir, no al
+  // vender: no es la misma receta ni el mismo momento.
+  if (data.tipo !== 'ELABORADO' && data.receta.length > 0) {
     ctx.addIssue({
       code: 'custom',
       path: ['receta'],
-      message: 'Un producto de REVENTA no lleva receta: su inventario es el insumo vinculado 1:1.',
+      message: `Un producto de ${data.tipo} no lleva receta de venta: su inventario es el insumo vinculado 1:1.`,
     });
   }
 });

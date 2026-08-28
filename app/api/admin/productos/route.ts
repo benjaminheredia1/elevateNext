@@ -134,7 +134,11 @@ export async function POST(req: NextRequest) {
 
       // 0. Reventa: crear el insumo de inventario automáticamente (si se enviaron sus datos)
       let insumoReventaId = parsed.insumo_reventa_id ?? null;
-      if (parsed.tipo === 'REVENTA' && parsed.nuevo_insumo_reventa && !insumoReventaId) {
+      // TERCIADO entra por el mismo camino que REVENTA: los dos necesitan un
+      // insumo propio del que descontar al vender. La diferencia está en cómo
+      // se abastece ese insumo (compra vs. producción en el Centro), que no es
+      // asunto del alta del producto.
+      if (parsed.tipo !== 'ELABORADO' && parsed.nuevo_insumo_reventa && !insumoReventaId) {
         const n = parsed.nuevo_insumo_reventa;
         const insumo = await tx.insumo.create({
           data: {

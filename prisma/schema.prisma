@@ -509,6 +509,11 @@ enum Tipo_movimiento {
 enum ProductoTipo {
   ELABORADO
   REVENTA
+  // Se fabrica en el Centro de Producción y se despacha a los locales. En toda
+  // la lógica de venta se comporta igual que REVENTA (descuenta 1:1 su insumo
+  // espejo, sin receta local); se distingue solo para catálogo y reportes,
+  // porque su stock no se compra: se produce.
+  TERCIADO
 }
 
 enum EstadoPublicacion {

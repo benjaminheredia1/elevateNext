@@ -6,6 +6,14 @@ import {
   foodCostColor, classifyMenu, menuClassMeta, buildablePortions, computeRecipeCost, foodCostPct,
 } from './inventoryData';
 import { convertir, unidadesEntrada, redondearCantidad } from '@/lib/unidades';
+const TIPOS_PRODUCTO = [
+  { id: 'ELABORADO' as const, titulo: '🍳 Elaborado', detalle: 'Se prepara en cocina. Requiere receta.' },
+  { id: 'REVENTA'   as const, titulo: '🏷️ Reventa',   detalle: 'Se compra terminado. Mapeo 1:1 a un insumo.' },
+  // El terciado comparte toda la mecánica de venta con la reventa; lo que
+  // cambia es de dónde sale su stock, y eso se administra en el Centro.
+  { id: 'TERCIADO'  as const, titulo: '🏭 Terciado',  detalle: 'Se produce en el Centro y llega por envío. Mapeo 1:1 a un insumo.' },
+];
+
 
 export interface WizardInitial {
   id?: number;
@@ -14,7 +22,7 @@ export interface WizardInitial {
   precio: number;
   calorias: number | null;
   proteina: string | null;
-  tipo: 'ELABORADO' | 'REVENTA';
+  tipo: 'ELABORADO' | 'REVENTA' | 'TERCIADO';
   estado_publicacion: 'BORRADOR' | 'PUBLICADO' | 'ARCHIVADO';
   imagen_url: string | null;
   categorias: number[];
@@ -223,7 +231,7 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, sucur
 
   // Al editar un reventa ya vinculado, precargar los datos de su insumo
   useEffect(() => {
-    if (p.tipo !== 'REVENTA' || !p.insumo_reventa_id) return;
+    if (p.tipo === 'ELABORADO' || !p.insumo_reventa_id) return;
     const ins = insumos.find(i => i.id === p.insumo_reventa_id);
     if (!ins) return;
     setReventaInsumo({
@@ -236,7 +244,7 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, sucur
     });
   }, [insumos, p.insumo_reventa_id, p.tipo]);
 
-  const STEPS = ['Básicos', 'Precio & Foto', p.tipo === 'REVENTA' ? 'Inventario' : 'Receta', 'Revisar'];
+  const STEPS = ['Básicos', 'Precio & Foto', p.tipo === 'ELABORADO' ? 'Receta' : 'Inventario', 'Revisar'];
 
   const uploadImagen = async (file: File) => {
     setUploading(true); setUploadError('');
@@ -253,12 +261,12 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, sucur
 
   /* ---- métricas en vivo ---- */
   const cost = useMemo(() => {
-    if (p.tipo === 'REVENTA') return reventaInsumo.costo_unitario;
+    if (p.tipo !== 'ELABORADO') return reventaInsumo.costo_unitario;
     return computeRecipeCost(p.receta.map(r => ({ costo: insumoOf(r.insumo_id)?.costo_promedio ?? 0, cantidad: r.cantidad_utilizada })));
   }, [p.tipo, p.receta, reventaInsumo.costo_unitario, insumos]);
   const margin = p.precio - cost;
   const fc = foodCostPct(cost, p.precio);
-  const rinde = p.tipo === 'REVENTA'
+  const rinde = p.tipo !== 'ELABORADO'
     ? Math.floor(reventaInsumo.stock)
     : buildablePortions(p.receta.map(r => ({ stock: insumoOf(r.insumo_id)?.stock_actual ?? 0, cantidad: r.cantidad_utilizada })));
   const clazz = classifyMenu(0, margin, avgSales, avgMargin);
@@ -278,7 +286,7 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, sucur
   if (insumosDeBajaEnReceta.length > 0) {
     gate.push(`La receta usa ${insumosDeBajaEnReceta.length} insumo(s) dado(s) de baja: ${insumosDeBajaEnReceta.map(item => insumoOf(item.insumo_id)?.nombre).join(', ')}. Reemplázalo(s) o quítalo(s).`);
   }
-  if (p.tipo === 'REVENTA' && !(reventaInsumo.costo_unitario > 0)) gate.push('Define el costo unitario del insumo de reventa.');
+  if (p.tipo !== 'ELABORADO' && !(reventaInsumo.costo_unitario > 0)) gate.push('Define el costo unitario del insumo vinculado.');
   const canPublish = gate.length === 0;
 
   const toggleMarca = (id: number) => {
@@ -324,7 +332,7 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, sucur
       sucursal_id: sucursalId,
       categorias: p.categorias, marcas: p.marcas,
       // Solo los campos persistibles: el estado de edición (ui_*) no viaja a la API
-      receta: p.tipo === 'REVENTA' ? [] : p.receta.map(({ insumo_id, cantidad_utilizada }) => ({ insumo_id, cantidad_utilizada })),
+      receta: p.tipo === 'ELABORADO' ? p.receta.map(({ insumo_id, cantidad_utilizada }) => ({ insumo_id, cantidad_utilizada })) : [],
       insumo_reventa_id: p.insumo_reventa_id ?? undefined,
       imagen_url: p.imagen_url || undefined,
     };
@@ -334,7 +342,7 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, sucur
     if (editandoSucursal) {
       body.heredar = (Object.keys(heredado) as CampoHeredable[]).filter(c => heredado[c]);
     }
-    if (p.tipo === 'REVENTA') {
+    if (p.tipo !== 'ELABORADO') {
       body.nuevo_insumo_reventa = {
         unidad_medida: reventaInsumo.unidad_medida,
         stock: reventaInsumo.stock,
@@ -406,10 +414,10 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, sucur
               <div className="form-group full">
                 <label>Tipo de producto</label>
                 <div className="type-choice">
-                  {(['ELABORADO', 'REVENTA'] as const).map(t => (
-                    <div key={t} className={`type-card ${p.tipo === t ? 'active' : ''}`} onClick={() => set({ tipo: t })}>
-                      <h5>{t === 'ELABORADO' ? '🍳 Elaborado' : '🏷️ Reventa'}</h5>
-                      <p>{t === 'ELABORADO' ? 'Se prepara en cocina. Requiere receta.' : 'Se compra terminado. Mapeo 1:1 a un insumo.'}</p>
+                  {TIPOS_PRODUCTO.map(t => (
+                    <div key={t.id} className={`type-card ${p.tipo === t.id ? 'active' : ''}`} onClick={() => set({ tipo: t.id })}>
+                      <h5>{t.titulo}</h5>
+                      <p>{t.detalle}</p>
                     </div>
                   ))}
                 </div>
@@ -515,12 +523,23 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, sucur
 
           {/* STEP 3 — receta */}
           {step === 2 && (
-            p.tipo === 'REVENTA' ? (
+            p.tipo !== 'ELABORADO' ? (
               <div className="form-grid">
                 <div className="form-group full">
                   <span className="form-hint">
-                    Este producto de reventa se registrará automáticamente en <strong>Insumos</strong> como
-                    «{p.nombre || 'producto'}». 1 producto vendido = 1 unidad descontada.
+                    {p.tipo === 'TERCIADO' ? (
+                      <>
+                        Este producto terciado se registrará automáticamente en <strong>Insumos</strong> como
+                        «{p.nombre || 'producto'}». 1 producto vendido = 1 unidad descontada. Su stock no se
+                        compra: se produce en el Centro y llega al local por envío, así que acá el stock
+                        inicial normalmente va en cero.
+                      </>
+                    ) : (
+                      <>
+                        Este producto de reventa se registrará automáticamente en <strong>Insumos</strong> como
+                        «{p.nombre || 'producto'}». 1 producto vendido = 1 unidad descontada.
+                      </>
+                    )}
                   </span>
                 </div>
                 <div className="form-group">
