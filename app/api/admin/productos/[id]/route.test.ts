@@ -219,6 +219,92 @@ describe('PUT /api/admin/productos/[id] — stock del insumo de reventa', () => 
     expect(response.status).toBe(422);
   });
 
+  /**
+   * Mismo defecto que el del botón "Editar" de Insumos, por el otro camino.
+   *
+   * Desde multi-sucursal, el costo con el que se calculan recetas, food cost y
+   * alertas es `StockSucursal.costo_promedio`; `Insumo.costo_promedio` quedó
+   * como agregado del negocio. El PUT del producto solo escribía el agregado,
+   * así que corregir el costo de un reventa desde el wizard se guardaba pero
+   * no movía nada: al reabrir seguía apareciendo el costo viejo, porque el
+   * listado devuelve el de la sucursal (`enSucursal?.costo_promedio ?? ...`).
+   */
+  it('editar el costo de un reventa mueve el costo de la sucursal, no solo el del catálogo', async () => {
+    const { access_token } = await login('benjaherediaruiz@gmail.com', 'benja122');
+    const marca = await prisma.marca.findFirstOrThrow();
+    const sucursalId = await sucursalPorDefectoId();
+    const sufijo = Date.now();
+
+    const insumo = await prisma.insumo.create({
+      data: {
+        nombre: `Agua Cielo ${sufijo} (test)`,
+        unidad_medida: 'UNIDAD',
+        stock_actual: 30,
+        stock_minimo: 4,
+        punto_critico: 2,
+        costo_promedio: 3.8,
+      },
+    });
+    createdInsumoIds.push(insumo.id);
+
+    // La fila que de verdad se usa para costear en ese local.
+    await prisma.stockSucursal.create({
+      data: {
+        insumo_id: insumo.id,
+        sucursal_id: sucursalId,
+        stock_actual: 30,
+        costo_promedio: 3.8,
+        stock_minimo: 4,
+        punto_critico: 2,
+      },
+    });
+
+    const producto = await prisma.producto.create({
+      data: {
+        nombre: `Agua Cielo ${sufijo} (test)`,
+        descripcion: 'x',
+        precio: 6,
+        tipo: 'REVENTA',
+        estado_publicacion: 'PUBLICADO',
+        insumo_reventa_id: insumo.id,
+      },
+    });
+    createdIds.push(producto.id);
+
+    const request = new NextRequest(`http://localhost/api/admin/productos/${producto.id}`, {
+      method: 'PUT',
+      headers: { authorization: `Bearer ${access_token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        nombre: producto.nombre,
+        descripcion: producto.descripcion,
+        precio: 6,
+        tipo: 'REVENTA',
+        estado_publicacion: 'PUBLICADO',
+        marcas: [marca.id],
+        insumo_reventa_id: insumo.id,
+        sucursal_id: sucursalId,
+        // Sube de 3.8 a 4, que es el reporte de producción.
+        nuevo_insumo_reventa: { unidad_medida: 'UNIDAD', stock: 30, costo_unitario: 4, punto_reorden: 5, nivel_critico: 3 },
+      }),
+    });
+
+    const response = await PUT(request, { params: Promise.resolve({ id: String(producto.id) }) });
+    expect(response.status).toBe(200);
+
+    const enSucursal = await prisma.stockSucursal.findUniqueOrThrow({
+      where: { insumo_id_sucursal_id: { insumo_id: insumo.id, sucursal_id: sucursalId } },
+    });
+    expect(enSucursal.costo_promedio).toBe(4);
+    expect(enSucursal.stock_minimo).toBe(5);
+    expect(enSucursal.punto_critico).toBe(3);
+    // El stock del local no se toca: editar el producto no es un movimiento.
+    expect(enSucursal.stock_actual).toBe(30);
+
+    // El agregado del catálogo también se actualiza, como antes.
+    const insumoDespues = await prisma.insumo.findUniqueOrThrow({ where: { id: insumo.id } });
+    expect(insumoDespues.costo_promedio).toBe(4);
+  });
+
   it('renombrar el producto sincroniza el nombre del insumo vinculado', async () => {
     const { access_token } = await login('benjaherediaruiz@gmail.com', 'benja122');
     const marca = await prisma.marca.findFirstOrThrow();
