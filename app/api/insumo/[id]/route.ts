@@ -4,6 +4,8 @@ import { requireAuth, requireRole, getClientIp } from '@/lib/server/auth/session
 import { handleApiError, ConflictError, NotFoundError } from '@/lib/server/errors';
 import { logAudit } from '@/lib/server/audit/audit.service';
 import { guard, ADMIN } from '@/lib/server/auth/guard';
+import { resolverSucursal } from '@/lib/server/sucursales/sucursal.service';
+import { obtenerOCrearStock } from '@/lib/server/inventario/stock-sucursal.service';
 
 export async function GET(_: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = await guard(_, ADMIN);
@@ -38,28 +40,49 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     // `Insumo` (agregado) de `StockSucursal` (por local).
     const {
       categoria_insumo, costo_promedio, equivalencia_cantidad, equivalencia_unidad, nombre, proveedor,
-      punto_critico, stock_minimo, unidad_medida,
+      punto_critico, stock_minimo, unidad_medida, sucursal_id,
     } = await request.json();
     const tieneEquivalencia = equivalencia_unidad && equivalencia_cantidad;
-    const insumo = await prisma.insumo.update({
-      where: { id: insumoId },
-      data: {
-        categoria_insumo: categoria_insumo || null,
-        costo_promedio: Number(costo_promedio || 0),
-        equivalencia_cantidad: tieneEquivalencia ? Number(equivalencia_cantidad) : null,
-        equivalencia_unidad: tieneEquivalencia ? equivalencia_unidad : null,
-        nombre,
-        proveedor: proveedor || null,
-        punto_critico: Number(punto_critico || 0),
-        stock_minimo: Number(stock_minimo || 0),
-        unidad_medida,
-      },
+    const costoNum = Number(costo_promedio || 0);
+    const minimoNum = Number(stock_minimo || 0);
+    const criticoNum = Number(punto_critico || 0);
+
+    // El costo y los umbrales de alerta que de verdad se usan (food cost,
+    // rinde, alertas) son los de StockSucursal desde multi-sucursal; el
+    // Insumo de acá abajo queda como catálogo/fallback para un local que
+    // todavía no maneja este insumo. Sin escribir también en StockSucursal,
+    // editar el costo acá no movía nada de lo que se calcula con él.
+    const sucursalId = await resolverSucursal(sucursal_id);
+
+    const insumo = await prisma.$transaction(async (tx) => {
+      const actualizado = await tx.insumo.update({
+        where: { id: insumoId },
+        data: {
+          categoria_insumo: categoria_insumo || null,
+          costo_promedio: costoNum,
+          equivalencia_cantidad: tieneEquivalencia ? Number(equivalencia_cantidad) : null,
+          equivalencia_unidad: tieneEquivalencia ? equivalencia_unidad : null,
+          nombre,
+          proveedor: proveedor || null,
+          punto_critico: criticoNum,
+          stock_minimo: minimoNum,
+          unidad_medida,
+        },
+      });
+
+      await obtenerOCrearStock(insumoId, sucursalId, tx);
+      await tx.stockSucursal.update({
+        where: { insumo_id_sucursal_id: { insumo_id: insumoId, sucursal_id: sucursalId } },
+        data: { costo_promedio: costoNum, stock_minimo: minimoNum, punto_critico: criticoNum },
+      });
+
+      return actualizado;
     });
 
     await logAudit({
       usuarioId: session.id, rol: session.rol, accion: 'MODIFICO',
       entidad: 'Insumo', entidadId: insumoId,
-      detalle: `Editó insumo "${insumo.nombre}"`,
+      detalle: `Editó insumo "${insumo.nombre}" (costo en sucursal #${sucursalId}: ${costoNum})`,
       ip: getClientIp(request), userAgent: request.headers.get('user-agent'),
     });
 
