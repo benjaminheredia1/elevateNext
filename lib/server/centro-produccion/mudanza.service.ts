@@ -154,15 +154,27 @@ export async function ejecutarMudanza(centroId: number, usuarioId: number, db: D
     where: { insumo_reventa_id: null, estado_publicacion: { not: 'BAJA' } },
     select: { id: true, nombre: true },
   });
+  const sucursales = await db.sucursal.findMany({ where: { activa: true }, select: { id: true } });
   const costoPrevio = new Map<number, number>();
+  // El costo de ficha NO es uno solo por producto: cada sucursal tiene su
+  // receta y sus costos, y el CMV histórico lo pide POR sucursal. Guardar un
+  // costo global en el espejo haría que las ventas viejas de un local pasen a
+  // costearse con el costo de otro, y el estado de resultados de meses ya
+  // cerrados cambiaría solo por haber mudado el inventario.
+  const costoPrevioPorSucursal = new Map<string, number>();
   for (const p of elaborados) {
     costoPrevio.set(p.id, await costoFichaTecnica(p.id, db as Prisma.TransactionClient));
+    for (const s of sucursales) {
+      costoPrevioPorSucursal.set(
+        `${p.id}:${s.id}`,
+        await costoFichaTecnica(p.id, db as Prisma.TransactionClient, s.id),
+      );
+    }
   }
 
   // ── Paso 2: crear los espejos faltantes ────────────────────────────
   // Desde el corte, la sucursal no arma nada: vende unidades de producto
   // terminado, y para tener stock propio cada producto necesita su espejo.
-  const sucursales = await db.sucursal.findMany({ where: { activa: true }, select: { id: true } });
   let espejosCreados = 0;
   for (const p of elaborados) {
     const costo = costoPrevio.get(p.id) ?? 0;
@@ -172,6 +184,8 @@ export async function ejecutarMudanza(centroId: number, usuarioId: number, db: D
         unidad_medida: 'UNIDAD',
         stock_actual: 0,
         stock_minimo: 0,
+        // El agregado del catálogo se queda con el costo global; el que se usa
+        // para costear es el de cada fila de sucursal, acá abajo.
         costo_promedio: costo,
         es_mixto: false,
       },
@@ -179,7 +193,12 @@ export async function ejecutarMudanza(centroId: number, usuarioId: number, db: D
     await db.producto.update({ where: { id: p.id }, data: { insumo_reventa_id: espejo.id } });
     for (const s of sucursales) {
       await db.stockSucursal.create({
-        data: { insumo_id: espejo.id, sucursal_id: s.id, stock_actual: 0, costo_promedio: costo },
+        data: {
+          insumo_id: espejo.id,
+          sucursal_id: s.id,
+          stock_actual: 0,
+          costo_promedio: costoPrevioPorSucursal.get(`${p.id}:${s.id}`) ?? costo,
+        },
       });
     }
     espejosCreados++;

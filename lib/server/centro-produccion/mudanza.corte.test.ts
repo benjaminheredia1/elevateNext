@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import prisma from '@/lib/prisma';
 import { sucursalPorDefectoId } from '@/lib/server/sucursales/sucursal.service';
+import { costoFichaTecnica } from '@/lib/server/inventario/inventario.service';
 import { ejecutarMudanza, revertirMudanza, valorizadoTotal, MOTIVO_MUDANZA } from './mudanza.service';
 
 /**
@@ -180,4 +181,64 @@ describe('mudanza del insumo bruto al Centro', () => {
       await expect(revertirMudanza(centroId, usuarioId, tx)).rejects.toThrow(/no hay ninguna mudanza/i);
     });
   });
+
+  /**
+   * El costo de ficha NO es uno solo por producto: cada sucursal tiene su
+   * receta y sus costos. El CMV de las ventas sin costo congelado se recalcula
+   * en vivo y POR sucursal, asi que si el espejo guardara un costo global, las
+   * ventas viejas de un local pasarian a costearse con el costo de otro y el
+   * estado de resultados de meses ya cerrados cambiaria solo por haber mudado
+   * el inventario. Medido en el sandbox antes de arreglarlo: Bs 3.500.
+   */
+  it('el espejo hereda el costo de ficha DE CADA sucursal, no uno global', async () => {
+    await enTransaccionRevertida(async (tx) => {
+      const sufijo = Date.now() + 3;
+      const otra = await tx.sucursal.create({ data: { nombre: `Sucursal costo distinto ${sufijo}` } });
+
+      const harina = await tx.insumo.create({
+        data: { nombre: `Harina dos costos ${sufijo}`, unidad_medida: 'GR', stock_actual: 0, stock_minimo: 0, costo_promedio: 0.02 },
+      });
+      // El mismo insumo cuesta el doble en el otro local.
+      await tx.stockSucursal.create({
+        data: { insumo_id: harina.id, sucursal_id: sucursalId, stock_actual: 500, costo_promedio: 0.02 },
+      });
+      await tx.stockSucursal.create({
+        data: { insumo_id: harina.id, sucursal_id: otra.id, stock_actual: 500, costo_promedio: 0.04 },
+      });
+
+      const producto = await tx.producto.create({
+        data: { nombre: `Torta dos costos ${sufijo}`, descripcion: 'x', precio: 30, tipo: 'ELABORADO', estado_publicacion: 'PUBLICADO' },
+      });
+      // Misma receta en los dos locales: 100 GR.
+      await tx.recetasProducto.create({
+        data: { producto_id: producto.id, insumo_id: harina.id, cantidad_utilizada: 100, sucursal_id: sucursalId },
+      });
+      await tx.recetasProducto.create({
+        data: { producto_id: producto.id, insumo_id: harina.id, cantidad_utilizada: 100, sucursal_id: otra.id },
+      });
+
+      // Lo que costaba en cada local ANTES del corte.
+      const costoAqui = await costoFichaTecnica(producto.id, tx, sucursalId);
+      const costoAlla = await costoFichaTecnica(producto.id, tx, otra.id);
+      expect(costoAqui).toBeCloseTo(2, 4);   // 100 × 0,02
+      expect(costoAlla).toBeCloseTo(4, 4);   // 100 × 0,04
+      expect(costoAlla).not.toBeCloseTo(costoAqui, 4);
+
+      await ejecutarMudanza(centroId, usuarioId, tx);
+
+      const conEspejo = await tx.producto.findUniqueOrThrow({ where: { id: producto.id } });
+      expect(conEspejo.insumo_reventa_id).not.toBeNull();
+
+      const filaAqui = await tx.stockSucursal.findUniqueOrThrow({
+        where: { insumo_id_sucursal_id: { insumo_id: conEspejo.insumo_reventa_id!, sucursal_id: sucursalId } },
+      });
+      const filaAlla = await tx.stockSucursal.findUniqueOrThrow({
+        where: { insumo_id_sucursal_id: { insumo_id: conEspejo.insumo_reventa_id!, sucursal_id: otra.id } },
+      });
+
+      // Cada local conserva SU costo: el CMV historico de cada uno no se mueve.
+      expect(filaAqui.costo_promedio).toBeCloseTo(costoAqui, 4);
+      expect(filaAlla.costo_promedio).toBeCloseTo(costoAlla, 4);
+    });
+  }, 120_000);
 });
