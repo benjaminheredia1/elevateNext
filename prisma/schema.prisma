@@ -599,21 +599,17 @@ model StockCentro {
 // este centro. Es a la producción lo que RecetasProducto es a la venta, y por
 // eso lleva centro_id igual que aquella lleva sucursal_id: dos centros pueden
 // producir el mismo producto con gramajes distintos.
-enum TipoTraslado {
-  ENVIO
-  DEVOLUCION
-}
-
 enum EstadoTraslado {
   EN_TRANSITO
   RECIBIDO
   ANULADO
 }
 
-// Traslado centro <-> sucursal. No hay tabla de ubicación polimórfica como en
-// Paladar: acá el insumo bruto solo vive en el Centro y todo traslado es
-// centro<->sucursal (nunca sucursal<->sucursal ni centro<->centro), así que
-// centro_id + sucursal_id directos alcanzan.
+// Traslado del Centro a una sucursal. Va en un solo sentido por decisión del
+// negocio: al cerrar el turno no vuelve nada al Centro, así que no existe la
+// devolución y no hace falta ni un campo `tipo` ni el turno que la originaría.
+// Tampoco hay tabla de ubicación polimórfica como en Paladar: el insumo bruto
+// solo vive en el Centro, así que centro_id + sucursal_id directos alcanzan.
 //
 // Mientras está EN_TRANSITO la mercadería no está en ninguno de los dos
 // inventarios: ya salió del Centro y todavía no entró a la sucursal. Ese valor
@@ -623,11 +619,9 @@ enum EstadoTraslado {
 model Traslado {
   id              Int               @id @default(autoincrement())
   numero          Int
-  tipo            TipoTraslado
   estado          EstadoTraslado    @default(EN_TRANSITO)
   centro_id       Int
   sucursal_id     Int
-  turno_id        Int?
   enviado_por_id  Int
   recibido_por_id Int?
   fecha_envio     DateTime          @default(now())
@@ -636,7 +630,6 @@ model Traslado {
   idempotency_key String?           @unique
   centro          CentroProduccion  @relation(fields: [centro_id], references: [id])
   sucursal        Sucursal          @relation(fields: [sucursal_id], references: [id])
-  turno           CajaTurno?        @relation(fields: [turno_id], references: [id])
   enviado_por     Usuario           @relation("TrasladoEnviado", fields: [enviado_por_id], references: [id])
   recibido_por    Usuario?          @relation("TrasladoRecibido", fields: [recibido_por_id], references: [id])
   detalles        TrasladoDetalle[]
@@ -645,7 +638,6 @@ model Traslado {
 
   @@unique([centro_id, numero])
   @@index([sucursal_id, estado])
-  @@index([turno_id])
 }
 
 model TrasladoDetalle {
@@ -1056,9 +1048,6 @@ model CajaTurno {
   cajero              Usuario          @relation(fields: [cajero_id], references: [id])
   movimientos         MovimientoCaja[]
   ventas              Transaccion[]
-  // Devoluciones de mercadería al Centro originadas en el cierre de este turno
-  // (Fase 6). Vacío mientras no haya insumos marcados como retornables.
-  traslados           Traslado[]
   created_at          DateTime         @default(now())
   update_at           DateTime         @updatedAt
 

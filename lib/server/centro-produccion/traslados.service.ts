@@ -3,6 +3,10 @@
  *
  * Fase 3 del Centro de Producción: mover mercadería del Centro a una sucursal.
  *
+ * En un solo sentido, por decisión del negocio: al cerrar el turno no vuelve
+ * nada al Centro. Un sobrante en la sucursal se resuelve con conteo físico o
+ * merma en ese local, que es donde está la mercadería.
+ *
  * El traslado tiene dos tiempos por una razón operativa, no técnica: entre que
  * la mercadería sale del Centro y llega al local pasa tiempo real, y en ese
  * intervalo no está en ninguno de los dos inventarios. Registrarla en la
@@ -20,14 +24,8 @@ import type { Rol, PrismaClient } from '@prisma/client';
 import prisma from '@/lib/prisma';
 import { ConflictError, NotFoundError, ValidationError } from '@/lib/server/errors';
 import { logAudit } from '@/lib/server/audit/audit.service';
-import {
-  ajustarStock as ajustarStockCentro,
-  registrarCompra as acreditarEnCentro,
-} from './stock-centro.service';
-import {
-  ajustarStock as ajustarStockSucursal,
-  registrarCompra as acreditarEnSucursal,
-} from '@/lib/server/inventario/stock-sucursal.service';
+import { ajustarStock as ajustarStockCentro } from './stock-centro.service';
+import { registrarCompra as acreditarEnSucursal } from '@/lib/server/inventario/stock-sucursal.service';
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -104,7 +102,6 @@ export async function crearEnvio(
   const traslado = await tx.traslado.create({
     data: {
       numero: await siguienteNumero(tx, centroId),
-      tipo: 'ENVIO',
       estado: 'EN_TRANSITO',
       centro_id: centroId,
       sucursal_id: sucursalId,
@@ -189,12 +186,6 @@ export async function recibirTraslado(
   let valorRecibido = 0;
   let valorFaltante = 0;
 
-  // Un ENVIO entra a la sucursal; una DEVOLUCION vuelve al Centro. El resto de
-  // la mecánica (costo congelado, faltante como merma de quien recibe) es la
-  // misma en las dos direcciones, así que solo cambia el destino.
-  const haciaSucursal = traslado.tipo === 'ENVIO';
-  const rotulo = haciaSucursal ? `envío #${traslado.numero}` : `devolución #${traslado.numero}`;
-
   for (const detalle of traslado.detalles) {
     // Una línea que no se declara se da por recibida completa: el caso normal
     // es que llegue todo, y obligar a listar cada línea invita a que el cajero
@@ -204,67 +195,38 @@ export async function recibirTraslado(
     const faltante = detalle.cantidad_enviada - cantidad;
 
     if (cantidad > 0) {
-      // Entra con el costo congelado del despacho, ponderado contra lo que el
-      // destino ya tuviera de ese insumo.
-      if (haciaSucursal) {
-        await acreditarEnSucursal(tx, detalle.insumo_id, traslado.sucursal_id, cantidad, detalle.costo_unitario);
-        await tx.movimientoInterno.create({
-          data: {
-            insumo_id: detalle.insumo_id,
-            sucursal_id: traslado.sucursal_id,
-            tipo_movimiento: 'INGRESO',
-            cantidad,
-            descripcion: `Recepción del ${rotulo} desde el centro`,
-            costo_unitario: detalle.costo_unitario,
-            responsable: String(userId),
-          },
-        });
-      } else {
-        await acreditarEnCentro(tx, detalle.insumo_id, traslado.centro_id, cantidad, detalle.costo_unitario);
-        await tx.movimientoCentro.create({
-          data: {
-            centro_id: traslado.centro_id,
-            insumo_id: detalle.insumo_id,
-            tipo_movimiento: 'INGRESO',
-            cantidad,
-            descripcion: `Recepción de la ${rotulo} desde la sucursal`,
-            costo_unitario: detalle.costo_unitario,
-            responsable: String(userId),
-          },
-        });
-      }
+      // Entra con el costo congelado del despacho, ponderado contra lo que la
+      // sucursal ya tuviera de ese insumo.
+      await acreditarEnSucursal(tx, detalle.insumo_id, traslado.sucursal_id, cantidad, detalle.costo_unitario);
+      await tx.movimientoInterno.create({
+        data: {
+          insumo_id: detalle.insumo_id,
+          sucursal_id: traslado.sucursal_id,
+          tipo_movimiento: 'INGRESO',
+          cantidad,
+          descripcion: `Recepción del envío #${traslado.numero} desde el centro`,
+          costo_unitario: detalle.costo_unitario,
+          responsable: String(userId),
+        },
+      });
       valorRecibido += cantidad * detalle.costo_unitario;
     }
 
     if (faltante > 0) {
-      // El faltante se registra como merma de quien recibe para que quede en su
-      // kardex: la mercadería ya salió del origen, así que si no se asienta acá
-      // desaparece del sistema sin rastro.
-      if (haciaSucursal) {
-        await tx.movimientoInterno.create({
-          data: {
-            insumo_id: detalle.insumo_id,
-            sucursal_id: traslado.sucursal_id,
-            tipo_movimiento: 'MERMA',
-            cantidad: -faltante,
-            descripcion: `Faltante en la recepción del ${rotulo}`,
-            costo_unitario: detalle.costo_unitario,
-            responsable: String(userId),
-          },
-        });
-      } else {
-        await tx.movimientoCentro.create({
-          data: {
-            centro_id: traslado.centro_id,
-            insumo_id: detalle.insumo_id,
-            tipo_movimiento: 'MERMA',
-            cantidad: -faltante,
-            descripcion: `Faltante en la recepción de la ${rotulo}`,
-            costo_unitario: detalle.costo_unitario,
-            responsable: String(userId),
-          },
-        });
-      }
+      // El faltante se asienta como merma de la sucursal: la mercadería ya
+      // salió del Centro, así que si no queda en el kardex del local desaparece
+      // del sistema sin rastro.
+      await tx.movimientoInterno.create({
+        data: {
+          insumo_id: detalle.insumo_id,
+          sucursal_id: traslado.sucursal_id,
+          tipo_movimiento: 'MERMA',
+          cantidad: -faltante,
+          descripcion: `Faltante en la recepción del envío #${traslado.numero}`,
+          costo_unitario: detalle.costo_unitario,
+          responsable: String(userId),
+        },
+      });
       valorFaltante += faltante * detalle.costo_unitario;
     }
 
@@ -299,9 +261,10 @@ export async function recibirTraslado(
  * Anula un traslado que todavía no se recibió: la mercadería vuelve al stock
  * del Centro con el mismo costo con el que salió.
  *
- * Un traslado ya RECIBIDO no se anula — se corrige con un traslado en sentido
- * inverso. Deshacer una recepción implicaría descontarle a la sucursal un stock
- * que quizá ya vendió.
+ * Un envío ya RECIBIDO no se anula: deshacer una recepción implicaría
+ * descontarle a la sucursal un stock que quizá ya vendió. Y como no existe la
+ * devolución al Centro, la corrección es un conteo físico o una merma en el
+ * local, que es donde está parada la mercadería.
  */
 export async function anularTraslado(
   tx: Prisma.TransactionClient,
@@ -316,7 +279,9 @@ export async function anularTraslado(
   });
   if (!traslado) throw new NotFoundError('Traslado no encontrado');
   if (traslado.estado === 'RECIBIDO') {
-    throw new ConflictError('Un traslado ya recibido no se anula: corregilo con un traslado en sentido inverso');
+    throw new ConflictError(
+      'Un envío ya recibido no se anula: la mercadería está en la sucursal, corregí con conteo físico o merma en ese local',
+    );
   }
   if (traslado.estado === 'ANULADO') throw new ConflictError('El traslado ya estaba anulado');
 
@@ -391,67 +356,4 @@ export async function valorEnTransito(
   const total = traslados.reduce((acc, t) =>
     acc + t.detalles.reduce((sub, d) => sub + d.cantidad_enviada * d.costo_unitario, 0), 0);
   return Number(total.toFixed(6));
-}
-
-/** Devuelve el stock de la sucursal al Centro (Fase 6: devolución de turno). */
-export async function devolverDesdeSucursal(
-  tx: Prisma.TransactionClient,
-  centroId: number,
-  sucursalId: number,
-  lineas: LineaEnvio[],
-  turnoId: number | null,
-  userId: number,
-  rol: Rol,
-) {
-  if (lineas.length === 0) throw new ValidationError('La devolución necesita al menos una línea');
-
-  const traslado = await tx.traslado.create({
-    data: {
-      numero: await siguienteNumero(tx, centroId),
-      tipo: 'DEVOLUCION',
-      estado: 'EN_TRANSITO',
-      centro_id: centroId,
-      sucursal_id: sucursalId,
-      turno_id: turnoId,
-      enviado_por_id: userId,
-    },
-  });
-
-  for (const linea of lineas) {
-    const stock = await tx.stockSucursal.findUnique({
-      where: { insumo_id_sucursal_id: { insumo_id: linea.insumo_id, sucursal_id: sucursalId } },
-    });
-    if (!stock || stock.stock_actual < linea.cantidad) {
-      throw new ValidationError(`La sucursal no tiene ${linea.cantidad} del insumo ${linea.insumo_id} para devolver`);
-    }
-
-    await ajustarStockSucursal(tx, linea.insumo_id, sucursalId, -linea.cantidad);
-    await tx.movimientoInterno.create({
-      data: {
-        insumo_id: linea.insumo_id,
-        sucursal_id: sucursalId,
-        tipo_movimiento: 'EGRESO',
-        cantidad: -linea.cantidad,
-        descripcion: `Devolución #${traslado.numero} al centro`,
-        costo_unitario: stock.costo_promedio,
-        responsable: String(userId),
-      },
-    });
-    await tx.trasladoDetalle.create({
-      data: {
-        traslado_id: traslado.id,
-        insumo_id: linea.insumo_id,
-        cantidad_enviada: linea.cantidad,
-        costo_unitario: stock.costo_promedio,
-      },
-    });
-  }
-
-  await logAudit({
-    usuarioId: userId, rol, accion: 'CREO',
-    entidad: 'Traslado', entidadId: traslado.id,
-    detalle: `Devolución #${traslado.numero} de la sucursal #${sucursalId} al centro #${centroId}`,
-  }, tx);
-
-  return traslado;
 }
