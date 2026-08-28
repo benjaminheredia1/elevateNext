@@ -10,6 +10,7 @@ import StatusBadge from '@/components/ui/StatusBadge';
 import {
   useCentrosProduccion, useCrearCentro, useInventarioCentro, useAltaInsumoCentro,
   useCompraCentro, useMermaCentro, useConteoCentro, useBajaInsumoCentro, useReactivarInsumoCentro,
+  useEditarUmbralesCentro,
   type ItemStockCentro,
 } from '@/hooks/centro-produccion';
 
@@ -17,7 +18,7 @@ const NIVEL_META: Record<ItemStockCentro['nivel'], { label: string; status: stri
   ok:      { label: 'OK',      status: 'abierto' },
   bajo:    { label: 'Bajo',    status: 'sobrante' },
   critico: { label: 'Crítico', status: 'faltante' },
-  baja:    { label: 'De baja', status: 'anulado' },
+  baja:    { label: 'De baja', status: 'cerrado' },
 };
 
 function CrearCentroModal({ onClose }: { onClose: () => void }) {
@@ -33,8 +34,8 @@ function CrearCentroModal({ onClose }: { onClose: () => void }) {
     try {
       await crear.mutateAsync({ nombre: nombre.trim(), direccion: direccion.trim() || undefined });
       onClose();
-    } catch (e: any) {
-      setError(e?.response?.data?.error ?? 'No se pudo crear el centro.');
+    } catch (e: unknown) {
+      setError(mensajeError(e, 'No se pudo crear el centro.'));
     }
   };
 
@@ -88,8 +89,8 @@ function AltaInsumoModal({ centroId, onClose }: { centroId: number; onClose: () 
         stock_minimo: Number(minimo) || 0, punto_critico: Number(critico) || 0,
       });
       onClose();
-    } catch (e: any) {
-      setError(e?.response?.data?.error ?? 'No se pudo dar de alta el insumo.');
+    } catch (e: unknown) {
+      setError(mensajeError(e, 'No se pudo dar de alta el insumo.'));
     }
   };
 
@@ -140,7 +141,14 @@ function AltaInsumoModal({ centroId, onClose }: { centroId: number; onClose: () 
   );
 }
 
-type AccionRapida = 'compra' | 'merma' | 'conteo' | 'baja';
+// Mismo patrón que `errorMsg` en components/admin/: el error de axios llega
+// como `unknown` y lo que le sirve al operador es el mensaje del backend.
+function mensajeError(err: unknown, fallback: string): string {
+  const e = err as { response?: { data?: { error?: string } } };
+  return e?.response?.data?.error ?? fallback;
+}
+
+type AccionRapida = 'compra' | 'merma' | 'conteo' | 'baja' | 'umbrales';
 
 function AccionModal({ centroId, item, accion, onClose }: {
   centroId: number; item: ItemStockCentro; accion: AccionRapida; onClose: () => void;
@@ -149,9 +157,14 @@ function AccionModal({ centroId, item, accion, onClose }: {
   const merma = useMermaCentro();
   const conteo = useConteoCentro();
   const baja = useBajaInsumoCentro();
+  const umbrales = useEditarUmbralesCentro();
   const [cantidad, setCantidad] = useState('');
   const [costo, setCosto] = useState('');
   const [texto, setTexto] = useState('');
+  // Los umbrales se precargan con los valores actuales de la fila, no vacíos:
+  // el operador está corrigiendo un valor existente, no cargando uno nuevo.
+  const [stockMinimo, setStockMinimo] = useState(String(item.stock_minimo));
+  const [puntoCritico, setPuntoCritico] = useState(String(item.punto_critico));
   const [error, setError] = useState('');
 
   const titulos: Record<AccionRapida, string> = {
@@ -159,6 +172,7 @@ function AccionModal({ centroId, item, accion, onClose }: {
     merma: `Merma — ${item.nombre}`,
     conteo: `Conteo físico — ${item.nombre}`,
     baja: `Dar de baja — ${item.nombre}`,
+    umbrales: `Umbrales de alerta — ${item.nombre}`,
   };
 
   const submit = async (e: FormEvent) => {
@@ -174,17 +188,22 @@ function AccionModal({ centroId, item, accion, onClose }: {
       } else if (accion === 'conteo') {
         if (cantidad === '' || Number(cantidad) < 0) { setError('Indicá el nuevo stock.'); return; }
         await conteo.mutateAsync({ centro_id: centroId, insumo_id: item.insumo_id, nuevo_stock: Number(cantidad), descripcion: texto || undefined });
+      } else if (accion === 'umbrales') {
+        if (stockMinimo === '' || puntoCritico === '' || Number(stockMinimo) < 0 || Number(puntoCritico) < 0) {
+          setError('Indicá el stock mínimo y el punto crítico.'); return;
+        }
+        await umbrales.mutateAsync({ centro_id: centroId, insumo_id: item.insumo_id, stock_minimo: Number(stockMinimo), punto_critico: Number(puntoCritico) });
       } else {
         if (!texto.trim()) { setError('El motivo es obligatorio.'); return; }
         await baja.mutateAsync({ centro_id: centroId, insumo_id: item.insumo_id, motivo: texto });
       }
       onClose();
-    } catch (e: any) {
-      setError(e?.response?.data?.error ?? 'No se pudo completar la acción.');
+    } catch (e: unknown) {
+      setError(mensajeError(e, 'No se pudo completar la acción.'));
     }
   };
 
-  const enviando = compra.isPending || merma.isPending || conteo.isPending || baja.isPending;
+  const enviando = compra.isPending || merma.isPending || conteo.isPending || baja.isPending || umbrales.isPending;
 
   return (
     <div className="admin-modal-overlay" onClick={onClose}>
@@ -194,7 +213,7 @@ function AccionModal({ centroId, item, accion, onClose }: {
           <button type="button" className="admin-modal-close" onClick={onClose}>×</button>
         </div>
         <div className="admin-modal-body">
-          {accion !== 'baja' && (
+          {accion !== 'baja' && accion !== 'umbrales' && (
             <div className="form-group">
               <label>{accion === 'conteo' ? `Nuevo stock (${item.unidad_medida})` : `Cantidad (${item.unidad_medida})`}</label>
               <input type="number" step="0.01" min="0" value={cantidad} onChange={e => setCantidad(e.target.value)} />
@@ -218,6 +237,21 @@ function AccionModal({ centroId, item, accion, onClose }: {
               <input value={texto} onChange={e => setTexto(e.target.value)} />
             </div>
           )}
+          {accion === 'umbrales' && (
+            <>
+              <p className="form-hint" style={{ marginBottom: 14 }}>
+                Cuando el stock baje del mínimo se marca Bajo; del punto crítico, Crítico.
+              </p>
+              <div className="form-group">
+                <label>Stock mínimo ({item.unidad_medida})</label>
+                <input type="number" step="0.01" min="0" value={stockMinimo} onChange={e => setStockMinimo(e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label>Punto crítico ({item.unidad_medida})</label>
+                <input type="number" step="0.01" min="0" value={puntoCritico} onChange={e => setPuntoCritico(e.target.value)} />
+              </div>
+            </>
+          )}
           {error && <div className="gate-warning" style={{ marginTop: 10 }}>{error}</div>}
         </div>
         <div className="admin-modal-footer">
@@ -237,7 +271,18 @@ export default function CentroProduccionPage() {
   const [crearCentroAbierto, setCrearCentroAbierto] = useState(false);
   const [altaInsumoAbierto, setAltaInsumoAbierto] = useState(false);
   const [accion, setAccion] = useState<{ item: ItemStockCentro; tipo: AccionRapida } | null>(null);
+  const [error, setError] = useState('');
   const reactivar = useReactivarInsumoCentro();
+
+  const intentarReactivar = async (insumoId: number) => {
+    if (centroId == null) return;
+    setError('');
+    try {
+      await reactivar.mutateAsync({ centro_id: centroId, insumo_id: insumoId });
+    } catch (e: unknown) {
+      setError(mensajeError(e, 'No se pudo reactivar el insumo.'));
+    }
+  };
 
   useEffect(() => {
     if (centroId == null && centros.length > 0) setCentroId(centros[0].id);
@@ -284,6 +329,8 @@ export default function CentroProduccionPage() {
         <AccionModal centroId={centroId} item={accion.item} accion={accion.tipo} onClose={() => setAccion(null)} />
       )}
 
+      {error && <div className="gate-warning" style={{ marginBottom: 12 }}>{error}</div>}
+
       {centros.length === 0 ? (
         <EmptyState title="Todavía no hay ningún centro de producción" hint="Creá el primero para empezar a cargarle insumo bruto." />
       ) : centroId == null || isLoading ? (
@@ -303,12 +350,16 @@ export default function CentroProduccionPage() {
             rowKey={(row: ItemStockCentro) => row.insumo_id}
             columns={[
               { key: 'nombre', header: 'Insumo', render: (row: ItemStockCentro) => (
-                <div className="admin-cell-title">{row.nombre}</div>
+                <div>
+                  <div className="admin-cell-title">{row.nombre}</div>
+                  {row.proveedor && <div className="admin-cell-sub">{row.proveedor}</div>}
+                </div>
               )},
               { key: 'stock', header: 'Stock', className: 'num', render: (row: ItemStockCentro) => `${row.stock_actual} ${row.unidad_medida}` },
               { key: 'nivel', header: 'Estado', render: (row: ItemStockCentro) => (
                 <StatusBadge status={NIVEL_META[row.nivel].status} label={NIVEL_META[row.nivel].label} />
               )},
+              { key: 'minimo', header: 'Mínimo', className: 'num', render: (row: ItemStockCentro) => row.stock_minimo },
               { key: 'costo', header: 'Costo prom.', className: 'num', render: (row: ItemStockCentro) => <MoneyText value={row.costo_promedio} /> },
               { key: 'valor', header: 'Valorizado', className: 'num', render: (row: ItemStockCentro) => <MoneyText value={row.stock_actual * row.costo_promedio} /> },
               { key: 'acciones', header: '', render: (row: ItemStockCentro) => (
@@ -317,12 +368,13 @@ export default function CentroProduccionPage() {
                     <button className="admin-btn ghost sm" onClick={() => setAccion({ item: row, tipo: 'compra' })}>Compra</button>
                     <button className="admin-btn ghost sm" onClick={() => setAccion({ item: row, tipo: 'merma' })}>Merma</button>
                     <button className="admin-btn ghost sm" onClick={() => setAccion({ item: row, tipo: 'conteo' })}>Conteo</button>
+                    <button className="admin-btn ghost sm" onClick={() => setAccion({ item: row, tipo: 'umbrales' })}>Umbrales</button>
                     <button className="admin-btn ghost sm" onClick={() => setAccion({ item: row, tipo: 'baja' })}>Dar de baja</button>
                   </div>
                 ) : (
                   <button
                     className="admin-btn ghost sm"
-                    onClick={() => centroId != null && reactivar.mutate({ centro_id: centroId, insumo_id: row.insumo_id })}
+                    onClick={() => intentarReactivar(row.insumo_id)}
                     disabled={reactivar.isPending}
                   >
                     Reactivar

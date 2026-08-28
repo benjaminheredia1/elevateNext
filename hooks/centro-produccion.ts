@@ -107,3 +107,9 @@ export function useReactivarInsumoCentro() {
     '/api/admin/centros-produccion/reactivar',
   );
 }
+
+export function useEditarUmbralesCentro() {
+  return useAccionCentro<AccionCentroBase & { stock_minimo: number; punto_critico: number }>(
+    '/api/admin/centros-produccion/umbrales',
+  );
+}

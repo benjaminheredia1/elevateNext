@@ -63,3 +63,11 @@ export const ReactivarInsumoCentroSchema = z.object({
   insumo_id: z.number().int().positive(),
 });
 export type ReactivarInsumoCentroInput = z.infer<typeof ReactivarInsumoCentroSchema>;
+
+export const EditarUmbralesCentroSchema = z.object({
+  centro_id:     z.number().int().positive(),
+  insumo_id:     z.number().int().positive(),
+  stock_minimo:  z.number().min(0),
+  punto_critico: z.number().min(0),
+});
+export type EditarUmbralesCentroInput = z.infer<typeof EditarUmbralesCentroSchema>;

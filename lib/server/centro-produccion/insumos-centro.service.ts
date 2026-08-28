@@ -253,6 +253,46 @@ export async function darDeBajaInsumoCentro(
   });
 }
 
+/**
+ * Cambia los umbrales de alerta (stock mínimo, punto crítico) de un insumo
+ * EN ESTE CENTRO. Viven en StockCentro y no en Insumo (catálogo compartido con
+ * las sucursales) por la misma razón que StockSucursal tiene los suyos propios:
+ * cada ubicación decide cuándo quiere que le avisen, según su propio ritmo de
+ * consumo — el mínimo del Centro no tiene por qué coincidir con el de un local.
+ * No toca stock_actual ni costo_promedio.
+ */
+export async function editarUmbralesCentro(
+  centroId: number,
+  insumoId: number,
+  umbrales: { stock_minimo: number; punto_critico: number },
+  userId: number,
+  rol: Rol,
+  db: PrismaClient = prisma,
+) {
+  const insumo = await db.insumo.findUnique({ where: { id: insumoId } });
+  if (!insumo) throw new NotFoundError('Insumo no encontrado');
+
+  const stock = await db.stockCentro.findUnique({
+    where: { centro_id_insumo_id: { centro_id: centroId, insumo_id: insumoId } },
+  });
+  if (!stock) throw new NotFoundError('El insumo no está en el inventario de este centro');
+
+  return db.$transaction(async (tx) => {
+    const actualizado = await tx.stockCentro.update({
+      where: { id: stock.id },
+      data: { stock_minimo: umbrales.stock_minimo, punto_critico: umbrales.punto_critico },
+    });
+
+    await logAudit({
+      usuarioId: userId, rol, accion: 'MODIFICO',
+      entidad: 'StockCentro', entidadId: actualizado.id,
+      detalle: `Umbrales de "${insumo.nombre}" en el centro #${centroId} actualizados: mínimo ${umbrales.stock_minimo}, crítico ${umbrales.punto_critico}`,
+    }, tx);
+
+    return { insumo, stock: actualizado };
+  });
+}
+
 export async function reactivarInsumoCentro(
   centroId: number,
   insumoId: number,

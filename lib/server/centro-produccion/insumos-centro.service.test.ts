@@ -8,6 +8,7 @@ import {
   registrarConteoFisicoCentro,
   darDeBajaInsumoCentro,
   reactivarInsumoCentro,
+  editarUmbralesCentro,
 } from './insumos-centro.service';
 
 let adminId: number;
@@ -115,5 +116,23 @@ describe('insumos-centro.service', () => {
 
     const { stock: reactivado } = await reactivarInsumoCentro(centroId, insumo.id, adminId, 'DUENO');
     expect(reactivado.activo).toBe(true);
+  });
+
+  it('editarUmbralesCentro actualiza mínimo y crítico sin tocar el stock', async () => {
+    const nombre = `Arroz test ${Date.now()}`;
+    const { insumo, stock: inicial } = await prisma.$transaction((tx) =>
+      altaInsumoEnCentro(tx, centroId, {
+        nombre, unidad_medida: 'KG', stock_inicial: 15,
+        costo_unitario: 4, stock_minimo: 0, punto_critico: 0,
+      }, adminId, 'DUENO'),
+    );
+    insumoIds.push(insumo.id);
+    expect(inicial.stock_minimo).toBe(0);
+    expect(inicial.punto_critico).toBe(0);
+
+    const { stock } = await editarUmbralesCentro(centroId, insumo.id, { stock_minimo: 5, punto_critico: 2 }, adminId, 'DUENO');
+    expect(stock.stock_minimo).toBe(5);
+    expect(stock.punto_critico).toBe(2);
+    expect(stock.stock_actual).toBe(15); // no se toca el stock al editar umbrales
   });
 });
