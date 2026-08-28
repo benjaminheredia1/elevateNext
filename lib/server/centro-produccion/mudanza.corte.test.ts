@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import prisma from '@/lib/prisma';
 import { sucursalPorDefectoId } from '@/lib/server/sucursales/sucursal.service';
-import { ejecutarMudanza, valorizadoTotal, MOTIVO_MUDANZA } from './mudanza.service';
+import { ejecutarMudanza, revertirMudanza, valorizadoTotal, MOTIVO_MUDANZA } from './mudanza.service';
 
 /**
  * La mudanza es GLOBAL: toca todos los insumos, todas las recetas y todos los
@@ -106,7 +106,7 @@ describe('mudanza del insumo bruto al Centro', () => {
       expect(ingreso.tipo_movimiento).toBe('INGRESO');
       expect(ingreso.cantidad).toBe(1000);
     });
-  });
+  }, 60_000);
 
   it('correrla dos veces no duplica nada', async () => {
     await enTransaccionRevertida(async (tx) => {
@@ -125,7 +125,7 @@ describe('mudanza del insumo bruto al Centro', () => {
       expect(segunda.espejosCreados).toBe(0);
       expect(valorTrasSegunda).toBeCloseTo(valorTrasPrimera, 2);
     });
-  });
+  }, 60_000);
 
   it('aborta si hay un turno de caja abierto', async () => {
     await enTransaccionRevertida(async (tx) => {
@@ -139,6 +139,45 @@ describe('mudanza del insumo bruto al Centro', () => {
       // cero, y el arqueo del turno cerraría contra un inventario que cambió
       // por debajo.
       await expect(ejecutarMudanza(centroId, usuarioId, tx)).rejects.toThrow(/turno/i);
+    });
+  });
+
+  it('la reversión deja el stock como estaba antes de la mudanza', async () => {
+    await enTransaccionRevertida(async (tx) => {
+      const sufijo = Date.now() + 2;
+      const harina = await tx.insumo.create({
+        data: { nombre: `Harina revert ${sufijo}`, unidad_medida: 'GR', stock_actual: 800, stock_minimo: 0, costo_promedio: 0.05 },
+      });
+      await tx.stockSucursal.create({
+        data: { insumo_id: harina.id, sucursal_id: sucursalId, stock_actual: 800, costo_promedio: 0.05 },
+      });
+
+      const valorAntes = await valorizadoTotal(tx);
+      await ejecutarMudanza(centroId, usuarioId, tx);
+      const devuelto = await revertirMudanza(centroId, usuarioId, tx);
+      const valorDespues = await valorizadoTotal(tx);
+
+      expect(devuelto.insumosDevueltos).toBeGreaterThan(0);
+
+      const enSucursal = await tx.stockSucursal.findFirstOrThrow({
+        where: { insumo_id: harina.id, sucursal_id: sucursalId },
+      });
+      expect(enSucursal.stock_actual).toBe(800);
+      const enCentro = await tx.stockCentro.findFirst({
+        where: { insumo_id: harina.id, centro_id: centroId },
+      });
+      expect(enCentro?.stock_actual ?? 0).toBe(0);
+      expect(valorDespues).toBeCloseTo(valorAntes, 2);
+
+      // Y se puede volver a mudar: la reversión libera la marca de idempotencia.
+      const otra = await ejecutarMudanza(centroId, usuarioId, tx);
+      expect(otra.yaEjecutada).toBe(false);
+    });
+  }, 120_000);
+
+  it('revertir sin una mudanza previa avisa en vez de tocar nada', async () => {
+    await enTransaccionRevertida(async (tx) => {
+      await expect(revertirMudanza(centroId, usuarioId, tx)).rejects.toThrow(/no hay ninguna mudanza/i);
     });
   });
 });

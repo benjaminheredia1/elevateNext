@@ -26,6 +26,13 @@ type Db = PrismaClient | Prisma.TransactionClient;
 export const MOTIVO_MUDANZA = 'MUDANZA_CENTRO';
 
 /**
+ * Marca de los movimientos que deshacen el corte. No contiene a MOTIVO_MUDANZA
+ * como subcadena a propósito: si lo contuviera, la reversión se leería a sí
+ * misma como una mudanza ya hecha y el corte no podría volver a correr.
+ */
+export const MOTIVO_REVERSION = 'REVERSION_MUDANZA';
+
+/**
  * Promedio ponderado por cantidad. Promediar los costos a secas haría que el
  * local que compró 2 kg caros pese lo mismo que el que compró 10 kg baratos, y
  * el valorizado del Centro no cerraría contra el de las sucursales.
@@ -269,4 +276,106 @@ export async function ejecutarMudanza(centroId: number, usuarioId: number, db: D
   }, db as Prisma.TransactionClient);
 
   return { insumosMudados, espejosCreados, recetasCopiadas, yaEjecutada: false };
+}
+
+/**
+ * Deshace la mudanza usando su propio kardex al revés.
+ *
+ * Solo tiene sentido la MISMA NOCHE del corte: apenas empiezan las ventas del
+ * día siguiente el stock ya se movió por otras razones, y devolver las
+ * cantidades originales pisaría esos movimientos.
+ *
+ * No es una reversión perfecta y no pretende serlo: las RecetaCentro copiadas
+ * quedan (no hay forma de distinguir las que copió el corte de las que ya
+ * existían) y los TERCIADO convertidos a ELABORADO no vuelven. Lo que sí queda
+ * exacto es lo que importa: el stock y la plata.
+ *
+ * Como `ejecutarMudanza`, no abre transacción propia: la abre quien llama.
+ */
+export async function revertirMudanza(centroId: number, usuarioId: number, db: Db = prisma) {
+  const movimientos = await db.movimientoInterno.findMany({
+    where: { descripcion: { contains: MOTIVO_MUDANZA } },
+  });
+  if (movimientos.length === 0) {
+    throw new ConflictError('No hay ninguna mudanza que revertir.');
+  }
+
+  // Devolver a cada sucursal exactamente lo que se le sacó.
+  for (const mov of movimientos) {
+    await db.stockSucursal.updateMany({
+      where: { insumo_id: mov.insumo_id, sucursal_id: mov.sucursal_id },
+      data: { stock_actual: { increment: mov.cantidad } },
+    });
+    await db.movimientoInterno.create({
+      data: {
+        insumo_id: mov.insumo_id,
+        sucursal_id: mov.sucursal_id,
+        tipo_movimiento: 'INGRESO',
+        cantidad: mov.cantidad,
+        descripcion: `${MOTIVO_REVERSION}: devuelto a la sucursal`,
+        costo_unitario: mov.costo_unitario,
+        responsable: String(usuarioId),
+      },
+    });
+  }
+
+  // Descontar del Centro lo que había entrado.
+  const enCentro = await db.movimientoCentro.findMany({
+    where: { descripcion: { contains: MOTIVO_MUDANZA } },
+  });
+  for (const mov of enCentro) {
+    await db.stockCentro.updateMany({
+      where: { centro_id: centroId, insumo_id: mov.insumo_id },
+      data: { stock_actual: { decrement: mov.cantidad } },
+    });
+    await db.movimientoCentro.create({
+      data: {
+        centro_id: centroId,
+        insumo_id: mov.insumo_id,
+        tipo_movimiento: 'EGRESO',
+        cantidad: mov.cantidad,
+        descripcion: `${MOTIVO_REVERSION}: devuelto a las sucursales`,
+        costo_unitario: mov.costo_unitario,
+        responsable: String(usuarioId),
+      },
+    });
+  }
+
+  // Desvincular los espejos que creó el corte: sin el vínculo,
+  // resolverConsumoInsumos vuelve a usar la receta local. El Insumo espejo se
+  // deja (stock 0, no molesta): borrarlo sería borrado físico de algo con
+  // kardex, y el proyecto no hace eso.
+  //
+  // El filtro es aproximado a propósito. Si el corte ya generó ventas, esos
+  // espejos tienen stock distinto de 0 y NO se desvinculan — que es lo que se
+  // quiere: a esa altura revertir ya no es limpio y conviene que se note.
+  const espejosDelCorte = await db.insumo.findMany({
+    where: {
+      unidad_medida: 'UNIDAD',
+      stock_actual: 0,
+      productos_reventa: { some: { tipo: 'ELABORADO' } },
+    },
+    select: { id: true },
+  });
+  await db.producto.updateMany({
+    where: { insumo_reventa_id: { in: espejosDelCorte.map(e => e.id) }, tipo: 'ELABORADO' },
+    data: { insumo_reventa_id: null },
+  });
+
+  // Liberar la marca de idempotencia. Es el único borrado físico admisible
+  // acá, y solo sobre las filas que la propia mudanza creó: sin esto el corte
+  // no podría volver a correr, que es justamente para lo que se revierte.
+  await db.movimientoInterno.deleteMany({ where: { descripcion: { contains: MOTIVO_MUDANZA } } });
+  await db.movimientoCentro.deleteMany({ where: { descripcion: { contains: MOTIVO_MUDANZA } } });
+
+  await logAudit({
+    usuarioId,
+    rol: 'DUENO',
+    accion: 'MODIFICO',
+    entidad: 'CentroProduccion',
+    entidadId: centroId,
+    detalle: `Reversión de la mudanza: ${movimientos.length} movimientos devueltos a sus sucursales`,
+  }, db as Prisma.TransactionClient);
+
+  return { insumosDevueltos: enCentro.length };
 }
