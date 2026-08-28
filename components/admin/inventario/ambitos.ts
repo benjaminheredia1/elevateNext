@@ -31,6 +31,14 @@ export interface AmbitoInventario {
    */
   claveContexto: 'sucursal_id' | 'centro_id';
   /**
+   * Si el handler acepta que la clave de contexto no viaje. La sucursal sí
+   * —sin ella el servidor resuelve la principal, que es como funcionaba el
+   * negocio antes de multi-sucursal—; el Centro no: su DTO exige `centro_id`
+   * entero y positivo. El núcleo lo consulta antes de escribir para no mandar
+   * un body que sabe que va a volver 422.
+   */
+  contextoOpcional: boolean;
+  /**
    * Si el ámbito puede comprarle a un proveedor. Hoy los dos pueden; la
    * sucursal lo pierde recién cuando el Centro sea el único origen de
    * mercadería y la mudanza de stock ya esté hecha.
@@ -56,6 +64,7 @@ export const AMBITO_SUCURSAL: AmbitoInventario = {
   // por eso el contexto no se usa.
   kardexUrl: () => '/api/insumo/movimiento',
   claveContexto: 'sucursal_id',
+  contextoOpcional: true,
   permiteCompra: true,
 };
 
@@ -66,10 +75,13 @@ export const AMBITO_CENTRO: AmbitoInventario = {
   mermaUrl: '/api/admin/centros-produccion/merma',
   conteoUrl: '/api/admin/centros-produccion/conteo',
   umbralesUrl: '/api/admin/centros-produccion/umbrales',
-  // ⚠️ Este handler todavía no existe: MovimientoCentro se escribe pero no se
-  // expone por HTTP. La pantalla del Centro (tarea siguiente) tiene que
-  // crearlo antes de usar la pestaña de movimientos.
+  // ⚠️ Este handler TODAVÍA NO EXISTE: MovimientoCentro se escribe pero no se
+  // expone por HTTP. Hasta que la pantalla del Centro lo cree, pedirlo devuelve
+  // 404 y la pestaña Movimientos del Centro se ve vacía. La tabla de stock NO
+  // se ve afectada: el núcleo pide stock y kardex por separado justamente para
+  // que este 404 no se lea como "el Centro no tiene insumos".
   kardexUrl: contextoId => `/api/admin/centros-produccion/${contextoId}/movimientos`,
   claveContexto: 'centro_id',
+  contextoOpcional: false,
   permiteCompra: true,
 };

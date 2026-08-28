@@ -113,7 +113,15 @@ export default function AdminInsumos({ readOnly = false }: { readOnly?: boolean 
   const darDeBaja = useDarDeBajaInsumo();
   const reactivar = useReactivarInsumo();
 
-  /** Datos que son del marco: las recetas y el catálogo de unidades. */
+  /**
+   * Datos que son del marco: las recetas y el catálogo de unidades.
+   *
+   * Va aparte de la carga del núcleo a propósito. Antes del refactor las cuatro
+   * peticiones compartían un `Promise.all` y un `catch`, así que un fallo de
+   * `/api/recetas` —una pestaña secundaria— vaciaba también la tabla de stock.
+   * Ahora cada mitad falla sola: que se caiga el catálogo de recetas no puede
+   * dejar al usuario sin ver su inventario, que es a lo que entró.
+   */
   const loadMarco = useCallback(async () => {
     try {
       const [recetasRes, unidadesRes] = await Promise.all([

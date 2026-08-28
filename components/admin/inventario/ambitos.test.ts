@@ -25,4 +25,11 @@ describe('ambitos de inventario', () => {
     expect(AMBITO_SUCURSAL.claveContexto).toBe('sucursal_id');
     expect(AMBITO_CENTRO.claveContexto).toBe('centro_id');
   });
+
+  it('solo la sucursal puede operar sin contexto', () => {
+    // Sin sucursal el servidor resuelve la principal; el DTO del Centro, en
+    // cambio, exige centro_id entero y positivo.
+    expect(AMBITO_SUCURSAL.contextoOpcional).toBe(true);
+    expect(AMBITO_CENTRO.contextoOpcional).toBe(false);
+  });
 });

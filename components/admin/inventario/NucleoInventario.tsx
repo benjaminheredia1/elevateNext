@@ -48,8 +48,10 @@ export interface PropsNucleoInventario {
   ambito: AmbitoInventario;
   /**
    * A qué contexto del ámbito se le mira el stock: la sucursal o el centro.
-   * 0 significa "sin contexto"; el ámbito decide qué hacer con eso (en
-   * sucursal, el consolidado del negocio).
+   * 0 significa "sin contexto" y solo es legítimo en los ámbitos que lo
+   * admiten (`contextoOpcional`): en sucursal es el consolidado del negocio.
+   * Cuando el ámbito exige contexto, montar el núcleo con 0 es un error de la
+   * pantalla y el núcleo lo dice en vez de mandar un body que dará 422.
    */
   contextoId: number;
   /**
@@ -143,28 +145,45 @@ export default function NucleoInventario({
    */
   const pedido = useRef(0);
 
+  /**
+   * Las dos peticiones salen juntas pero fallan por separado, a propósito y a
+   * diferencia de como estaba antes del refactor —un `Promise.all` con un
+   * `catch` común que vaciaba las dos listas—.
+   *
+   * El stock y el kardex no dependen entre sí, y el usuario abre esta pantalla
+   * para ver su stock: que se caiga el historial de movimientos no puede
+   * dejarlo sin inventario en pantalla. Esto no es un lujo: el ámbito del
+   * Centro todavía no tiene endpoint de movimientos, así que con el
+   * comportamiento viejo su 404 vaciaba también la tabla de stock y mandaba a
+   * buscar el bug al endpoint de inventario, que está sano.
+   */
   const load = useCallback(async () => {
     const mio = ++pedido.current;
     setLoading(true);
-    try {
-      const [insumosRes, movimientosRes] = await Promise.all([
-        apiClient.get(ambito.listarUrl(contextoId)),
-        apiClient.get(ambito.kardexUrl(contextoId)),
-      ]);
-      if (mio !== pedido.current) return; // llegó tarde: ya hay una carga más nueva
-      const lista = listaDe<Insumo>(insumosRes.data);
+    const [resStock, resKardex] = await Promise.allSettled([
+      apiClient.get(ambito.listarUrl(contextoId)),
+      apiClient.get(ambito.kardexUrl(contextoId)),
+    ]);
+    if (mio !== pedido.current) return; // llegó tarde: ya hay una carga más nueva
+
+    if (resStock.status === 'fulfilled') {
+      const lista = listaDe<Insumo>(resStock.value.data);
       setInsumos(lista);
-      setMovimientos(listaDe<Movimiento>(movimientosRes.data));
       avisar.current?.(lista);
-    } catch (err) {
-      if (mio !== pedido.current) return;
-      console.error(err);
+    } else {
+      console.error(resStock.reason);
       setInsumos([]);
-      setMovimientos([]);
       avisar.current?.([]);
-    } finally {
-      if (mio === pedido.current) setLoading(false);
     }
+
+    if (resKardex.status === 'fulfilled') {
+      setMovimientos(listaDe<Movimiento>(resKardex.value.data));
+    } else {
+      console.error(resKardex.reason);
+      setMovimientos([]);
+    }
+
+    setLoading(false);
   }, [ambito, contextoId]);
 
   useEffect(() => {
@@ -275,12 +294,18 @@ export default function NucleoInventario({
       setFormError('Completa la cantidad de envases y su tamaño (mayores a 0).');
       return;
     }
+    // El movimiento se registra en el contexto que se está viendo. Sin
+    // contexto la clave no viaja: en sucursal eso es válido y el servidor
+    // resuelve la principal (comportamiento previo a multi-sucursal); en un
+    // ámbito que la exige, mandar la clave en 0 sería un 422 ilegible, así que
+    // se corta acá con un mensaje que apunta al problema real.
+    if (!contextoId && !ambito.contextoOpcional) {
+      setFormError('No hay un contexto elegido para registrar el movimiento.');
+      return;
+    }
     setSaving(true);
     setFormError('');
-    // El movimiento se registra en el contexto que se está viendo; sin
-    // contexto viaja sin él y lo resuelve el servidor (en sucursal, la
-    // principal: es el comportamiento previo a multi-sucursal).
-    const contexto = { [ambito.claveContexto]: contextoId || undefined };
+    const contexto = contextoId ? { [ambito.claveContexto]: contextoId } : {};
     try {
       if (modalAction === 'compra' && selected) {
         await apiClient.post(ambito.compraUrl, {
