@@ -130,6 +130,95 @@ describe('PUT /api/admin/productos/[id] — stock del insumo de reventa', () => 
     expect(insumoDespues.stock_minimo).toBe(6);
   });
 
+  it('permite editar un reventa cuyo insumo quedó con stock negativo (se vendió sin stock)', async () => {
+    const { access_token } = await login('benjaherediaruiz@gmail.com', 'benja122');
+    const marca = await prisma.marca.findFirstOrThrow();
+    const sufijo = Date.now();
+
+    // Vender sin stock deja el insumo en negativo: es un estado normal del
+    // negocio, no un dato inválido. El wizard precarga ese stock y lo reenvía.
+    const insumo = await prisma.insumo.create({
+      data: {
+        nombre: `Insumo reventa negativo ${sufijo} (test)`,
+        unidad_medida: 'UNIDAD',
+        stock_actual: -184,
+        stock_minimo: 5,
+        costo_promedio: 4.5,
+      },
+    });
+    createdInsumoIds.push(insumo.id);
+
+    const producto = await prisma.producto.create({
+      data: {
+        nombre: `Producto reventa negativo ${sufijo} (test)`,
+        descripcion: 'x',
+        precio: 7,
+        tipo: 'REVENTA',
+        estado_publicacion: 'PUBLICADO',
+        insumo_reventa_id: insumo.id,
+      },
+    });
+    createdIds.push(producto.id);
+
+    const request = new NextRequest(`http://localhost/api/admin/productos/${producto.id}`, {
+      method: 'PUT',
+      headers: { authorization: `Bearer ${access_token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        nombre: producto.nombre,
+        descripcion: producto.descripcion,
+        precio: 7,
+        tipo: 'REVENTA',
+        estado_publicacion: 'PUBLICADO',
+        marcas: [marca.id],
+        insumo_reventa_id: insumo.id,
+        // Corregir el costo es el motivo real de la edición; el stock viaja
+        // tal como lo leyó el formulario y el servidor lo ignora.
+        nuevo_insumo_reventa: { unidad_medida: 'UNIDAD', stock: -184, costo_unitario: 5.2, punto_reorden: 5 },
+      }),
+    });
+
+    const response = await PUT(request, { params: Promise.resolve({ id: String(producto.id) }) });
+    expect(response.status).toBe(200);
+
+    const insumoDespues = await prisma.insumo.findUniqueOrThrow({ where: { id: insumo.id } });
+    expect(insumoDespues.costo_promedio).toBe(5.2);
+    expect(insumoDespues.stock_actual).toBe(-184);
+  });
+
+  it('rechaza un stock inicial negativo cuando el insumo se va a crear', async () => {
+    const { access_token } = await login('benjaherediaruiz@gmail.com', 'benja122');
+    const marca = await prisma.marca.findFirstOrThrow();
+    const sufijo = Date.now();
+
+    const producto = await prisma.producto.create({
+      data: {
+        nombre: `Producto reventa sin insumo ${sufijo} (test)`,
+        descripcion: 'x',
+        precio: 7,
+        tipo: 'REVENTA',
+        estado_publicacion: 'BORRADOR',
+      },
+    });
+    createdIds.push(producto.id);
+
+    const request = new NextRequest(`http://localhost/api/admin/productos/${producto.id}`, {
+      method: 'PUT',
+      headers: { authorization: `Bearer ${access_token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        nombre: producto.nombre,
+        descripcion: producto.descripcion,
+        precio: 7,
+        tipo: 'REVENTA',
+        estado_publicacion: 'BORRADOR',
+        marcas: [marca.id],
+        nuevo_insumo_reventa: { unidad_medida: 'UNIDAD', stock: -5, costo_unitario: 4 },
+      }),
+    });
+
+    const response = await PUT(request, { params: Promise.resolve({ id: String(producto.id) }) });
+    expect(response.status).toBe(422);
+  });
+
   it('renombrar el producto sincroniza el nombre del insumo vinculado', async () => {
     const { access_token } = await login('benjaherediaruiz@gmail.com', 'benja122');
     const marca = await prisma.marca.findFirstOrThrow();

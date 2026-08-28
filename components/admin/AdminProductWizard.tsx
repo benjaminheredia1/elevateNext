@@ -345,7 +345,11 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, sucur
     if (p.tipo !== 'ELABORADO') {
       body.nuevo_insumo_reventa = {
         unidad_medida: reventaInsumo.unidad_medida,
-        stock: reventaInsumo.stock,
+        // Solo tiene sentido al crear el insumo espejo: con uno ya vinculado el
+        // servidor no toca el stock (eso va por Inventario), y reenviar el valor
+        // leído — que puede ser negativo si se vendió sin stock — solo rompía
+        // la validación del alta.
+        stock: p.insumo_reventa_id ? undefined : reventaInsumo.stock,
         costo_unitario: reventaInsumo.costo_unitario,
         punto_reorden: reventaInsumo.punto_reorden,
         nivel_critico: reventaInsumo.nivel_critico,

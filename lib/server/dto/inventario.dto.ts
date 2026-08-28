@@ -58,7 +58,11 @@ const ImagenProductoSchema = z.string().trim().refine(
 // Datos para crear/actualizar automáticamente el insumo de un producto de reventa
 export const NuevoInsumoReventaSchema = z.object({
   unidad_medida:  z.enum(['KG', 'GR', 'UNIDAD', 'LT', 'ML']).default('UNIDAD'),
-  stock:          z.number().min(0).default(0),
+  // Sin `min(0)`: un insumo ya vinculado puede tener stock negativo (se vendió
+  // sin stock) y el wizard reenvía ese valor tal cual al editar el producto.
+  // El servidor lo ignora salvo que esté creando el insumo, y ese único caso
+  // es el que valida el superRefine de ProductoConFichaSchema.
+  stock:          z.number().default(0),
   costo_unitario: z.number().min(0).default(0),
   punto_reorden:  z.number().min(0).default(0),
   nivel_critico:  z.number().min(0).default(0),
@@ -107,6 +111,19 @@ export const ProductoConFichaSchema = z.object({
       code: 'custom',
       path: ['receta'],
       message: `Un producto de ${data.tipo} no lleva receta de venta: su inventario es el insumo vinculado 1:1.`,
+    });
+  }
+
+  // El stock enviado solo se escribe cuando el insumo espejo todavía no existe
+  // (alta): ahí sí es un stock inicial y no puede arrancar en negativo. Con un
+  // insumo ya vinculado el valor es informativo — las correcciones de stock van
+  // por Inventario (AJUSTE) — y exigirle >= 0 bloqueaba editar cualquier
+  // producto que se hubiera vendido sin stock.
+  if (!data.insumo_reventa_id && data.nuevo_insumo_reventa && data.nuevo_insumo_reventa.stock < 0) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['nuevo_insumo_reventa', 'stock'],
+      message: 'El stock inicial no puede ser negativo.',
     });
   }
 });
