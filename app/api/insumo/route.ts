@@ -22,9 +22,31 @@ export async function GET(req: NextRequest) {
     // local no los maneje, para no romper fichas técnicas viejas al mostrarlas.
     const siempre = (searchParams.get('incluir_ids') ?? '')
       .split(',').map(Number).filter(id => Number.isInteger(id) && id > 0);
+    // Escotilla de diagnóstico, solo para el dueño: el insumo bruto no
+    // desapareció del sistema, dejó de ofrecerse. Sin esto, revisar qué quedó
+    // mal después de la mudanza obligaría a entrar a la base a mano.
+    const incluirBrutos = searchParams.get('incluir_brutos') === '1' && auth.rol === 'DUENO';
 
     const insumos = await prisma.insumo.findMany({
       where: {
+        // Desde que el Centro es el único origen, la sucursal maneja SOLO
+        // producto terminado: cada uno tiene su insumo espejo y el bruto vive
+        // en el Centro. "Terminado" se deriva de la relación —algún producto lo
+        // apunta como insumo_reventa_id— y no de un flag, para que no pueda
+        // quedar desincronizado con la realidad.
+        //
+        // Los ids pedidos por `incluir_ids` se salvan del filtro: esa lista
+        // existe para que una ficha técnica vieja que usa insumo bruto se siga
+        // mostrando entera en vez de perder líneas. Va en `AND` y no suelto
+        // porque abajo ya hay un `OR` para el alcance de sucursal, y Prisma
+        // admite una sola clave `OR` por objeto.
+        ...(incluirBrutos ? {} : {
+          AND: [
+            siempre.length > 0
+              ? { OR: [{ productos_reventa: { some: {} } }, { id: { in: siempre } }] }
+              : { productos_reventa: { some: {} } },
+          ],
+        }),
         // Con sucursal, "activo" es el de esa fila (más abajo se filtra por
         // ella): un insumo de baja en Sur sigue activo en Fitbull. Sin
         // sucursal se usa el agregado del negocio.
