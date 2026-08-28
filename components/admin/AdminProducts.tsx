@@ -274,12 +274,6 @@ export default function AdminProducts() {
     }
   };
 
-  const openCreate = () => setWizard({
-    nombre: '', descripcion: '', precio: 0, calorias: null, proteina: null,
-    tipo: 'ELABORADO', estado_publicacion: 'BORRADOR', imagen_url: null,
-    categorias: [], marcas: [], receta: [], insumo_reventa_id: null,
-  });
-
   const openEdit = (p: ApiProducto) => setWizard({
     id: p.id,
     nombre: p.nombre,
@@ -320,7 +314,12 @@ export default function AdminProducts() {
           {sucursales.length > 1 && sucursal && (
             <button className="admin-btn" onClick={() => setCopiarAbierto(true)}>Agregar de otra sucursal</button>
           )}
-          <button className="admin-btn primary" onClick={openCreate}>+ Nuevo Producto</button>
+          {/* Los productos nacen en el Centro, junto con su receta de producción:
+              el catálogo de la sucursal administra precio, foto y publicación de
+              lo que ya existe. El servidor lo exige igual (422 sin centro_id);
+              esto es solo para no mandar al usuario a un formulario que va a
+              rebotar. */}
+          <a className="admin-btn primary" href="/admin/centro-produccion">+ Nuevo Producto (en el Centro)</a>
         </div>
       </div>
 

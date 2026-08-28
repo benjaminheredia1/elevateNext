@@ -90,6 +90,12 @@ export const ProductoConFichaSchema = z.object({
   // receta local: la sucursal lo descuenta 1:1 contra su insumo espejo.
   centro_id:          z.number().int().positive().optional(),
   receta_centro:      z.array(ItemRecetaSchema).optional().default([]),
+  /**
+   * Si esta petición está CREANDO el producto. Lo pone el handler, no el
+   * cliente: el POST parsea con `es_alta: true` y el PUT con `false`, y el
+   * spread hace que lo que mande el body no pueda ganarle.
+   */
+  es_alta:            z.boolean().default(false),
   // Sucursal cuya ficha técnica y precio se están editando. Si no viene, se usa
   // la principal: mantiene compatible el alta de producto de una sola sucursal.
   sucursal_id:        z.number().int().positive().optional(),
@@ -116,6 +122,17 @@ export const ProductoConFichaSchema = z.object({
       code: 'custom',
       path: ['receta'],
       message: `Un producto de ${data.tipo} no lleva receta de venta: su inventario es el insumo vinculado 1:1.`,
+    });
+  }
+
+  // Desde que el Centro es el único origen, un producto nace ahí. La sucursal
+  // administra precio, foto y publicación de lo que ya existe, no crea
+  // catálogo. Va server-side porque esconder el botón no es autorización.
+  if (data.es_alta && !data.centro_id) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['centro_id'],
+      message: 'Los productos se crean desde el Centro de Producción.',
     });
   }
 

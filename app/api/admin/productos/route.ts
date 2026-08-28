@@ -87,7 +87,9 @@ export async function POST(req: NextRequest) {
     requireRole(session, ['DUENO', 'ADMIN']);
 
     const body   = await req.json();
-    const parsed = ProductoConFichaSchema.parse(body);
+    // `es_alta` lo decide el handler, nunca el cliente: el spread pisa lo que
+    // venga en el body.
+    const parsed = ProductoConFichaSchema.parse({ ...body, es_alta: true });
     if (parsed.estado_publicacion === 'PUBLICADO') {
       assertPublicable({
         nombre: parsed.nombre,

@@ -48,9 +48,9 @@ export interface AmbitoInventario {
    */
   mideCobertura: boolean;
   /**
-   * Si el ámbito puede comprarle a un proveedor. Hoy los dos pueden; la
-   * sucursal lo pierde recién cuando el Centro sea el único origen de
-   * mercadería y la mudanza de stock ya esté hecha.
+   * Si el ámbito puede comprarle a un proveedor. Solo el Centro: desde el corte
+   * la sucursal no compra, recibe traslados. El botón sale del panel por esta
+   * bandera y no por un `if` con el id del ámbito.
    */
   permiteCompra: boolean;
 }
@@ -75,7 +75,7 @@ export const AMBITO_SUCURSAL: AmbitoInventario = {
   claveContexto: 'sucursal_id',
   contextoOpcional: true,
   mideCobertura: true,
-  permiteCompra: true,
+  permiteCompra: false,
 };
 
 export const AMBITO_CENTRO: AmbitoInventario = {

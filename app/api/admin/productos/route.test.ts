@@ -1,12 +1,23 @@
 import { describe, it, expect, afterAll, beforeAll } from 'vitest';
 import { NextRequest } from 'next/server';
 import { POST } from './route';
+import { PUT } from './[id]/route';
 import { login } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 
 describe('POST /api/admin/productos', () => {
   const createdIds: number[] = [];
   const createdInsumoIds: number[] = [];
+  // Desde que el Centro es el único origen, todo alta nace en un centro: estas
+  // pruebas necesitan uno aunque lo que verifiquen sea otra cosa.
+  let centroBaseId: number;
+
+  beforeAll(async () => {
+    const centro = await prisma.centroProduccion.findFirst({ where: { activo: true } });
+    centroBaseId = centro
+      ? centro.id
+      : (await prisma.centroProduccion.create({ data: { nombre: `Centro altas ${Date.now()}` } })).id;
+  });
 
   afterAll(async () => {
     if (createdIds.length > 0) {
@@ -26,6 +37,7 @@ describe('POST /api/admin/productos', () => {
       method: 'POST',
       headers: { authorization: `Bearer ${access_token}`, 'content-type': 'application/json' },
       body: JSON.stringify({
+        centro_id: centroBaseId,
         nombre: 'Producto de test sin foto',
         descripcion: 'Creado por el test de integracion',
         precio: 20,
@@ -57,6 +69,7 @@ describe('POST /api/admin/productos', () => {
       method: 'POST',
       headers: { authorization: `Bearer ${access_token}`, 'content-type': 'application/json' },
       body: JSON.stringify({
+        centro_id: centroBaseId,
         nombre: 'Producto reventa con stock inicial (test)',
         descripcion: 'x',
         precio: 15,
@@ -118,6 +131,7 @@ describe('POST /api/admin/productos', () => {
       method: 'POST',
       headers: { authorization: `Bearer ${access_token}`, 'content-type': 'application/json' },
       body: JSON.stringify({
+        centro_id: centroBaseId,
         nombre: 'Producto de test sin descripcion',
         precio: 20,
         tipo: 'REVENTA',
@@ -252,6 +266,58 @@ describe('POST /api/admin/productos — alta desde el Centro', () => {
 
     const huerfano = await prisma.producto.findFirst({ where: { nombre } });
     expect(huerfano).toBeNull();
+  });
+
+  it('rechaza un alta de producto que no venga del Centro', async () => {
+    // Los productos nacen en el Centro: la sucursal administra precio, foto y
+    // publicacion de lo que ya existe, no crea catalogo. Va server-side porque
+    // esconder el boton no es autorizacion.
+    const access_token = await token();
+    const marca = await prisma.marca.findFirstOrThrow();
+
+    const response = await alta(access_token, {
+      nombre: `Producto suelto ${Date.now()}`,
+      descripcion: 'x',
+      precio: 10,
+      tipo: 'REVENTA',
+      estado_publicacion: 'BORRADOR',
+      marcas: [marca.id],
+      permitir_duplicado: true,
+    });
+
+    expect(response.status).toBe(422);
+    expect(JSON.stringify(await response.json())).toMatch(/centro/i);
+  });
+
+  it('editar un producto existente NO exige centro', async () => {
+    // La restriccion es del alta. Cambiar precio o foto de lo que ya existe
+    // sigue siendo trabajo de la sucursal, y bloquearlo la dejaria sin poder
+    // operar su propio catalogo.
+    const access_token = await token();
+    const marca = await prisma.marca.findFirstOrThrow();
+    const sufijo = Date.now();
+
+    const producto = await prisma.producto.create({
+      data: {
+        nombre: `Producto a editar ${sufijo}`, descripcion: 'x', precio: 10,
+        tipo: 'REVENTA', estado_publicacion: 'BORRADOR',
+      },
+    });
+    productoIds.push(producto.id);
+
+    const res = await PUT(
+      new NextRequest(`http://localhost/api/admin/productos/${producto.id}`, {
+        method: 'PUT',
+        headers: { authorization: `Bearer ${access_token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          nombre: producto.nombre, descripcion: 'x', precio: 12,
+          tipo: 'REVENTA', estado_publicacion: 'BORRADOR', marcas: [marca.id],
+        }),
+      }),
+      { params: Promise.resolve({ id: String(producto.id) }) },
+    );
+
+    expect(res.status).toBe(200);
   });
 
   it('una receta de producción sin centro_id se rechaza con 422', async () => {

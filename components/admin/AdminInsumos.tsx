@@ -4,14 +4,12 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import apiClient from '@/hooks/api';
 import { useDarDeBajaInsumo, useReactivarInsumo, type ResultadoBajaInsumo, type ResultadoReactivarInsumo } from '@/hooks/insumos';
 import SucursalSelector from '@/components/ui/SucursalSelector';
-import CopiarInsumosModal from '@/components/admin/CopiarInsumosModal';
 import { useSucursales } from '@/hooks/sucursales';
 import { useSucursalAdmin } from '@/hooks/sucursal-admin';
 import NucleoInventario from '@/components/admin/inventario/NucleoInventario';
 import { AMBITO_SUCURSAL } from '@/components/admin/inventario/ambitos';
 import {
   CostoAyuda,
-  UnidadFieldGroup,
   errorMsg,
   medidaInfo,
   money,
@@ -32,7 +30,9 @@ import {
  */
 
 type Tab = 'insumos' | 'movimientos' | 'recetas' | 'unidades';
-type ModalAction = 'crear' | 'editar' | 'baja' | null;
+// El alta salió: los insumos de la sucursal son los espejos de sus
+// productos, y esos nacen en el Centro junto con el producto.
+type ModalAction = 'editar' | 'baja' | null;
 
 interface Receta {
   id: number;
@@ -99,7 +99,6 @@ export default function AdminInsumos({ readOnly = false }: { readOnly?: boolean 
   const [unidadError, setUnidadError] = useState('');
   const [resultadoBaja, setResultadoBaja] = useState<ResultadoBajaInsumo | null>(null);
   const [, setResultadoReactivar] = useState<ResultadoReactivarInsumo | null>(null);
-  const [copiarAbierto, setCopiarAbierto] = useState(false);
   // Se incrementa para que el núcleo vuelva a pedir su lista cuando el marco
   // tocó el inventario desde afuera (alta, baja, reactivación, copia).
   const [refresco, setRefresco] = useState(0);
@@ -170,15 +169,6 @@ export default function AdminInsumos({ readOnly = false }: { readOnly?: boolean 
     }
     return Array.from(groups.values()).sort((a, b) => a.producto.nombre.localeCompare(b.producto.nombre));
   }, [recetas]);
-
-  const unidadesActivas = useMemo(() => unidades.filter(u => u.activo), [unidades]);
-
-  const unidadesParaSelect = useMemo(() => {
-    if (!form.unidad_medida || unidadesActivas.some(u => u.nombre === form.unidad_medida)) {
-      return unidadesActivas;
-    }
-    return [...unidadesActivas, { id: -1, nombre: form.unidad_medida, activo: false }];
-  }, [unidadesActivas, form.unidad_medida]);
 
   const openUnidadModal = (action: 'crear' | 'editar', unidad?: UnidadMedidaRow) => {
     setUnidadError('');
@@ -339,7 +329,7 @@ export default function AdminInsumos({ readOnly = false }: { readOnly?: boolean 
 
   const submitModal = async (event: FormEvent) => {
     event.preventDefault();
-    if (modalAction === 'crear' || modalAction === 'editar') {
+    if (modalAction === 'editar') {
       const tieneUnidad = form.equivalencia_unidad.trim() !== '';
       const tieneCantidad = form.equivalencia_cantidad.trim() !== '';
       if (tieneUnidad !== tieneCantidad) {
@@ -353,21 +343,6 @@ export default function AdminInsumos({ readOnly = false }: { readOnly?: boolean 
     // va a la principal (comportamiento previo a multi-sucursal).
     const sucursalNumero = sucursal ? Number(sucursal) : undefined;
     try {
-      if (modalAction === 'crear') {
-        await apiClient.post('/api/insumo', {
-          categoria_insumo: form.categoria_insumo.trim() || null,
-          costo_promedio: Number(form.costo_promedio || 0),
-          equivalencia_unidad: form.equivalencia_unidad.trim() || null,
-          equivalencia_cantidad: form.equivalencia_cantidad.trim() ? Number(form.equivalencia_cantidad) : null,
-          nombre: form.nombre.trim(),
-          proveedor: form.proveedor.trim() || null,
-          punto_critico: Number(form.punto_critico || 0),
-          stock_actual: Number(form.stock_actual || 0),
-          stock_minimo: Number(form.stock_minimo || 0),
-          unidad_medida: form.unidad_medida,
-          sucursal_id: sucursalNumero,
-        });
-      }
       if (modalAction === 'editar' && selected) {
         await apiClient.put(`/api/insumo/${selected.id}`, {
           categoria_insumo: form.categoria_insumo.trim() || null,
@@ -416,11 +391,9 @@ export default function AdminInsumos({ readOnly = false }: { readOnly?: boolean 
     }
   };
 
-  const modalTitle = modalAction === 'crear'
-    ? 'Nuevo insumo'
-    : modalAction === 'editar'
-      ? `Editar insumo · ${selected?.nombre ?? ''}`
-      : `Dar de baja · ${selected?.nombre ?? ''}`;
+  const modalTitle = modalAction === 'editar'
+    ? `Editar insumo · ${selected?.nombre ?? ''}`
+    : `Dar de baja · ${selected?.nombre ?? ''}`;
 
   return (
     <div className="admin-inventory">
@@ -432,12 +405,9 @@ export default function AdminInsumos({ readOnly = false }: { readOnly?: boolean 
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <SucursalSelector value={sucursal} onChange={setSucursal} />
           <button className="admin-btn secondary" onClick={load} type="button">Actualizar</button>
-          {/* Con una sucursal elegida el inventario es el de ese local: se puede
-              poblar trayendo insumos de otro sin recrearlos a mano. */}
-          {!readOnly && sucursal && (
-            <button className="admin-btn" onClick={() => setCopiarAbierto(true)} type="button">Agregar de otra sucursal</button>
-          )}
-          {!readOnly && <button className="admin-btn primary" onClick={() => openModal('crear')} type="button">+ Insumo</button>}
+          {/* Ya no hay alta ni copia entre locales: el inventario de la sucursal
+              es el espejo de sus productos, y se puebla con los traslados que
+              llegan del Centro. */}
         </div>
       </div>
 
@@ -488,7 +458,6 @@ export default function AdminInsumos({ readOnly = false }: { readOnly?: boolean 
         mensajeSinInsumos={nombreSucursal
           ? `${nombreSucursal} todavía no maneja ningún insumo. Traelos de otra sucursal o creá el primero.`
           : 'Crea el primer insumo para controlar el stock.'}
-        accionSinInsumos={<button className="admin-btn primary" onClick={() => openModal('crear')} type="button">+ Insumo</button>}
         accionesFicha={insumo => (
           <button className="action-btn edit" title="Editar insumo (nombre, costo, mínimos, proveedor)" onClick={() => openModal('editar', insumo)} type="button">✏</button>
         )}
@@ -614,41 +583,10 @@ export default function AdminInsumos({ readOnly = false }: { readOnly?: boolean 
               <button className="admin-modal-close" onClick={closeModal} type="button">×</button>
             </div>
             <div className="admin-modal-body">
-              {modalAction === 'crear' ? (
+              {modalAction === 'editar' ? (
                 <div className="form-grid">
                   <label className="form-group full"><span>Nombre</span><input value={form.nombre} onChange={event => setForm(prev => ({ ...prev, nombre: event.target.value }))} required /></label>
                   <label className="form-group"><span>Categoría</span><input placeholder="Granos" value={form.categoria_insumo} onChange={event => setForm(prev => ({ ...prev, categoria_insumo: event.target.value }))} /></label>
-                  <UnidadFieldGroup
-                    unidadMedida={form.unidad_medida}
-                    unidadesParaSelect={unidadesParaSelect}
-                    equivalenciaUnidad={form.equivalencia_unidad}
-                    equivalenciaCantidad={form.equivalencia_cantidad}
-                    onUnidadChange={value => setForm(prev => ({ ...prev, unidad_medida: value }))}
-                    onEquivalenciaUnidadChange={value => setForm(prev => ({ ...prev, equivalencia_unidad: value }))}
-                    onEquivalenciaCantidadChange={value => setForm(prev => ({ ...prev, equivalencia_cantidad: value }))}
-                    onNuevaUnidad={() => openUnidadModal('crear')}
-                  />
-                  <label className="form-group"><span>Stock</span><input type="number" min="0" step="0.01" value={form.stock_actual} onChange={event => setForm(prev => ({ ...prev, stock_actual: event.target.value }))} required /></label>
-                  <label className="form-group"><span>Costo unitario (Bs por {medidaInfo(form.unidad_medida).sufijo})</span><input type="number" min="0" step="0.000001" value={form.costo_promedio} onChange={event => setForm(prev => ({ ...prev, costo_promedio: event.target.value }))} /></label>
-                  <CostoAyuda unidadBase={form.unidad_medida} onCalculado={costo => setForm(prev => ({ ...prev, costo_promedio: costo }))} />
-                  <label className="form-group"><span>Stock mínimo</span><input type="number" min="0" step="0.01" value={form.stock_minimo} onChange={event => setForm(prev => ({ ...prev, stock_minimo: event.target.value }))} required /></label>
-                  <label className="form-group"><span>Stock crítico</span><input type="number" min="0" step="0.01" value={form.punto_critico} onChange={event => setForm(prev => ({ ...prev, punto_critico: event.target.value }))} /></label>
-                  <label className="form-group full"><span>Proveedor</span><input value={form.proveedor} onChange={event => setForm(prev => ({ ...prev, proveedor: event.target.value }))} /></label>
-                </div>
-              ) : modalAction === 'editar' ? (
-                <div className="form-grid">
-                  <label className="form-group full"><span>Nombre</span><input value={form.nombre} onChange={event => setForm(prev => ({ ...prev, nombre: event.target.value }))} required /></label>
-                  <label className="form-group"><span>Categoría</span><input placeholder="Granos" value={form.categoria_insumo} onChange={event => setForm(prev => ({ ...prev, categoria_insumo: event.target.value }))} /></label>
-                  <UnidadFieldGroup
-                    unidadMedida={form.unidad_medida}
-                    unidadesParaSelect={unidadesParaSelect}
-                    equivalenciaUnidad={form.equivalencia_unidad}
-                    equivalenciaCantidad={form.equivalencia_cantidad}
-                    onUnidadChange={value => setForm(prev => ({ ...prev, unidad_medida: value }))}
-                    onEquivalenciaUnidadChange={value => setForm(prev => ({ ...prev, equivalencia_unidad: value }))}
-                    onEquivalenciaCantidadChange={value => setForm(prev => ({ ...prev, equivalencia_cantidad: value }))}
-                    onNuevaUnidad={() => openUnidadModal('crear')}
-                  />
                   <label className="form-group"><span>Costo unitario (Bs por {medidaInfo(form.unidad_medida).sufijo})</span><input type="number" min="0" step="0.000001" value={form.costo_promedio} onChange={event => setForm(prev => ({ ...prev, costo_promedio: event.target.value }))} /></label>
                   <CostoAyuda unidadBase={form.unidad_medida} onCalculado={costo => setForm(prev => ({ ...prev, costo_promedio: costo }))} />
                   <label className="form-group"><span>Stock mínimo</span><input type="number" min="0" step="0.01" value={form.stock_minimo} onChange={event => setForm(prev => ({ ...prev, stock_minimo: event.target.value }))} required /></label>
@@ -750,18 +688,6 @@ export default function AdminInsumos({ readOnly = false }: { readOnly?: boolean 
         </div>
       )}
 
-      {copiarAbierto && sucursal && (
-        <CopiarInsumosModal
-          destino={Number(sucursal)}
-          destinoNombre={nombreSucursal ?? 'esta sucursal'}
-          onClose={() => setCopiarAbierto(false)}
-          onCopiado={(cantidad) => {
-            setCopiarAbierto(false);
-            setPageMsg({ type: 'ok', text: `${cantidad} insumo(s) agregados al inventario de ${nombreSucursal ?? 'esta sucursal'}, con stock en cero.` });
-            load();
-          }}
-        />
-      )}
     </div>
   );
 }

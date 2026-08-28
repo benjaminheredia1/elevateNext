@@ -100,7 +100,7 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
     requireRole(session, ['DUENO', 'ADMIN']);
     const { id } = await params;
     const productoId = Number(id);
-    const parsed = ProductoConFichaSchema.parse(await req.json());
+    const parsed = ProductoConFichaSchema.parse({ ...(await req.json()), es_alta: false });
     if (parsed.estado_publicacion === 'PUBLICADO') {
       assertPublicable({
         nombre: parsed.nombre,

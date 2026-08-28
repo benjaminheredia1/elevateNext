@@ -9,12 +9,6 @@ describe('ambitos de inventario', () => {
     expect(AMBITO_SUCURSAL.mermaUrl).not.toBe(AMBITO_CENTRO.mermaUrl);
   });
 
-  it('en esta fase los dos ambitos permiten comprar', () => {
-    // La sucursal lo pierde recien en la Task 10, con la mudanza ya hecha.
-    expect(AMBITO_SUCURSAL.permiteCompra).toBe(true);
-    expect(AMBITO_CENTRO.permiteCompra).toBe(true);
-  });
-
   it('el consolidado de sucursales lista sin filtrar por local', () => {
     // contextoId 0 = "todas": es como el panel pide el agregado del negocio.
     expect(AMBITO_SUCURSAL.listarUrl(0)).not.toContain('sucursal=');
@@ -24,6 +18,14 @@ describe('ambitos de inventario', () => {
   it('cada ambito nombra su contexto con la clave que espera su handler', () => {
     expect(AMBITO_SUCURSAL.claveContexto).toBe('sucursal_id');
     expect(AMBITO_CENTRO.claveContexto).toBe('centro_id');
+  });
+
+  it('la sucursal ya no compra insumos; el Centro si', () => {
+    // Desde el corte la sucursal no le compra a proveedores: recibe del Centro.
+    // El boton de compra sale del panel por esta bandera, no por un `if` con el
+    // id del ambito.
+    expect(AMBITO_SUCURSAL.permiteCompra).toBe(false);
+    expect(AMBITO_CENTRO.permiteCompra).toBe(true);
   });
 
   it('la cobertura en dias solo se mide en la sucursal', () => {
