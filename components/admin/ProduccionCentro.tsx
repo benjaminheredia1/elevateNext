@@ -6,10 +6,22 @@ import apiClient from '@/hooks/api';
 import DataTable from '@/components/ui/DataTable';
 import EmptyState from '@/components/ui/EmptyState';
 import MoneyText from '@/components/ui/MoneyText';
+import AdminProductWizard, { type WizardInitial } from '@/components/admin/AdminProductWizard';
 import {
   useRindeCentro, useDefinirRecetaCentro, useRegistrarProduccion, useInventarioCentro,
   type RindeProducto, type ItemStockCentro,
 } from '@/hooks/centro-produccion';
+
+/**
+ * Producto en blanco para el alta desde el Centro. Nace ELABORADO y en
+ * borrador: lo que lo hace producible es la receta, y publicarlo es una
+ * decisión aparte que se toma desde el catálogo.
+ */
+const PRODUCTO_NUEVO: WizardInitial = {
+  nombre: '', descripcion: '', precio: 0, calorias: null, proteina: null,
+  tipo: 'ELABORADO', estado_publicacion: 'BORRADOR', imagen_url: null,
+  categorias: [], marcas: [], receta: [], insumo_reventa_id: null,
+};
 
 interface ProductoBase { id: number; nombre: string }
 
@@ -227,18 +239,36 @@ function ProducirModal({ centroId, producto, onClose }: {
 }
 
 export default function ProduccionCentro({ centroId }: { centroId: number }) {
-  const { data: productos = [], isLoading } = useRindeCentro(centroId);
+  const { data: productos = [], isLoading, refetch } = useRindeCentro(centroId);
   const [recetaAbierta, setRecetaAbierta] = useState<{ inicial: RindeProducto | null } | null>(null);
   const [produciendo, setProduciendo] = useState<RindeProducto | null>(null);
+  const [creandoProducto, setCreandoProducto] = useState(false);
 
   return (
     <>
-      <div className="admin-toolbar" style={{ marginBottom: 16 }}>
-        <button className="admin-btn primary" onClick={() => setRecetaAbierta({ inicial: null })}>
+      <div className="admin-toolbar" style={{ marginBottom: 16, display: 'flex', gap: 10 }}>
+        {/* Dos caminos distintos a propósito: "Nueva receta" le pone receta a un
+            producto que ya está en el catálogo; "Nuevo producto" crea el
+            producto Y su receta de una sola vez, para no obligar a ir al
+            catálogo y volver. */}
+        <button className="admin-btn primary" onClick={() => setCreandoProducto(true)}>
+          + Nuevo producto
+        </button>
+        <button className="admin-btn ghost" onClick={() => setRecetaAbierta({ inicial: null })}>
           Nueva receta
         </button>
       </div>
 
+      {creandoProducto && (
+        <AdminProductWizard
+          initial={PRODUCTO_NUEVO}
+          avgSales={0}
+          avgMargin={0}
+          centroId={centroId}
+          onClose={() => setCreandoProducto(false)}
+          onSaved={() => { setCreandoProducto(false); refetch(); }}
+        />
+      )}
       {recetaAbierta && (
         <RecetaModal centroId={centroId} inicial={recetaAbierta.inicial} onClose={() => setRecetaAbierta(null)} />
       )}

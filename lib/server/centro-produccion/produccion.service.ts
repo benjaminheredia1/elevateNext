@@ -72,6 +72,13 @@ async function resolverInsumoEspejo(db: Db, productoId: number) {
  *
  * Se reemplaza entera y no se hace merge: una receta a medio actualizar es peor
  * que una vieja, porque produce con gramajes que nadie eligió.
+ *
+ * NO abre transacción propia: la abre quien llama. Escribe en tres tablas
+ * (insumo espejo, StockCentro y RecetaCentro) más la auditoría, así que
+ * llamarla suelta deja esas escrituras sin atomicidad — las dos rutas que la
+ * usan la envuelven. Es a propósito: el alta de producto desde el Centro
+ * necesita crear el producto y su receta en la MISMA transacción, y si el
+ * servicio abriera la suya no podría participar de la de afuera.
  */
 export async function definirRecetaCentro(
   centroId: number,
@@ -79,7 +86,7 @@ export async function definirRecetaCentro(
   lineas: LineaRecetaCentro[],
   userId: number,
   rol: Rol,
-  db: PrismaClient = prisma,
+  db: Db = prisma,
 ) {
   if (lineas.length === 0) throw new ValidationError('La receta necesita al menos un insumo');
 
@@ -106,35 +113,33 @@ export async function definirRecetaCentro(
     throw new ConflictError(`Estos insumos no están en el inventario del centro: ${faltantes.join(', ')}`);
   }
 
-  return db.$transaction(async (tx) => {
-    const espejo = await resolverInsumoEspejo(tx, productoId);
+  const espejo = await resolverInsumoEspejo(db, productoId);
 
-    // El insumo espejo tiene que existir en el inventario del centro para poder
-    // recibir lo producido.
-    await tx.stockCentro.upsert({
-      where: { centro_id_insumo_id: { centro_id: centroId, insumo_id: espejo.id } },
-      create: { centro_id: centroId, insumo_id: espejo.id, stock_actual: 0, costo_promedio: 0 },
-      update: {},
-    });
-
-    await tx.recetaCentro.deleteMany({ where: { centro_id: centroId, producto_id: productoId } });
-    await tx.recetaCentro.createMany({
-      data: lineas.map(l => ({
-        centro_id: centroId,
-        producto_id: productoId,
-        insumo_id: l.insumo_id,
-        cantidad_utilizada: l.cantidad_utilizada,
-      })),
-    });
-
-    await logAudit({
-      usuarioId: userId, rol, accion: 'MODIFICO',
-      entidad: 'RecetaCentro', entidadId: productoId,
-      detalle: `Receta de producción de "${producto.nombre}" en el centro #${centroId}: ${lineas.length} insumo(s)`,
-    }, tx);
-
-    return obtenerRecetaCentro(centroId, productoId, tx);
+  // El insumo espejo tiene que existir en el inventario del centro para poder
+  // recibir lo producido.
+  await db.stockCentro.upsert({
+    where: { centro_id_insumo_id: { centro_id: centroId, insumo_id: espejo.id } },
+    create: { centro_id: centroId, insumo_id: espejo.id, stock_actual: 0, costo_promedio: 0 },
+    update: {},
   });
+
+  await db.recetaCentro.deleteMany({ where: { centro_id: centroId, producto_id: productoId } });
+  await db.recetaCentro.createMany({
+    data: lineas.map(l => ({
+      centro_id: centroId,
+      producto_id: productoId,
+      insumo_id: l.insumo_id,
+      cantidad_utilizada: l.cantidad_utilizada,
+    })),
+  });
+
+  await logAudit({
+    usuarioId: userId, rol, accion: 'MODIFICO',
+    entidad: 'RecetaCentro', entidadId: productoId,
+    detalle: `Receta de producción de "${producto.nombre}" en el centro #${centroId}: ${lineas.length} insumo(s)`,
+  }, db);
+
+  return obtenerRecetaCentro(centroId, productoId, db);
 }
 
 export async function obtenerRecetaCentro(

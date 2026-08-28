@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import prisma from '@/lib/prisma';
 import { requireAuth, requireRole } from '@/lib/server/auth/session';
 import { handleApiError, ValidationError } from '@/lib/server/errors';
 import { DefinirRecetaCentroSchema } from '@/lib/server/dto/centro-produccion.dto';
@@ -35,8 +36,13 @@ export async function POST(req: NextRequest) {
     requireRole(session, ['DUENO', 'ADMIN']);
     const parsed = DefinirRecetaCentroSchema.parse(await req.json());
 
-    const receta = await definirRecetaCentro(
-      parsed.centro_id, parsed.producto_id, parsed.lineas, session.id, session.rol,
+    // La transacción la abre el llamador: el servicio escribe en varias tablas
+    // y ya no la abre por dentro, para poder participar de la transacción del
+    // alta de producto.
+    const receta = await prisma.$transaction((tx) =>
+      definirRecetaCentro(
+        parsed.centro_id, parsed.producto_id, parsed.lineas, session.id, session.rol, tx,
+      ),
     );
 
     return NextResponse.json({ data: receta }, { status: 201 });

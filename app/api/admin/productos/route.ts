@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireAuth, requireRole } from '@/lib/server/auth/session';
 import { handleApiError } from '@/lib/server/errors';
+import { definirRecetaCentro } from '@/lib/server/centro-produccion/produccion.service';
 import { ProductoConFichaSchema } from '@/lib/server/dto/inventario.dto';
 import { alcanceSucursal, resolverSucursal } from '@/lib/server/sucursales/sucursal.service';
 import { parseSucursal } from '@/lib/server/finanzas/rango';
@@ -223,6 +224,17 @@ export async function POST(req: NextRequest) {
           })),
           skipDuplicates: true,
         });
+      }
+
+      // 4b. Receta de producción del Centro. Va con el servicio del subsistema
+      //     y no a mano, para no duplicar sus validaciones (el insumo tiene que
+      //     estar en el inventario de ESE centro, sin repetidos) ni su
+      //     resolución del insumo espejo. Adentro de esta misma transacción: si
+      //     la receta se rechaza, el producto tampoco queda creado.
+      if (parsed.centro_id && parsed.receta_centro.length > 0) {
+        await definirRecetaCentro(
+          parsed.centro_id, prod.id, parsed.receta_centro, session.id, session.rol, tx,
+        );
       }
 
       // 5. Habilitación en la sucursal, con su precio y disponibilidad. Sin esta

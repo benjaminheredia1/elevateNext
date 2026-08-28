@@ -85,6 +85,11 @@ export const ProductoConFichaSchema = z.object({
   categorias:         z.array(z.number().int().positive()).optional().default([]),
   marcas:             z.array(z.number().int().positive()).optional().default([]),
   receta:             z.array(ItemRecetaSchema).optional().default([]),
+  // Alta desde el Centro: lo que se guarda es la receta de PRODUCCIÓN
+  // (RecetaCentro), no la de venta. Un producto que nace en el Centro no lleva
+  // receta local: la sucursal lo descuenta 1:1 contra su insumo espejo.
+  centro_id:          z.number().int().positive().optional(),
+  receta_centro:      z.array(ItemRecetaSchema).optional().default([]),
   // Sucursal cuya ficha técnica y precio se están editando. Si no viene, se usa
   // la principal: mantiene compatible el alta de producto de una sola sucursal.
   sucursal_id:        z.number().int().positive().optional(),
@@ -111,6 +116,14 @@ export const ProductoConFichaSchema = z.object({
       code: 'custom',
       path: ['receta'],
       message: `Un producto de ${data.tipo} no lleva receta de venta: su inventario es el insumo vinculado 1:1.`,
+    });
+  }
+
+  if (data.receta_centro.length > 0 && !data.centro_id) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['centro_id'],
+      message: 'Una receta de producción necesita el centro que la ejecuta.',
     });
   }
 

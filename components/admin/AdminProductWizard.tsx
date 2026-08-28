@@ -149,7 +149,7 @@ function Herencia({ heredado, onVolverAHeredar }: { heredado: boolean; onVolverA
   );
 }
 
-export default function AdminProductWizard({ initial, avgSales, avgMargin, sucursalId, sucursalNombre, onClose, onSaved }: {
+export default function AdminProductWizard({ initial, avgSales, avgMargin, sucursalId, sucursalNombre, centroId, onClose, onSaved }: {
   initial: WizardInitial;
   avgSales: number;
   avgMargin: number;
@@ -157,6 +157,13 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, sucur
    *  producto nacía siempre en la sucursal principal, aunque estuvieras
    *  parado en otra. */
   sucursalId?: number;
+  /**
+   * Alta desde el Centro de Producción. Cambia dos cosas: los insumos del paso
+   * de receta salen del inventario del Centro (no del de una sucursal), y lo
+   * que se guarda es la receta de PRODUCCIÓN, no la de venta. La sucursal no
+   * recibe receta: le llega el producto ya terminado.
+   */
+  centroId?: number;
   /** Solo para avisar en pantalla a qué local afecta lo que se está editando. */
   sucursalNombre?: string;
   onClose: () => void;
@@ -204,13 +211,18 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, sucur
     const params = new URLSearchParams({ incluir_inactivos: '1' });
     if (sucursalId) params.set('sucursal', String(sucursalId));
     if (sucursalId && yaEnReceta.length > 0) params.set('incluir_ids', yaEnReceta.join(','));
-    apiClient.get(`/api/insumo?${params}`).then(r => setInsumos(Array.isArray(r.data) ? r.data : r.data?.data ?? [])).catch(() => setInsumos([]));
+    // Desde el Centro la receta se arma con SU insumo bruto: ofrecer el de una
+    // sucursal daría una receta que el Centro no puede producir nunca.
+    const urlInsumos = centroId
+      ? `/api/admin/centros-produccion/${centroId}/insumos`
+      : `/api/insumo?${params}`;
+    apiClient.get(urlInsumos).then(r => setInsumos(Array.isArray(r.data) ? r.data : r.data?.items ?? r.data?.data ?? [])).catch(() => setInsumos([]));
     apiClient.get('/api/categoria').then(r => setCats(Array.isArray(r.data) ? r.data : r.data?.data ?? [])).catch(() => setCats([]));
     apiClient.get('/api/admin/marcas').then(r => setMarcas(r.data?.data ?? r.data?.items ?? [])).catch(() => setMarcas([]));
     // `initial` queda fuera a propósito: es la ficha con la que se abrió el
     // wizard y no cambia mientras está abierto.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sucursalId]);
+  }, [sucursalId, centroId]);
 
   const set = (patch: Partial<WizardInitial>) => setP(prev => ({ ...prev, ...patch }));
   const insumoOf = (id: number) => insumos.find(i => i.id === id);
@@ -332,10 +344,16 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, sucur
       sucursal_id: sucursalId,
       categorias: p.categorias, marcas: p.marcas,
       // Solo los campos persistibles: el estado de edición (ui_*) no viaja a la API
-      receta: p.tipo === 'ELABORADO' ? p.receta.map(({ insumo_id, cantidad_utilizada }) => ({ insumo_id, cantidad_utilizada })) : [],
+      // Desde el Centro la misma receta viaja como `receta_centro`: es de
+      // producción, no de venta, y la sucursal no lleva ninguna.
+      receta: !centroId && p.tipo === 'ELABORADO' ? p.receta.map(({ insumo_id, cantidad_utilizada }) => ({ insumo_id, cantidad_utilizada })) : [],
       insumo_reventa_id: p.insumo_reventa_id ?? undefined,
       imagen_url: p.imagen_url || undefined,
     };
+    if (centroId && p.tipo === 'ELABORADO') {
+      body.centro_id = centroId;
+      body.receta_centro = p.receta.map(({ insumo_id, cantidad_utilizada }) => ({ insumo_id, cantidad_utilizada }));
+    }
     // Editando una sucursal se manda la decisión explícita de qué queda
     // heredado; el resto queda propio del local aunque hoy coincida con el
     // catálogo. Editando el catálogo no se manda: no hay de quién heredar.
