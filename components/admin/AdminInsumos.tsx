@@ -517,6 +517,11 @@ export default function AdminInsumos({ readOnly = false }: { readOnly?: boolean 
 
   // Modo "por envases" en compra/conteo: el usuario teclea envases y el
   // sistema convierte a la unidad base del insumo antes de enviar a la API.
+  // Clave de idempotencia del intento en curso. Se renueva al ABRIR el modal,
+  // no al enviar: así un reintento (doble clic, respuesta que no volvió) manda
+  // la misma clave y el servidor lo rechaza en vez de duplicar la compra y
+  // recalcular el costo promedio con el doble de volumen.
+  const [claveIdempotencia, setClaveIdempotencia] = useState('');
   const [envaseModo, setEnvaseModo] = useState(false);
   const [envaseCant, setEnvaseCant] = useState('');
   const [envaseTam, setEnvaseTam] = useState('');
@@ -525,6 +530,7 @@ export default function AdminInsumos({ readOnly = false }: { readOnly?: boolean 
   const openModal = (action: ModalAction, insumo?: Insumo) => {
     setFormError('');
     setModalAction(action);
+    setClaveIdempotencia(crypto.randomUUID());
     setSelected(insumo ?? null);
     setEnvaseModo(false);
     setEnvaseCant('');
@@ -704,7 +710,7 @@ export default function AdminInsumos({ readOnly = false }: { readOnly?: boolean 
             ? [`${envN} envase(s) de ${envT} ${selSufijo}`, form.descripcion].filter(Boolean).join(' — ')
             : form.descripcion || undefined,
           sucursal_id: sucursalNumero,
-        });
+        }, { headers: { 'Idempotency-Key': claveIdempotencia } });
       }
       if (modalAction === 'merma' && selected) {
         await apiClient.post('/api/admin/insumos/merma', {
@@ -712,7 +718,7 @@ export default function AdminInsumos({ readOnly = false }: { readOnly?: boolean 
           cantidad: Number(form.cantidad || 0),
           descripcion: form.descripcion || `Merma de ${selected.nombre}`,
           sucursal_id: sucursalNumero,
-        });
+        }, { headers: { 'Idempotency-Key': claveIdempotencia } });
       }
       if (modalAction === 'conteo' && selected) {
         await apiClient.post('/api/admin/insumos/conteo', {

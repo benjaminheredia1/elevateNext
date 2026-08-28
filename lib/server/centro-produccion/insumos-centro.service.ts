@@ -126,6 +126,7 @@ export async function registrarCompraCentro(
   nota: string | undefined,
   userId: number,
   rol: Rol,
+  idempotencyKey?: string | null,
 ) {
   if (cantidad <= 0) throw new ValidationError('La cantidad debe ser positiva');
   const insumo = await tx.insumo.findUnique({ where: { id: insumoId } });
@@ -143,6 +144,7 @@ export async function registrarCompraCentro(
       descripcion: nota ?? `Compra de ${insumo.nombre}`,
       costo_unitario: costoUnitario,
       responsable: String(userId),
+      idempotency_key: idempotencyKey ?? null,
     },
   });
 
@@ -167,6 +169,7 @@ export async function registrarMermaCentro(
   descripcion: string,
   userId: number,
   rol: Rol,
+  idempotencyKey?: string | null,
 ) {
   if (cantidad <= 0) throw new ValidationError('La cantidad debe ser positiva');
   const insumo = await tx.insumo.findUnique({ where: { id: insumoId } });
@@ -183,6 +186,7 @@ export async function registrarMermaCentro(
       cantidad: -cantidad,
       descripcion,
       responsable: String(userId),
+      idempotency_key: idempotencyKey ?? null,
     },
   });
 

@@ -3,6 +3,7 @@ import prisma from '@/lib/prisma';
 import { resolverSucursal } from '@/lib/server/sucursales/sucursal.service';
 import { requireAuth, requireRole } from '@/lib/server/auth/session';
 import { handleApiError } from '@/lib/server/errors';
+import { leerClaveIdempotencia } from '@/lib/server/idempotencia';
 import { RegistrarCompraSchema } from '@/lib/server/dto/inventario.dto';
 import { registrarCompra } from '@/lib/server/inventario/inventario.service';
 
@@ -13,6 +14,7 @@ export async function POST(req: NextRequest) {
 
     const body   = await req.json();
     const parsed = RegistrarCompraSchema.parse(body);
+    const clave  = leerClaveIdempotencia(req);
 
     const result = await prisma.$transaction(async (tx) =>
       registrarCompra(
@@ -24,6 +26,7 @@ export async function POST(req: NextRequest) {
         session.id,
         session.rol,
         await resolverSucursal(parsed.sucursal_id, tx),
+        clave,
       ),
     );
 

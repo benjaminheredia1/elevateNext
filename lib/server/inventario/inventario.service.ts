@@ -51,6 +51,7 @@ export async function registrarCompra(
   userId: number,
   rol: Rol,
   sucursalId?: number,
+  idempotencyKey?: string | null,
 ) {
   const insumo = await tx.insumo.findUnique({ where: { id: insumoId } });
   if (!insumo) throw new NotFoundError('Insumo no encontrado');
@@ -85,6 +86,7 @@ export async function registrarCompra(
       descripcion:     nota ?? `Compra de ${insumo.nombre}`,
       costo_unitario:  costoUnitario,
       responsable:     String(userId),
+      idempotency_key: idempotencyKey ?? null,
     },
   });
 
@@ -109,6 +111,7 @@ export async function registrarMerma(
   userId: number,
   rol: Rol,
   sucursalId?: number,
+  idempotencyKey?: string | null,
 ) {
   const insumo = await tx.insumo.findUnique({ where: { id: insumoId } });
   if (!insumo) throw new NotFoundError('Insumo no encontrado');
@@ -127,6 +130,7 @@ export async function registrarMerma(
       cantidad:        -cantidad,
       descripcion,
       responsable:     String(userId),
+      idempotency_key: idempotencyKey ?? null,
     },
   });
 

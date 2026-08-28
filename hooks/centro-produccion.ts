@@ -66,12 +66,24 @@ export function useAltaInsumoCentro(centroId: number | null) {
 interface AccionCentroBase {
   centro_id: number;
   insumo_id: number;
+  /**
+   * Clave de idempotencia. Viaja como cabecera `Idempotency-Key`, no en el
+   * cuerpo. La genera la pantalla al ABRIR el formulario y no al enviarlo: si
+   * se generara al enviar, cada reintento traería una clave distinta, el
+   * servidor vería dos operaciones diferentes y la protección no existiría.
+   */
+  idempotency_key?: string;
 }
 
 function useAccionCentro<T extends AccionCentroBase>(url: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: T) => (await apiClient.post(url, input)).data,
+    mutationFn: async (input: T) => {
+      const { idempotency_key, ...body } = input;
+      return (await apiClient.post(url, body, {
+        headers: idempotency_key ? { 'Idempotency-Key': idempotency_key } : undefined,
+      })).data;
+    },
     onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: ['centro-produccion', 'inventario', variables.centro_id] });
     },

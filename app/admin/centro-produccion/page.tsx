@@ -158,6 +158,11 @@ function AccionModal({ centroId, item, accion, onClose }: {
   const conteo = useConteoCentro();
   const baja = useBajaInsumoCentro();
   const umbrales = useEditarUmbralesCentro();
+  // Clave de idempotencia de ESTE intento del operador. Se genera una sola vez,
+  // al montarse el modal, y se reusa en cada reenvío: es lo que le permite al
+  // servidor distinguir un reintento (doble clic, respuesta perdida) de una
+  // segunda compra genuina. Generarla dentro del submit anularía la protección.
+  const [claveIdempotencia] = useState(() => crypto.randomUUID());
   const [cantidad, setCantidad] = useState('');
   const [costo, setCosto] = useState('');
   const [texto, setTexto] = useState('');
@@ -181,10 +186,10 @@ function AccionModal({ centroId, item, accion, onClose }: {
     try {
       if (accion === 'compra') {
         if (!(Number(cantidad) > 0) || !(Number(costo) > 0)) { setError('Cantidad y costo deben ser mayores a cero.'); return; }
-        await compra.mutateAsync({ centro_id: centroId, insumo_id: item.insumo_id, cantidad: Number(cantidad), costo_unitario: Number(costo), nota: texto || undefined });
+        await compra.mutateAsync({ centro_id: centroId, insumo_id: item.insumo_id, cantidad: Number(cantidad), costo_unitario: Number(costo), nota: texto || undefined, idempotency_key: claveIdempotencia });
       } else if (accion === 'merma') {
         if (!(Number(cantidad) > 0) || !texto.trim()) { setError('Cantidad y descripción son obligatorias.'); return; }
-        await merma.mutateAsync({ centro_id: centroId, insumo_id: item.insumo_id, cantidad: Number(cantidad), descripcion: texto });
+        await merma.mutateAsync({ centro_id: centroId, insumo_id: item.insumo_id, cantidad: Number(cantidad), descripcion: texto, idempotency_key: claveIdempotencia });
       } else if (accion === 'conteo') {
         if (cantidad === '' || Number(cantidad) < 0) { setError('Indicá el nuevo stock.'); return; }
         await conteo.mutateAsync({ centro_id: centroId, insumo_id: item.insumo_id, nuevo_stock: Number(cantidad), descripcion: texto || undefined });

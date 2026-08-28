@@ -14,7 +14,7 @@
     "lint": "eslint",
     "electron:dev": "electron .",
     "electron:build": "electron-builder build --win",
-    "pretest": "dotenv -e .env.test -- prisma db push && dotenv -e .env.test -- prisma db seed",
+    "pretest": "dotenv -e .env.test -- prisma db push --accept-data-loss && dotenv -e .env.test -- prisma db seed",
     "test": "vitest run",
     "test:watch": "vitest"
   },

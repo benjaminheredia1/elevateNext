@@ -590,6 +590,13 @@ model StockCentro {
 /** Kardex del Centro de Producción. Mismo shape que MovimientoInterno. */
 model MovimientoCentro {
   id              Int              @id @default(autoincrement())
+  // Clave de idempotencia: la manda el cliente (header `Idempotency-Key`) y
+  // nombra la INTENCIÓN del operador, no la petición. Un reintento de red o un
+  // segundo clic reenvían la misma clave, el índice único la rechaza y la
+  // transacción entera se revierte: no se duplica ni el movimiento ni el stock
+  // ni el recálculo del costo promedio. Nullable porque el histórico no la
+  // tiene y porque las operaciones absolutas (conteo) no la necesitan.
+  idempotency_key String?          @unique
   centro_id       Int
   insumo_id       Int
   tipo_movimiento Tipo_movimiento
@@ -606,6 +613,13 @@ model MovimientoCentro {
 
 model MovimientoInterno {
   id              Int             @id @default(autoincrement())
+  // Clave de idempotencia: la manda el cliente (header `Idempotency-Key`) y
+  // nombra la INTENCIÓN del operador, no la petición. Un reintento de red o un
+  // segundo clic reenvían la misma clave, el índice único la rechaza y la
+  // transacción entera se revierte: no se duplica ni el movimiento ni el stock
+  // ni el recálculo del costo promedio. Nullable porque el histórico no la
+  // tiene y porque las operaciones absolutas (conteo) no la necesitan.
+  idempotency_key String?         @unique
   insumo_id       Int
   tipo_movimiento Tipo_movimiento
   cantidad        Float
