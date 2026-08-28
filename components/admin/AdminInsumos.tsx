@@ -689,6 +689,10 @@ export default function AdminInsumos({ readOnly = false }: { readOnly?: boolean 
           // estaba abierta. Para corregirlo está el conteo físico (✓).
           stock_minimo: Number(form.stock_minimo || 0),
           unidad_medida: form.unidad_medida,
+          // El costo y los umbrales que se usan de verdad son los de esta
+          // sucursal (StockSucursal); sin mandarla, el backend no sabe a qué
+          // local aplicarle el cambio.
+          sucursal_id: sucursalNumero,
         });
       }
       if (modalAction === 'compra' && selected) {
