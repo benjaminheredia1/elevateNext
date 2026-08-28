@@ -6,7 +6,8 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import prisma from '@/lib/prisma';
-import { registrarCompra } from './inventario.service';
+import { registrarCompra, resolverConsumoInsumos } from './inventario.service';
+import { sucursalPorDefectoId } from '@/lib/server/sucursales/sucursal.service';
 
 let adminId: number;
 const createdInsumoIds: number[] = [];
@@ -72,5 +73,72 @@ describe('registrarCompra — costo promedio ponderado', () => {
     const { insumo: despues } = await comprar(insumo.id, 4, 8);
     expect(despues.stock_actual).toBe(-6);
     expect(despues.costo_promedio).toBeCloseTo(8, 5);
+  });
+});
+
+describe('resolverConsumoInsumos — prioridad del insumo espejo sobre la receta local', () => {
+  const createdInsumoIds: number[] = [];
+  const createdProductoIds: number[] = [];
+
+  afterAll(async () => {
+    if (createdProductoIds.length > 0) {
+      await prisma.recetasProducto.deleteMany({ where: { producto_id: { in: createdProductoIds } } });
+      await prisma.producto.deleteMany({ where: { id: { in: createdProductoIds } } });
+    }
+    if (createdInsumoIds.length > 0) {
+      await prisma.insumo.deleteMany({ where: { id: { in: createdInsumoIds } } });
+    }
+  });
+
+  it('descuenta el insumo espejo y NO la receta local cuando el producto tiene ambos', async () => {
+    const sufijo = Date.now();
+    const sucursalId = await sucursalPorDefectoId();
+
+    const harina = await prisma.insumo.create({
+      data: { nombre: `Harina ${sufijo}`, unidad_medida: 'GR', stock_actual: 1000, stock_minimo: 0, costo_promedio: 0.01 },
+    });
+    createdInsumoIds.push(harina.id);
+    const espejo = await prisma.insumo.create({
+      data: { nombre: `Brownie ${sufijo}`, unidad_medida: 'UNIDAD', stock_actual: 5, stock_minimo: 0, costo_promedio: 12 },
+    });
+    createdInsumoIds.push(espejo.id);
+    const producto = await prisma.producto.create({
+      data: {
+        nombre: `Brownie ${sufijo}`, descripcion: 'x', precio: 20,
+        tipo: 'ELABORADO', estado_publicacion: 'PUBLICADO',
+        insumo_reventa_id: espejo.id,
+      },
+    });
+    createdProductoIds.push(producto.id);
+    // Receta local vieja, la que quedará como histórico tras el corte
+    await prisma.recetasProducto.create({
+      data: { producto_id: producto.id, insumo_id: harina.id, cantidad_utilizada: 80, sucursal_id: sucursalId },
+    });
+
+    const consumo = await resolverConsumoInsumos(producto.id, 3, prisma, sucursalId);
+
+    expect(consumo.get(espejo.id)).toBe(3);
+    expect(consumo.has(harina.id)).toBe(false);
+  });
+
+  it('sigue usando la receta local cuando el producto no tiene espejo', async () => {
+    const sufijo = Date.now();
+    const sucursalId = await sucursalPorDefectoId();
+
+    const harina = await prisma.insumo.create({
+      data: { nombre: `Harina sin espejo ${sufijo}`, unidad_medida: 'GR', stock_actual: 1000, stock_minimo: 0, costo_promedio: 0.01 },
+    });
+    createdInsumoIds.push(harina.id);
+    const producto = await prisma.producto.create({
+      data: { nombre: `Torta ${sufijo}`, descripcion: 'x', precio: 20, tipo: 'ELABORADO', estado_publicacion: 'PUBLICADO' },
+    });
+    createdProductoIds.push(producto.id);
+    await prisma.recetasProducto.create({
+      data: { producto_id: producto.id, insumo_id: harina.id, cantidad_utilizada: 50, sucursal_id: sucursalId },
+    });
+
+    const consumo = await resolverConsumoInsumos(producto.id, 2, prisma, sucursalId);
+
+    expect(consumo.get(harina.id)).toBe(100);
   });
 });
