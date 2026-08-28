@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import type { RangoFechas } from './rango';
 import { ventasNetas, cmvPorReceta, gastosOperativos } from './metricas.service';
 import { valorEnLibros } from '@/lib/server/admin/activos.service';
+import { valorEnTransito } from '@/lib/server/centro-produccion/traslados.service';
 
 function toNumber(value: Prisma.Decimal): number {
   return Number(value.toFixed(2));
@@ -100,7 +101,7 @@ export async function estadoResultados(rango: RangoFechas, sucursal?: number) {
  * completos aun cuando se filtre por sucursal.
  */
 export async function balanceGeneral(sucursal?: number) {
-  const [cuentas, insumos, cuentasCorrientes, activosFijosRows] = await Promise.all([
+  const [cuentas, insumos, cuentasCorrientes, activosFijosRows, stockCentros, enTransito] = await Promise.all([
     prisma.cuentaFinanciera.findMany({
       where: sucursal ? { sucursal_id: sucursal } : {},
     }),
@@ -120,6 +121,25 @@ export async function balanceGeneral(sucursal?: number) {
       where: { activo: true },
       select: { valor_original: true, valor_actual: true, depreciacion_pct: true, fecha_compra: true },
     }),
+    // El inventario del Centro de Producción es activo del negocio igual que el
+    // de un local. Sin esto, la mercadería producida y todavía no despachada
+    // desaparece del balance y el activo queda subvaluado justo por el monto
+    // que el Centro tiene guardado.
+    //
+    // Se cuenta solo en la vista consolidada: un centro no pertenece a ninguna
+    // sucursal, así que sumarlo al balance de un local le atribuiría plata que
+    // no es suya.
+    sucursal
+      ? Promise.resolve([] as { stock_actual: number; costo_promedio: number }[])
+      : prisma.stockCentro.findMany({
+          where: { activo: true },
+          select: { stock_actual: true, costo_promedio: true },
+        }),
+    // Mercadería despachada que todavía no se recibió: ya no está en el Centro
+    // y todavía no está en la sucursal, pero es del negocio. Al filtrar por
+    // sucursal se cuenta la que va camino a ESA sucursal, que es plata ya
+    // comprometida con ese local.
+    valorEnTransito(sucursal ? { sucursalId: sucursal } : {}),
   ]);
 
   const saldosCuentas = cuentas.reduce((sum, cuenta) => sum.plus(cuenta.saldo), new Prisma.Decimal(0));
@@ -128,10 +148,15 @@ export async function balanceGeneral(sucursal?: number) {
     .reduce((sum, cuenta) => sum.plus(cuenta.saldo), new Prisma.Decimal(0));
 
   // Stock negativo (deuda operativa de inventario) no suma valor al activo.
-  const inventario = insumos.reduce(
+  const inventarioSucursales = insumos.reduce(
     (sum, fila) => sum + Math.max(0, fila.stock_actual) * fila.costo_promedio,
     0,
   );
+  const inventarioCentros = stockCentros.reduce(
+    (sum, fila) => sum + Math.max(0, fila.stock_actual) * fila.costo_promedio,
+    0,
+  );
+  const inventario = inventarioSucursales + inventarioCentros + enTransito;
 
   const saldoPendiente = (cc: { monto: Prisma.Decimal; monto_pagado: Prisma.Decimal }) =>
     Prisma.Decimal.max(cc.monto.minus(cc.monto_pagado), new Prisma.Decimal(0));
@@ -169,6 +194,11 @@ export async function balanceGeneral(sucursal?: number) {
       caja_efectivo: toNumber(cajaEfectivo),
       cuentas_financieras: toNumber(saldosCuentas),
       inventario: Number(inventario.toFixed(2)),
+      // Desglosado para que el número total sea auditable: dónde está parada
+      // la mercadería es la primera pregunta de cualquier arqueo.
+      inventario_sucursales: Number(inventarioSucursales.toFixed(2)),
+      inventario_centros: Number(inventarioCentros.toFixed(2)),
+      inventario_en_transito: Number(enTransito.toFixed(2)),
       cuentas_por_cobrar: toNumber(porCobrar),
       activos_fijos: toNumber(activosFijos),
     },

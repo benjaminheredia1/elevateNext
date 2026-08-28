@@ -6,7 +6,7 @@ import { definirRecetaCentro, registrarProduccion } from './produccion.service';
 import { crearEnvio, recibirTraslado, valorEnTransito } from './traslados.service';
 import { abrirTurno, registrarVentaFisica, cerrarTurno } from '@/lib/server/caja/caja.service';
 import { flujoCaja } from '@/lib/server/finanzas/flujo.service';
-import { estadoResultados } from '@/lib/server/finanzas/contabilidad.service';
+import { estadoResultados, balanceGeneral } from '@/lib/server/finanzas/contabilidad.service';
 import { rangoDiaNegocio, hoyISO } from '@/lib/server/fechas';
 
 /**
@@ -247,7 +247,33 @@ describe('cadena contable centro → sucursal → caja', () => {
     expect(cerrado.estado).toBe('CERRADO');
   });
 
-  it('9. ninguna operación del Centro tocó el inventario de otra sucursal', async () => {
+  it('9. el balance general cuenta el inventario del Centro y lo que está en tránsito', async () => {
+    // Antes de este cambio el balance valorizaba solo StockSucursal: todo lo
+    // que el Centro tenía guardado desaparecía del activo, y el negocio se
+    // veía más pobre de lo que era justo por ese monto.
+    const balance = await balanceGeneral();
+
+    expect(balance.activos.inventario_centros).toBeGreaterThanOrEqual(await valorCentro() - 0.01);
+    expect(balance.activos.inventario).toBeCloseTo(
+      balance.activos.inventario_sucursales
+      + balance.activos.inventario_centros
+      + balance.activos.inventario_en_transito,
+      2,
+    );
+
+    // Con un envío en el aire, el tránsito deja de ser cero y el total no
+    // pierde esa plata por el camino.
+    const { traslado } = await prisma.$transaction((tx) =>
+      crearEnvio(tx, centroId, sucursalId, [{ insumo_id: espejoId, cantidad: 20 }], 'Balance e2e', admin.id, 'DUENO'));
+
+    const conTransito = await balanceGeneral();
+    expect(conTransito.activos.inventario_en_transito).toBeGreaterThanOrEqual(30 - 0.01); // 20 × 1.50
+    expect(conTransito.activos.inventario).toBeCloseTo(balance.activos.inventario, 2);
+
+    await prisma.$transaction((tx) => recibirTraslado(tx, traslado.id, [], admin.id, 'DUENO'));
+  });
+
+  it('10. ninguna operación del Centro tocó el inventario de otra sucursal', async () => {
     // El invariante que sostiene todo el subsistema: lo del Centro es del
     // Centro hasta que un traslado explícito lo mueva.
     const otrasSucursales = await prisma.stockSucursal.findMany({
