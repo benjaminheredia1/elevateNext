@@ -4,24 +4,24 @@ import { FormEvent, useEffect, useState } from 'react';
 import AdminPanel from '@/components/admin/AdminPanel';
 import KpiCard from '@/components/ui/KpiCard';
 import MoneyText from '@/components/ui/MoneyText';
-import DataTable from '@/components/ui/DataTable';
 import EmptyState from '@/components/ui/EmptyState';
-import StatusBadge from '@/components/ui/StatusBadge';
 import ProduccionCentro from '@/components/admin/ProduccionCentro';
 import EnviosCentro from '@/components/admin/EnviosCentro';
+import NucleoInventario from '@/components/admin/inventario/NucleoInventario';
+import { AMBITO_CENTRO } from '@/components/admin/inventario/ambitos';
+import { stockState, type Insumo } from '@/components/admin/inventario/comunes';
 import {
-  useCentrosProduccion, useCrearCentro, useInventarioCentro, useAltaInsumoCentro,
-  useCompraCentro, useMermaCentro, useConteoCentro, useBajaInsumoCentro, useReactivarInsumoCentro,
-  useEditarUmbralesCentro,
-  type ItemStockCentro,
+  useCentrosProduccion, useCrearCentro, useAltaInsumoCentro,
+  useBajaInsumoCentro, useReactivarInsumoCentro, useEditarUmbralesCentro,
 } from '@/hooks/centro-produccion';
 
-const NIVEL_META: Record<ItemStockCentro['nivel'], { label: string; status: string }> = {
-  ok:      { label: 'OK',      status: 'abierto' },
-  bajo:    { label: 'Bajo',    status: 'sobrante' },
-  critico: { label: 'Crítico', status: 'faltante' },
-  baja:    { label: 'De baja', status: 'cerrado' },
-};
+/**
+ * Marco del inventario del Centro de Producción. La tabla de insumo bruto, sus
+ * modales de compra, merma y conteo y el kardex viven en `NucleoInventario`,
+ * el mismo componente que usa la sucursal. Acá queda lo que es del Centro y
+ * solo de él: el selector de centro, el alta de insumo, los umbrales de alerta,
+ * la baja y reactivación en el centro, y las pestañas de producción y envíos.
+ */
 
 function CrearCentroModal({ onClose }: { onClose: () => void }) {
   const crear = useCrearCentro();
@@ -150,23 +150,18 @@ function mensajeError(err: unknown, fallback: string): string {
   return e?.response?.data?.error ?? fallback;
 }
 
-type AccionRapida = 'compra' | 'merma' | 'conteo' | 'baja' | 'umbrales';
+/**
+ * Compra, merma y conteo NO están acá: los provee el núcleo compartido, con su
+ * propia clave de idempotencia. Quedan las dos acciones que son del Centro y
+ * que el núcleo no conoce.
+ */
+type AccionRapida = 'baja' | 'umbrales';
 
 function AccionModal({ centroId, item, accion, onClose }: {
-  centroId: number; item: ItemStockCentro; accion: AccionRapida; onClose: () => void;
+  centroId: number; item: Insumo; accion: AccionRapida; onClose: () => void;
 }) {
-  const compra = useCompraCentro();
-  const merma = useMermaCentro();
-  const conteo = useConteoCentro();
   const baja = useBajaInsumoCentro();
   const umbrales = useEditarUmbralesCentro();
-  // Clave de idempotencia de ESTE intento del operador. Se genera una sola vez,
-  // al montarse el modal, y se reusa en cada reenvío: es lo que le permite al
-  // servidor distinguir un reintento (doble clic, respuesta perdida) de una
-  // segunda compra genuina. Generarla dentro del submit anularía la protección.
-  const [claveIdempotencia] = useState(() => crypto.randomUUID());
-  const [cantidad, setCantidad] = useState('');
-  const [costo, setCosto] = useState('');
   const [texto, setTexto] = useState('');
   // Los umbrales se precargan con los valores actuales de la fila, no vacíos:
   // el operador está corrigiendo un valor existente, no cargando uno nuevo.
@@ -175,9 +170,6 @@ function AccionModal({ centroId, item, accion, onClose }: {
   const [error, setError] = useState('');
 
   const titulos: Record<AccionRapida, string> = {
-    compra: `Compra — ${item.nombre}`,
-    merma: `Merma — ${item.nombre}`,
-    conteo: `Conteo físico — ${item.nombre}`,
     baja: `Dar de baja — ${item.nombre}`,
     umbrales: `Umbrales de alerta — ${item.nombre}`,
   };
@@ -186,23 +178,14 @@ function AccionModal({ centroId, item, accion, onClose }: {
     e.preventDefault();
     setError('');
     try {
-      if (accion === 'compra') {
-        if (!(Number(cantidad) > 0) || !(Number(costo) > 0)) { setError('Cantidad y costo deben ser mayores a cero.'); return; }
-        await compra.mutateAsync({ centro_id: centroId, insumo_id: item.insumo_id, cantidad: Number(cantidad), costo_unitario: Number(costo), nota: texto || undefined, idempotency_key: claveIdempotencia });
-      } else if (accion === 'merma') {
-        if (!(Number(cantidad) > 0) || !texto.trim()) { setError('Cantidad y descripción son obligatorias.'); return; }
-        await merma.mutateAsync({ centro_id: centroId, insumo_id: item.insumo_id, cantidad: Number(cantidad), descripcion: texto, idempotency_key: claveIdempotencia });
-      } else if (accion === 'conteo') {
-        if (cantidad === '' || Number(cantidad) < 0) { setError('Indicá el nuevo stock.'); return; }
-        await conteo.mutateAsync({ centro_id: centroId, insumo_id: item.insumo_id, nuevo_stock: Number(cantidad), descripcion: texto || undefined });
-      } else if (accion === 'umbrales') {
+      if (accion === 'umbrales') {
         if (stockMinimo === '' || puntoCritico === '' || Number(stockMinimo) < 0 || Number(puntoCritico) < 0) {
           setError('Indicá el stock mínimo y el punto crítico.'); return;
         }
-        await umbrales.mutateAsync({ centro_id: centroId, insumo_id: item.insumo_id, stock_minimo: Number(stockMinimo), punto_critico: Number(puntoCritico) });
+        await umbrales.mutateAsync({ centro_id: centroId, insumo_id: item.id, stock_minimo: Number(stockMinimo), punto_critico: Number(puntoCritico) });
       } else {
         if (!texto.trim()) { setError('El motivo es obligatorio.'); return; }
-        await baja.mutateAsync({ centro_id: centroId, insumo_id: item.insumo_id, motivo: texto });
+        await baja.mutateAsync({ centro_id: centroId, insumo_id: item.id, motivo: texto });
       }
       onClose();
     } catch (e: unknown) {
@@ -210,7 +193,7 @@ function AccionModal({ centroId, item, accion, onClose }: {
     }
   };
 
-  const enviando = compra.isPending || merma.isPending || conteo.isPending || baja.isPending || umbrales.isPending;
+  const enviando = baja.isPending || umbrales.isPending;
 
   return (
     <div className="admin-modal-overlay" onClick={onClose}>
@@ -220,27 +203,9 @@ function AccionModal({ centroId, item, accion, onClose }: {
           <button type="button" className="admin-modal-close" onClick={onClose}>×</button>
         </div>
         <div className="admin-modal-body">
-          {accion !== 'baja' && accion !== 'umbrales' && (
+          {accion === 'baja' && (
             <div className="form-group">
-              <label>{accion === 'conteo' ? `Nuevo stock (${item.unidad_medida})` : `Cantidad (${item.unidad_medida})`}</label>
-              <input type="number" step="0.01" min="0" value={cantidad} onChange={e => setCantidad(e.target.value)} />
-            </div>
-          )}
-          {accion === 'compra' && (
-            <div className="form-group">
-              <label>Costo unitario</label>
-              <input type="number" step="0.01" min="0" value={costo} onChange={e => setCosto(e.target.value)} />
-            </div>
-          )}
-          {(accion === 'merma' || accion === 'baja') && (
-            <div className="form-group">
-              <label>{accion === 'baja' ? 'Motivo' : 'Descripción'}</label>
-              <input value={texto} onChange={e => setTexto(e.target.value)} />
-            </div>
-          )}
-          {(accion === 'compra' || accion === 'conteo') && (
-            <div className="form-group">
-              <label>Nota (opcional)</label>
+              <label>Motivo</label>
               <input value={texto} onChange={e => setTexto(e.target.value)} />
             </div>
           )}
@@ -272,12 +237,13 @@ function AccionModal({ centroId, item, accion, onClose }: {
   );
 }
 
-type Pestana = 'inventario' | 'produccion' | 'envios';
+type Pestana = 'inventario' | 'movimientos' | 'produccion' | 'envios';
 
 const PESTANAS: { id: Pestana; label: string }[] = [
-  { id: 'inventario', label: 'Insumo bruto' },
-  { id: 'produccion', label: 'Producción' },
-  { id: 'envios',     label: 'Envíos a sucursal' },
+  { id: 'inventario',  label: 'Insumo bruto' },
+  { id: 'movimientos', label: 'Movimientos' },
+  { id: 'produccion',  label: 'Producción' },
+  { id: 'envios',      label: 'Envíos a sucursal' },
 ];
 
 export default function CentroProduccionPage() {
@@ -285,9 +251,16 @@ export default function CentroProduccionPage() {
   const [centroId, setCentroId] = useState<number | null>(null);
   const [crearCentroAbierto, setCrearCentroAbierto] = useState(false);
   const [altaInsumoAbierto, setAltaInsumoAbierto] = useState(false);
-  const [accion, setAccion] = useState<{ item: ItemStockCentro; tipo: AccionRapida } | null>(null);
+  const [accion, setAccion] = useState<{ item: Insumo; tipo: AccionRapida } | null>(null);
   const [tab, setTab] = useState<Pestana>('inventario');
   const [error, setError] = useState('');
+  // El núcleo trae su propia lista por axios; los KPI se arman con esa misma
+  // data en vez de pedirla otra vez, así no pueden discrepar con la tabla.
+  const [insumos, setInsumos] = useState<Insumo[]>([]);
+  // El núcleo no está en React Query: lo que se opera desde el marco (alta,
+  // umbrales, baja, reactivación) no invalida su carga, así que se le avisa
+  // subiendo este contador.
+  const [refresco, setRefresco] = useState(0);
   const reactivar = useReactivarInsumoCentro();
 
   const intentarReactivar = async (insumoId: number) => {
@@ -295,20 +268,25 @@ export default function CentroProduccionPage() {
     setError('');
     try {
       await reactivar.mutateAsync({ centro_id: centroId, insumo_id: insumoId });
+      setRefresco(r => r + 1);
     } catch (e: unknown) {
       setError(mensajeError(e, 'No se pudo reactivar el insumo.'));
     }
   };
 
+  const cerrarAccion = () => { setAccion(null); setRefresco(r => r + 1); };
+
   useEffect(() => {
     if (centroId == null && centros.length > 0) setCentroId(centros[0].id);
   }, [centros, centroId]);
 
-  const { data: items = [], isLoading } = useInventarioCentro(centroId);
-
-  const valorizado = items.reduce((acc, i) => acc + i.stock_actual * i.costo_promedio, 0);
-  const criticos = items.filter(i => i.nivel === 'critico').length;
-  const bajos = items.filter(i => i.nivel === 'bajo').length;
+  // Solo los activos cuentan para el valor del inventario: una fila dada de
+  // baja en el centro sigue listada para poder reactivarla, pero su stock ya
+  // no es mercadería del centro.
+  const activos = insumos.filter(i => i.activo);
+  const valorizado = activos.reduce((acc, i) => acc + i.stock_actual * i.costo_promedio, 0);
+  const criticos = activos.filter(i => stockState(i) === 'critico' || stockState(i) === 'agotado').length;
+  const bajos = activos.filter(i => stockState(i) === 'bajo').length;
 
   return (
     <AdminPanel>
@@ -339,10 +317,13 @@ export default function CentroProduccionPage() {
 
       {crearCentroAbierto && <CrearCentroModal onClose={() => setCrearCentroAbierto(false)} />}
       {altaInsumoAbierto && centroId != null && (
-        <AltaInsumoModal centroId={centroId} onClose={() => setAltaInsumoAbierto(false)} />
+        <AltaInsumoModal
+          centroId={centroId}
+          onClose={() => { setAltaInsumoAbierto(false); setRefresco(r => r + 1); }}
+        />
       )}
       {accion && centroId != null && (
-        <AccionModal centroId={centroId} item={accion.item} accion={accion.tipo} onClose={() => setAccion(null)} />
+        <AccionModal centroId={centroId} item={accion.item} accion={accion.tipo} onClose={cerrarAccion} />
       )}
 
       {error && <div className="gate-warning" style={{ marginBottom: 12 }}>{error}</div>}
@@ -363,62 +344,65 @@ export default function CentroProduccionPage() {
 
       {centros.length === 0 ? (
         <EmptyState title="Todavía no hay ningún centro de producción" hint="Creá el primero para empezar a cargarle insumo bruto." />
-      ) : centroId == null || isLoading ? (
+      ) : centroId == null ? (
         <EmptyState title="Cargando inventario…" />
-      ) : tab === 'produccion' ? (
-        <ProduccionCentro centroId={centroId} />
-      ) : tab === 'envios' ? (
-        <EnviosCentro centroId={centroId} />
       ) : (
         <>
-          <div className="kpi-grid">
-            <KpiCard label="Insumos en el centro" value={items.length} />
-            <KpiCard label="Inventario valorizado" value={<MoneyText value={valorizado} />} highlight />
-            <KpiCard label="Stock bajo" value={bajos} accent="var(--amber)" />
-            <KpiCard label="Crítico" value={criticos} accent="var(--danger)" />
-          </div>
+          {tab === 'produccion' && <ProduccionCentro centroId={centroId} />}
+          {tab === 'envios' && <EnviosCentro centroId={centroId} />}
 
-          <DataTable
-            data={items}
-            emptyTitle="Este centro todavía no tiene insumo cargado"
-            rowKey={(row: ItemStockCentro) => row.insumo_id}
-            columns={[
-              { key: 'nombre', header: 'Insumo', render: (row: ItemStockCentro) => (
-                <div>
-                  <div className="admin-cell-title">{row.nombre}</div>
-                  {row.proveedor && <div className="admin-cell-sub">{row.proveedor}</div>}
-                </div>
-              )},
-              { key: 'stock', header: 'Stock', className: 'num', render: (row: ItemStockCentro) => `${row.stock_actual} ${row.unidad_medida}` },
-              { key: 'nivel', header: 'Estado', render: (row: ItemStockCentro) => (
-                <StatusBadge status={NIVEL_META[row.nivel].status} label={NIVEL_META[row.nivel].label} />
-              )},
-              { key: 'minimo', header: 'Mínimo', className: 'num', render: (row: ItemStockCentro) => row.stock_minimo },
-              { key: 'costo', header: 'Costo prom.', className: 'num', render: (row: ItemStockCentro) => <MoneyText value={row.costo_promedio} /> },
-              { key: 'valor', header: 'Valorizado', className: 'num', render: (row: ItemStockCentro) => <MoneyText value={row.stock_actual * row.costo_promedio} /> },
-              { key: 'acciones', header: '', render: (row: ItemStockCentro) => (
-                row.activo ? (
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    <button className="admin-btn ghost sm" onClick={() => setAccion({ item: row, tipo: 'compra' })}>Compra</button>
-                    <button className="admin-btn ghost sm" onClick={() => setAccion({ item: row, tipo: 'merma' })}>Merma</button>
-                    <button className="admin-btn ghost sm" onClick={() => setAccion({ item: row, tipo: 'conteo' })}>Conteo</button>
-                    <button className="admin-btn ghost sm" onClick={() => setAccion({ item: row, tipo: 'umbrales' })}>Umbrales</button>
-                    <button className="admin-btn ghost sm" onClick={() => setAccion({ item: row, tipo: 'baja' })}>Dar de baja</button>
-                  </div>
-                ) : (
-                  <button
-                    className="admin-btn ghost sm"
-                    onClick={() => intentarReactivar(row.insumo_id)}
-                    disabled={reactivar.isPending}
-                  >
-                    Reactivar
-                  </button>
-                )
-              )},
-            ]}
+          {tab === 'inventario' && (
+            <div className="kpi-grid">
+              <KpiCard label="Insumos en el centro" value={activos.length} />
+              <KpiCard label="Inventario valorizado" value={<MoneyText value={valorizado} />} highlight />
+              <KpiCard label="Stock bajo" value={bajos} accent="var(--amber)" />
+              <KpiCard label="Crítico" value={criticos} accent="var(--danger)" />
+            </div>
+          )}
+
+          {/* El núcleo se monta siempre: pasar por Producción o Envíos no puede
+              costar una recarga del inventario ni perder el filtro escrito. */}
+          <NucleoInventario
+            ambito={AMBITO_CENTRO}
+            contextoId={centroId}
+            vista={tab === 'inventario' ? 'insumos' : tab === 'movimientos' ? 'movimientos' : 'oculto'}
+            onInsumos={setInsumos}
+            refresco={refresco}
+            mensajeSinInsumos="Este centro todavía no tiene insumo bruto cargado."
+            accionSinInsumos={
+              <button className="admin-btn primary" onClick={() => setAltaInsumoAbierto(true)} type="button">
+                + Nuevo insumo
+              </button>
+            }
+            accionesFicha={insumo => (
+              <button
+                className="action-btn edit"
+                title="Umbrales de alerta (mínimo y punto crítico)"
+                onClick={() => setAccion({ item: insumo, tipo: 'umbrales' })}
+                type="button"
+              >⚑</button>
+            )}
+            accionesAlcance={insumo => (
+              <button
+                className="action-btn delete"
+                title="Dar de baja en este centro (el insumo sigue en el catálogo del negocio)"
+                onClick={() => setAccion({ item: insumo, tipo: 'baja' })}
+                type="button"
+              >⛔</button>
+            )}
+            accionesInactivo={insumo => (
+              <button
+                className="action-btn edit"
+                title="Reactivar en este centro"
+                onClick={() => intentarReactivar(insumo.id)}
+                disabled={reactivar.isPending}
+                type="button"
+              >↩</button>
+            )}
           />
         </>
       )}
+
     </AdminPanel>
   );
 }

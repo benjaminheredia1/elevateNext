@@ -457,7 +457,7 @@ export default function NucleoInventario({
                     <th>Nivel</th>
                     <th className="num">Stock</th>
                     <th className="num">Reorden</th>
-                    <th className="num">Cobertura</th>
+                    {ambito.mideCobertura && <th className="num">Cobertura</th>}
                     <th className="num">Costo unit.</th>
                     <th className="num">Valor</th>
                     <th>Proveedor</th>
@@ -502,7 +502,7 @@ export default function NucleoInventario({
                         </td>
                         <td className="num"><span className={`stock-val ${!estadoNoEsReal && state !== 'ok' ? 'low' : ''}`}>{number(insumo.stock_actual)} {insumo.unidad_medida}</span></td>
                         <td className="num">{number(insumo.stock_minimo)}</td>
-                        <td className="num">{coverage(insumo)}</td>
+                        {ambito.mideCobertura && <td className="num">{coverage(insumo)}</td>}
                         <td className="num">{money(insumo.costo_promedio)}</td>
                         <td className="num">{money(value)}</td>
                         <td>{insumo.proveedor || '—'}</td>

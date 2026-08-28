@@ -39,6 +39,15 @@ export interface AmbitoInventario {
    */
   contextoOpcional: boolean;
   /**
+   * Si la columna "Cobertura" —cuántos días dura el stock al ritmo de consumo—
+   * tiene sentido en este ámbito. La sucursal sí la mide (`uso_diario_promedio`
+   * sale de lo que se vende ahí). El Centro no: su pregunta equivalente es el
+   * rinde, "con este bruto puedo producir N unidades", y vive en la pestaña
+   * Producción bajo el rótulo "Alcanza para". Mostrar las dos juntas, una de
+   * ellas siempre vacía, invita a leerlas como si fueran lo mismo.
+   */
+  mideCobertura: boolean;
+  /**
    * Si el ámbito puede comprarle a un proveedor. Hoy los dos pueden; la
    * sucursal lo pierde recién cuando el Centro sea el único origen de
    * mercadería y la mudanza de stock ya esté hecha.
@@ -65,6 +74,7 @@ export const AMBITO_SUCURSAL: AmbitoInventario = {
   kardexUrl: () => '/api/insumo/movimiento',
   claveContexto: 'sucursal_id',
   contextoOpcional: true,
+  mideCobertura: true,
   permiteCompra: true,
 };
 
@@ -83,5 +93,6 @@ export const AMBITO_CENTRO: AmbitoInventario = {
   kardexUrl: contextoId => `/api/admin/centros-produccion/${contextoId}/movimientos`,
   claveContexto: 'centro_id',
   contextoOpcional: false,
+  mideCobertura: false,
   permiteCompra: true,
 };

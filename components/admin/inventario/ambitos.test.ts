@@ -26,6 +26,13 @@ describe('ambitos de inventario', () => {
     expect(AMBITO_CENTRO.claveContexto).toBe('centro_id');
   });
 
+  it('la cobertura en dias solo se mide en la sucursal', () => {
+    // El Centro contesta "para cuanto me alcanza" con el rinde, en unidades
+    // producibles, no con dias de un consumo diario que no mide.
+    expect(AMBITO_SUCURSAL.mideCobertura).toBe(true);
+    expect(AMBITO_CENTRO.mideCobertura).toBe(false);
+  });
+
   it('solo la sucursal puede operar sin contexto', () => {
     // Sin sucursal el servidor resuelve la principal; el DTO del Centro, en
     // cambio, exige centro_id entero y positivo.

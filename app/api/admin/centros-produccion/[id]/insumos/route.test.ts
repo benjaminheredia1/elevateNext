@@ -50,6 +50,63 @@ describe('/api/admin/centros-produccion/[id]/insumos', () => {
     expect(fila.stock_actual).toBe(15);
   });
 
+  // El panel de inventario es el mismo componente que usa la sucursal
+  // (NucleoInventario), y lee la fila con la forma de `Insumo` de
+  // components/admin/inventario/comunes.tsx. Si el Centro no devuelve esa
+  // forma, la tabla se dibuja con celdas vacías y sin decir por qué.
+  it('devuelve los campos que el panel de inventario necesita', async () => {
+    const access_token = await token();
+    const sufijo = Date.now();
+
+    const insumo = await prisma.insumo.create({
+      data: {
+        nombre: `Harina panel ${sufijo}`,
+        unidad_medida: 'GR',
+        stock_actual: 0,
+        stock_minimo: 0,
+        costo_promedio: 0,
+        equivalencia_unidad: 'KG',
+        equivalencia_cantidad: 1000,
+      },
+    });
+    insumoIds.push(insumo.id);
+    await prisma.stockCentro.create({
+      data: {
+        centro_id: centroId, insumo_id: insumo.id,
+        stock_actual: 500, costo_promedio: 0.02, stock_minimo: 100, punto_critico: 50,
+      },
+    });
+
+    const listado = await (await GET(
+      pedir(`/api/admin/centros-produccion/${centroId}/insumos`, 'GET', access_token),
+      { params: Promise.resolve({ id: String(centroId) }) },
+    )).json();
+    const fila = listado.items.find((i: { insumo_id: number }) => i.insumo_id === insumo.id);
+
+    expect(fila).toMatchObject({
+      // `id` es lo que el núcleo usa como clave de fila y para sus acciones;
+      // `insumo_id` se mantiene porque la pantalla del Centro ya lo consume.
+      id: insumo.id,
+      insumo_id: insumo.id,
+      nombre: `Harina panel ${sufijo}`,
+      unidad_medida: 'GR',
+      stock_actual: 500,
+      costo_promedio: 0.02,
+      stock_minimo: 100,
+      punto_critico: 50,
+      es_mixto: false,
+      equivalencia_unidad: 'KG',
+      equivalencia_cantidad: 1000,
+      activo: true,
+      nivel: 'ok',
+    });
+    // El Centro no mide consumo diario ni guarda fecha/motivo de baja por
+    // centro: van en null y el panel los trata como ausentes.
+    expect(fila.uso_diario_promedio).toBeNull();
+    expect(fila.fecha_baja).toBeNull();
+    expect(fila.motivo_baja).toBeNull();
+  });
+
   it('un CAJERO no puede dar de alta insumo en el centro: 403', async () => {
     const cajero_token = (await login('cajero@elevate.com', 'cajero123')).access_token;
     const res = await POST(

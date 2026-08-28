@@ -128,6 +128,15 @@ export interface ItemInventarioCentro {
   punto_critico: number;
   activo: boolean;
   nivel: 'ok' | 'bajo' | 'critico' | 'baja';
+  // Desde acá, lo que pide el panel compartido (`Insumo` de
+  // components/admin/inventario/comunes.tsx) y no es propio del Centro.
+  id: number;
+  es_mixto: boolean;
+  equivalencia_unidad: string | null;
+  equivalencia_cantidad: number | null;
+  uso_diario_promedio: number | null;
+  fecha_baja: string | null;
+  motivo_baja: string | null;
 }
 
 /**
@@ -144,11 +153,22 @@ export interface ItemInventarioCentro {
 export async function inventarioDeCentro(centroId: number, db: Db = prisma): Promise<ItemInventarioCentro[]> {
   const filas = await db.stockCentro.findMany({
     where: { centro_id: centroId },
-    include: { insumo: { select: { id: true, nombre: true, unidad_medida: true, categoria_insumo: true, proveedor: true } } },
+    include: {
+      insumo: {
+        select: {
+          id: true, nombre: true, unidad_medida: true, categoria_insumo: true, proveedor: true,
+          es_mixto: true, equivalencia_unidad: true, equivalencia_cantidad: true,
+        },
+      },
+    },
     orderBy: { insumo: { nombre: 'asc' } },
   });
 
   return filas.map(fila => ({
+    // El panel compartido identifica la fila por `id`; `insumo_id` se mantiene
+    // porque la pantalla del Centro y sus hooks ya lo consumen. Son el mismo
+    // número: en el Centro la fila de inventario ES el insumo.
+    id: fila.insumo_id,
     insumo_id: fila.insumo_id,
     centro_id: fila.centro_id,
     nombre: fila.insumo.nombre,
@@ -160,6 +180,19 @@ export async function inventarioDeCentro(centroId: number, db: Db = prisma): Pro
     stock_minimo: fila.stock_minimo,
     punto_critico: fila.punto_critico,
     activo: fila.activo,
+    es_mixto: fila.insumo.es_mixto,
+    equivalencia_unidad: fila.insumo.equivalencia_unidad,
+    equivalencia_cantidad: fila.insumo.equivalencia_cantidad,
+    // Tres campos que el panel espera y el Centro no tiene con qué llenar.
+    // `uso_diario_promedio` mide el consumo de las sucursales: usarlo acá
+    // proyectaría la duración del stock del Centro con el ritmo de otro, así
+    // que va en null y el ámbito del Centro directamente no muestra cobertura
+    // (para eso tiene el rinde, en unidades producibles). `fecha_baja` y
+    // `motivo_baja` viven en el insumo del negocio; StockCentro solo guarda
+    // `activo`, sin cuándo ni por qué.
+    uso_diario_promedio: null,
+    fecha_baja: null,
+    motivo_baja: null,
     nivel: !fila.activo ? 'baja'
       : fila.stock_actual <= fila.punto_critico ? 'critico'
       : fila.stock_actual <= fila.stock_minimo ? 'bajo'

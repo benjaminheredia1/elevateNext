@@ -12,6 +12,9 @@ export interface CentroProduccion {
 }
 
 export interface ItemStockCentro {
+  // El endpoint devuelve ademas `id` (el mismo numero que `insumo_id`) y los
+  // campos de ficha que necesita el panel compartido; aca se declara solo lo
+  // que consumen Produccion y Envios.
   insumo_id: number;
   centro_id: number;
   nombre: string;
