@@ -12,7 +12,7 @@ import SucursalSelector from '@/components/ui/SucursalSelector';
 import CopiarProductosModal from '@/components/admin/CopiarProductosModal';
 import { useSucursales } from '@/hooks/sucursales';
 import { useSucursalAdmin } from '@/hooks/sucursal-admin';
-import { useInventarioCentro } from '@/hooks/centro-produccion';
+import { useInventarioCentro, useRindeCentro } from '@/hooks/centro-produccion';
 import { etiquetaTipo } from './etiqueta-tipo';
 
 type Tipo = 'ELABORADO' | 'REVENTA' | 'TERCIADO';
@@ -97,6 +97,21 @@ export default function AdminProducts(
   // No es el rinde: el rinde dice cuántas podría fabricar con el bruto de hoy,
   // esto dice cuántas ya fabricó o compró y están esperando el envío.
   const { data: inventarioCentro = [] } = useInventarioCentro(esCentro ? centroId ?? null : null);
+  // La ficha técnica de un producto del Centro vive en RecetaCentro, no en
+  // RecetasProducto —esa es la de sucursal y por diseño está vacía—. Sin esto
+  // la pantalla leía el lugar equivocado: mostraba "sin ficha" en productos que
+  // sí tienen receta, y al abrir el editor la receta aparecía en blanco.
+  const { data: rindeCentro = [] } = useRindeCentro(esCentro ? centroId ?? null : null);
+  const recetaDelCentro = useMemo(() => {
+    const mapa = new Map<number, { insumo_id: number; cantidad_utilizada: number }[]>();
+    for (const r of rindeCentro) {
+      mapa.set(r.producto_id, r.insumos.map(i => ({
+        insumo_id: i.insumo_id,
+        cantidad_utilizada: i.cantidad_utilizada,
+      })));
+    }
+    return mapa;
+  }, [rindeCentro]);
   const stockEnCentro = useMemo(() => {
     const mapa = new Map<number, { stock: number; costo: number }>();
     for (const fila of inventarioCentro) {
@@ -330,7 +345,12 @@ export default function AdminProducts(
     imagen_url: p.imagen_url,
     categorias: p.categoria_id.map(c => c.categoria.id),
     marcas: p.marcas.map(m => m.marca.id),
-    receta: p.recetaProducto_id.map(r => ({ insumo_id: r.insumo_id, cantidad_utilizada: r.cantidad_utilizada })),
+    // Desde el Centro se edita SU ficha: la de producción. Cargar la local
+    // —vacía— hacía que la receta pareciera perdida y que al guardar se mandara
+    // en blanco, borrando la que sí existía.
+    receta: esCentro
+      ? (recetaDelCentro.get(p.id) ?? [])
+      : p.recetaProducto_id.map(r => ({ insumo_id: r.insumo_id, cantidad_utilizada: r.cantidad_utilizada })),
     insumo_reventa_id: p.insumo_reventa_id,
     // Qué campos toma del catálogo, para que el wizard lo diga en pantalla.
     heredado: p.heredado,
@@ -559,7 +579,11 @@ export default function AdminProducts(
               const fc = p.food_cost_pct ?? 0;
               const margin = p.precio - costo;
               const clazz = classifyMenu(p.ventas_acumuladas || 0, margin, avgSales, avgMargin);
-              const noRecipe = p.tipo === 'ELABORADO' && p.recetaProducto_id.length === 0;
+              // En el Centro, "sin ficha" es no tener receta DE PRODUCCIÓN. La
+              // local está vacía a propósito y marcaba a todos como sin ficha.
+              const noRecipe = p.tipo === 'ELABORADO' && (esCentro
+                ? (recetaDelCentro.get(p.id)?.length ?? 0) === 0
+                : p.recetaProducto_id.length === 0);
               // Ni reventa ni terciado tienen receta local: su rinde no se
               // calcula desde insumos, es el stock del insumo vinculado.
               const rinde = p.tipo !== 'ELABORADO'

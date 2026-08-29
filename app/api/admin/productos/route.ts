@@ -240,16 +240,18 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      // 5. Habilitación en la sucursal, con su precio y disponibilidad. Sin esta
-      //    fila el producto existe en el catálogo pero no lo vende nadie.
-      await tx.productoSucursal.create({
-        data: {
-          producto_id: prod.id,
-          sucursal_id: sucursalId,
-          precio:      parsed.precio,
-          disponible:  parsed.disponible,
-        },
-      });
+      // 5. El alta NO habilita el producto en ninguna sucursal.
+      //
+      //    Todo producto nace en el Centro —el alta exige `centro_id` desde que
+      //    el Centro es el único origen—, y ahí todavía no es de ningún local.
+      //    Se gana el derecho a venderse en una sucursal cuando le LLEGA un
+      //    envío: `recibirTraslado` lo habilita con el precio base la primera
+      //    vez que lo recibe.
+      //
+      //    Antes se creaba la fila acá, y como el alta del Centro no manda
+      //    sucursal, `resolverSucursal` caía en la principal: al local le
+      //    aparecía en el catálogo un producto que nadie le despachó, con stock
+      //    0 y sin explicación.
 
       await logAudit({
         usuarioId: session.id, rol: session.rol, accion: 'CREO',

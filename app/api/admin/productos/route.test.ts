@@ -397,4 +397,47 @@ describe('POST /api/admin/productos — alta desde el Centro', () => {
 
     expect(response.status).toBe(422);
   });
+
+  it('un alta del Centro NO habilita el producto en ninguna sucursal', async () => {
+    // Reportado: se creaba el producto en el Centro, sin hacer ningun traslado,
+    // y aparecia en el catalogo de una sucursal —la principal, porque el alta
+    // del Centro no manda ninguna— con stock 0 y sin explicacion.
+    //
+    // El producto se gana el derecho a venderse en un local cuando le LLEGA un
+    // envio: ahi lo habilita recibirTraslado con el precio base.
+    const access_token = await token();
+    const marca = await prisma.marca.findFirstOrThrow();
+    const sufijo = Date.now();
+
+    const insumo = await prisma.insumo.create({
+      data: { nombre: `Carne alta centro ${sufijo}`, unidad_medida: 'GR', stock_actual: 500, stock_minimo: 0, costo_promedio: 0.04 },
+    });
+    insumoIds.push(insumo.id);
+    await prisma.stockCentro.create({
+      data: { centro_id: centroId, insumo_id: insumo.id, stock_actual: 500, costo_promedio: 0.04 },
+    });
+
+    const response = await alta(access_token, {
+      nombre: `Lomito centro ${sufijo}`,
+      descripcion: 'x',
+      precio: 30,
+      tipo: 'ELABORADO',
+      estado_publicacion: 'PUBLICADO',
+      marcas: [marca.id],
+      permitir_duplicado: true,
+      centro_id: centroId,
+      receta_centro: [{ insumo_id: insumo.id, cantidad_utilizada: 200 }],
+    });
+    const body = await response.json();
+    expect(response.status, JSON.stringify(body)).toBe(201);
+    productoIds.push(body.data.id);
+
+    // No lo vende NADIE todavia.
+    expect(await prisma.productoSucursal.count({ where: { producto_id: body.data.id } })).toBe(0);
+
+    // Y su ficha esta donde tiene que estar: en el Centro, no en la sucursal.
+    expect(await prisma.recetaCentro.count({ where: { producto_id: body.data.id } })).toBe(1);
+    expect(await prisma.recetasProducto.count({ where: { producto_id: body.data.id } })).toBe(0);
+  });
+
 });
