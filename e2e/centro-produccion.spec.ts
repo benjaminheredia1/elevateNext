@@ -223,4 +223,57 @@ test.describe('centro de producción de punta a punta', () => {
     // abastece: producirlo o comprarlo.
     await expect(page.getByText('Terciado', { exact: true })).toHaveCount(0);
   });
+
+  test('crear un insumo y despues un producto con su receta, y publicarlo', async ({ page }) => {
+    // El recorrido exacto que reporto el usuario: en el Centro crea el insumo
+    // (Carne) con stock, va a Productos, da de alta un producto (Lomito) con su
+    // cantidad de carne, y al publicar el servidor respondia 422 "falta receta
+    // con insumos y cantidades validas" — porque miraba la receta de VENTA, que
+    // en un alta del Centro va vacia a proposito.
+    const INSUMO_CARNE = unico('E2E Carne');
+    const PRODUCTO_LOMITO = unico('E2E Lomito');
+
+    await ingresar(page, DUENO);
+    await irAlCentro(page, 'Insumo bruto');
+
+    await page.getByRole('button', { name: /nuevo insumo/i }).first().click();
+    await campoModal(page, 'Nombre').fill(INSUMO_CARNE);
+    await campoModal(page, 'Stock inicial').fill('1000');
+    await campoModal(page, 'Costo unitario').fill('0.04');
+    await modal(page).getByRole('button', { name: /dar de alta/i }).click();
+    await expect(modal(page)).toBeHidden({ timeout: 20_000 });
+
+    await page.getByRole('button', { name: 'Productos' }).click();
+    await page.getByRole('button', { name: /nuevo producto/i }).first().click();
+    await expect(page.locator('.wizard-steps')).toBeVisible({ timeout: 20_000 });
+
+    // 1. Basicos: nombre, tipo elaborado y el menu donde aparece.
+    await page.locator('.form-group', { hasText: 'Nombre' }).locator('input').first().fill(PRODUCTO_LOMITO);
+    await page.locator('.type-card', { hasText: 'Elaborado' }).first().click();
+    await page.locator('.form-group', { hasText: 'menú' }).locator('.type-card').first().click();
+    await page.getByRole('button', { name: /siguiente/i }).click();
+
+    // 2. Precio.
+    await page.locator('.form-group', { hasText: 'Precio' }).locator('input').first().fill('35');
+    await page.getByRole('button', { name: /siguiente/i }).click();
+
+    // 3. Receta: se elige la carne recien creada y su cantidad.
+    await page.getByRole('button', { name: /agregar insumo/i }).click();
+    const buscador = page.getByPlaceholder('Buscar insumo...').first();
+    await buscador.click();
+    await buscador.fill(INSUMO_CARNE);
+    await page.locator('div', { hasText: INSUMO_CARNE }).last().click();
+    const cantidad = page.locator('input[placeholder="0"]').first();
+    await cantidad.fill('200');
+    await page.getByRole('button', { name: /siguiente/i }).click();
+
+    // 4. Publicar. Esto es lo que fallaba.
+    const [respuesta] = await Promise.all([
+      page.waitForResponse(r => r.url().includes('/api/admin/productos') && r.request().method() === 'POST', { timeout: 30_000 }),
+      page.getByRole('button', { name: /publicar al menú/i }).click(),
+    ]);
+    expect(respuesta.status(), await respuesta.text()).toBe(201);
+
+    await expect(page.locator('tr', { hasText: PRODUCTO_LOMITO }).first()).toBeVisible({ timeout: 20_000 });
+  });
 });

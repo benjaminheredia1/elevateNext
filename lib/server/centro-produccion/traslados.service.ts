@@ -227,6 +227,34 @@ export async function recibirTraslado(
         },
       });
       valorRecibido += cantidad * detalle.costo_unitario;
+
+      // Que llegue con stock no alcanza para venderlo: el POS ofrece lo que el
+      // local tiene HABILITADO. Sin esta fila el cajero recibe mercadería que
+      // no puede vender, y nadie le dice por qué.
+      //
+      // Si el local ya lo vende, no se toca: su precio es suyo. Si es la
+      // primera vez, entra con el precio base del catálogo —el que puso el
+      // Centro— y el local lo cambia después si quiere.
+      const productoDelEspejo = await tx.producto.findFirst({
+        where: { insumo_reventa_id: detalle.insumo_id },
+        select: { id: true, precio: true },
+      });
+      if (productoDelEspejo) {
+        const yaLoVende = await tx.productoSucursal.findFirst({
+          where: { producto_id: productoDelEspejo.id, sucursal_id: traslado.sucursal_id },
+          select: { id: true },
+        });
+        if (!yaLoVende) {
+          await tx.productoSucursal.create({
+            data: {
+              producto_id: productoDelEspejo.id,
+              sucursal_id: traslado.sucursal_id,
+              precio: productoDelEspejo.precio,
+              disponible: true,
+            },
+          });
+        }
+      }
     }
 
     if (faltante > 0) {

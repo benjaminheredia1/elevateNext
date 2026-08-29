@@ -310,4 +310,49 @@ describe('despacho del Centro y venta en la sucursal', () => {
     // Y no se descontó nada: el rechazo es antes de tocar el stock.
     expect(await stockCentro(alta.insumo.id)).toBe(10);
   }, 60_000);
+
+  it('H. recibir un producto nuevo lo deja VENDIBLE en ese local, al precio base', async () => {
+    // La regla del usuario: si la sucursal ya tiene el producto conserva SU
+    // precio; si es nuevo, acepta el base que puso el Centro.
+    //
+    // Sin esto el producto llega con stock pero no habilitado: la caja no lo
+    // ofrece, y el local se queda con mercaderia que no puede vender sin que
+    // nadie le avise por que.
+    const { productoId, espejoId } = await elaboradoProducido(`Vendible ${sufijo}`, 4);
+    await prisma.producto.update({ where: { id: productoId }, data: { precio: 22 } });
+
+    // La sucursal no lo tiene habilitado todavia.
+    expect(await prisma.productoSucursal.count({
+      where: { producto_id: productoId, sucursal_id: sucursalId },
+    })).toBe(0);
+
+    const { traslado } = await prisma.$transaction((tx) =>
+      crearEnvio(tx, centroId, sucursalId, [{ insumo_id: espejoId, cantidad: 3 }], 'Envio H', admin.id, 'DUENO'));
+    await prisma.$transaction((tx) => recibirTraslado(tx, traslado.id, [], admin.id, 'DUENO'));
+
+    const habilitado = await prisma.productoSucursal.findFirst({
+      where: { producto_id: productoId, sucursal_id: sucursalId },
+    });
+    expect(habilitado, 'el producto recibido tiene que quedar habilitado en el local').not.toBeNull();
+    expect(Number(habilitado!.precio)).toBe(22);
+    expect(habilitado!.disponible).toBe(true);
+  }, 60_000);
+
+  it('H2. recibir un producto que el local YA vende no le pisa el precio', async () => {
+    const { productoId, espejoId } = await elaboradoProducido(`Precio propio ${sufijo}`, 4);
+    await prisma.producto.update({ where: { id: productoId }, data: { precio: 30 } });
+    // El local ya lo vende a 18: ese precio es suyo y manda.
+    await prisma.productoSucursal.create({
+      data: { producto_id: productoId, sucursal_id: sucursalId, precio: 18, disponible: true },
+    });
+
+    const { traslado } = await prisma.$transaction((tx) =>
+      crearEnvio(tx, centroId, sucursalId, [{ insumo_id: espejoId, cantidad: 2 }], 'Envio H2', admin.id, 'DUENO'));
+    await prisma.$transaction((tx) => recibirTraslado(tx, traslado.id, [], admin.id, 'DUENO'));
+
+    const habilitado = await prisma.productoSucursal.findFirstOrThrow({
+      where: { producto_id: productoId, sucursal_id: sucursalId },
+    });
+    expect(Number(habilitado.precio)).toBe(18);
+  }, 60_000);
 });
