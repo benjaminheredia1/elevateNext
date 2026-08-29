@@ -23,6 +23,27 @@ export const AltaInsumoCentroSchema = z.object({
   costo_unitario: z.number().min(0).default(0),
   stock_minimo:   z.number().min(0).default(0),
   punto_critico:  z.number().min(0).default(0),
+  // La ficha del insumo es la misma que tenía el alta de la sucursal antes del
+  // corte: al mudarse la operación al Centro no puede perder datos por el
+  // camino. La categoría ordena el inventario, el proveedor es a quién se le
+  // compra, y la equivalencia (1 UNIDAD = 300 GR) es informativa pero es lo que
+  // deja entender un costo por bolsa cuando la receta pide gramos.
+  categoria_insumo:      z.string().trim().optional(),
+  proveedor:             z.string().trim().optional(),
+  equivalencia_unidad:   z.string().trim().optional(),
+  equivalencia_cantidad: z.number().positive().optional(),
+}).superRefine((data, ctx) => {
+  // Media equivalencia no dice nada: "1 UNIDAD = ?" o "= 300 ?" son datos
+  // inservibles que despues nadie sabe interpretar.
+  const tieneUnidad = !!data.equivalencia_unidad;
+  const tieneCantidad = data.equivalencia_cantidad != null;
+  if (tieneUnidad !== tieneCantidad) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['equivalencia_cantidad'],
+      message: 'La equivalencia necesita la medida y la cantidad, o ninguna de las dos.',
+    });
+  }
 });
 export type AltaInsumoCentroInput = z.infer<typeof AltaInsumoCentroSchema>;
 

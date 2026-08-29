@@ -86,6 +86,12 @@ export interface PropsNucleoInventario {
   onInsumos?: (insumos: Insumo[]) => void;
   /** Cambiar este número fuerza una recarga (el marco tocó algo de afuera). */
   refresco?: number;
+  /**
+   * Recorta la lista sin volver a pedirla. Lo usa el Centro para partir su
+   * inventario en dos pestañas —insumo bruto y productos terminados—, que son
+   * la misma tabla sobre cosas que se operan distinto.
+   */
+  filtroFilas?: (insumo: Insumo) => boolean;
   /** Qué decir cuando el ámbito todavía no maneja ningún insumo. */
   mensajeSinInsumos: string;
   /** Botón de alta que ofrece ese vacío; el alta es del marco. */
@@ -119,6 +125,7 @@ export default function NucleoInventario({
   readOnly = false,
   soloAjustes = false,
   estadoNoEsReal = false,
+  filtroFilas,
   onInsumos,
   refresco = 0,
   mensajeSinInsumos,
@@ -200,11 +207,17 @@ export default function NucleoInventario({
     load();
   }, [load, habilitado, refresco]);
 
-  const insumosActivos = useMemo(() => insumos.filter(i => i.activo), [insumos]);
+  // El filtro del marco se aplica antes que todo lo demás: lo que recorta no
+  // existe para esta pestaña, ni en la tabla ni en los contadores.
+  const visibles = useMemo(
+    () => (filtroFilas ? insumos.filter(filtroFilas) : insumos),
+    [insumos, filtroFilas],
+  );
+  const insumosActivos = useMemo(() => visibles.filter(i => i.activo), [visibles]);
   // Base de la vista actual: activos o dados de baja (los filtros de stock cuentan sobre esta)
   const insumosVista = useMemo(
-    () => (vistaInsumos === 'baja' ? insumos.filter(i => !i.activo) : insumosActivos),
-    [vistaInsumos, insumos, insumosActivos],
+    () => (vistaInsumos === 'baja' ? visibles.filter(i => !i.activo) : insumosActivos),
+    [vistaInsumos, visibles, insumosActivos],
   );
 
   const countsVista = useMemo(() => {
@@ -370,7 +383,7 @@ export default function NucleoInventario({
               onClick={() => { setVistaInsumos('activos'); setStatusFilter('todos'); }}
               type="button"
             >
-              Activos ({insumos.filter(i => i.activo).length})
+              Activos ({visibles.filter(i => i.activo).length})
             </button>
             <button
               className={`cat-filter-btn ${vistaInsumos === 'baja' ? 'active' : ''}`}
@@ -378,7 +391,7 @@ export default function NucleoInventario({
               type="button"
               style={vistaInsumos === 'baja' ? { borderColor: 'var(--danger)' } : undefined}
             >
-              ⛔ De Baja ({insumos.filter(i => !i.activo).length})
+              ⛔ De Baja ({visibles.filter(i => !i.activo).length})
             </button>
           </div>
           <div className="admin-filters">

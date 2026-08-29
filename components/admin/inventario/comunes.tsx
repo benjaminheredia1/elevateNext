@@ -32,6 +32,12 @@ export interface Insumo {
   activo: boolean;
   fecha_baja: string | null;
   motivo_baja: string | null;
+  /**
+   * Solo lo manda el Centro: si la fila es un producto terminado o insumo
+   * bruto. En la sucursal no aplica —desde el corte todo lo que maneja es
+   * terminado— y por eso es opcional.
+   */
+  es_producto?: boolean;
 }
 
 export interface Movimiento {
@@ -136,7 +142,9 @@ export function UnidadFieldGroup({
   onUnidadChange: (value: string) => void;
   onEquivalenciaUnidadChange: (value: string) => void;
   onEquivalenciaCantidadChange: (value: string) => void;
-  onNuevaUnidad: () => void;
+  /** Sin esto no se ofrece crear unidades: el Centro no las administra, eso
+   *  vive en la pestaña Unidades del inventario de sucursal. */
+  onNuevaUnidad?: () => void;
 }) {
   // El "contenido por unidad" solo aplica a unidades discretas (UNIDAD, CAJA,
   // BOTELLA...). Para medidas físicas (lt, kg, gr, ml) no se muestra: el stock
@@ -167,7 +175,7 @@ export function UnidadFieldGroup({
         <select value={unidadMedida} onChange={event => cambiarUnidad(event.target.value)} style={{ flex: 1 }}>
           {unidadesParaSelect.map(unidad => <option key={unidad.id} value={unidad.nombre}>{unidad.nombre}</option>)}
         </select>
-        <button className="admin-btn secondary" onClick={onNuevaUnidad} type="button">+ Nueva</button>
+        {onNuevaUnidad && <button className="admin-btn secondary" onClick={onNuevaUnidad} type="button">+ Nueva</button>}
       </div>
       {mostrarPanel && (
         <div className="unidad-contenido-panel">

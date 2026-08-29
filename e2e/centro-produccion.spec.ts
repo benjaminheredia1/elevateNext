@@ -152,9 +152,16 @@ test.describe('centro de producción de punta a punta', () => {
     const filaBruto = page.locator('tr', { hasText: INSUMO_BRUTO }).first();
     await expect(filaBruto).toContainText('90', { timeout: 20_000 });
 
-    // …y el terminado aparece en el mismo inventario, con sus 40 unidades.
+    // …y el terminado aparece en Productos, que es la otra mitad del inventario
+    // del Centro: la misma tabla, separada porque el bruto y el terminado no se
+    // operan igual.
+    await page.getByRole('button', { name: 'Productos' }).click();
     const filaTerminado = page.locator('tr', { hasText: PRODUCTO }).first();
-    await expect(filaTerminado).toContainText(String(A_PRODUCIR));
+    await expect(filaTerminado).toContainText(String(A_PRODUCIR), { timeout: 20_000 });
+
+    // Y no se cuela en la pestaña del bruto, ni el bruto en la suya.
+    await page.getByRole('button', { name: 'Insumo bruto' }).click();
+    await expect(page.locator('tr', { hasText: PRODUCTO })).toHaveCount(0);
   });
 
   test('el envío deja el valor en tránsito y el cajero lo recibe', async ({ page }) => {

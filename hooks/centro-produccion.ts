@@ -61,6 +61,10 @@ export function useAltaInsumoCentro(centroId: number | null) {
     mutationFn: async (input: {
       nombre: string; unidad_medida: string; stock_inicial: number;
       costo_unitario: number; stock_minimo: number; punto_critico: number;
+      // Ficha del catálogo: la misma que tenía el alta de sucursal antes del
+      // corte. Solo se escribe cuando el insumo se crea.
+      categoria_insumo?: string; proveedor?: string;
+      equivalencia_unidad?: string; equivalencia_cantidad?: number;
     }) => (await apiClient.post(`/api/admin/centros-produccion/${centroId}/insumos`, input)).data,
     onSuccess: () => qc.invalidateQueries({ queryKey: ['centro-produccion', 'inventario', centroId] }),
   });

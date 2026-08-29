@@ -9,7 +9,7 @@ import ProduccionCentro from '@/components/admin/ProduccionCentro';
 import EnviosCentro from '@/components/admin/EnviosCentro';
 import NucleoInventario from '@/components/admin/inventario/NucleoInventario';
 import { AMBITO_CENTRO } from '@/components/admin/inventario/ambitos';
-import { stockState, type Insumo } from '@/components/admin/inventario/comunes';
+import { stockState, UnidadFieldGroup, CostoAyuda, UNIDADES_MEDIDA, type Insumo } from '@/components/admin/inventario/comunes';
 import {
   useCentrosProduccion, useCrearCentro, useAltaInsumoCentro,
   useBajaInsumoCentro, useReactivarInsumoCentro, useEditarUmbralesCentro,
@@ -70,10 +70,22 @@ function CrearCentroModal({ onClose }: { onClose: () => void }) {
   );
 }
 
+/**
+ * Alta de insumo en el Centro.
+ *
+ * Es la misma ficha que tenía el alta de la sucursal antes del corte: al mudarse
+ * la operación al Centro no puede perder datos por el camino. Por eso reusa
+ * `UnidadFieldGroup` y `CostoAyuda`, que quedaron libres cuando la sucursal dejó
+ * de dar de alta insumo bruto.
+ */
 function AltaInsumoModal({ centroId, onClose }: { centroId: number; onClose: () => void }) {
   const alta = useAltaInsumoCentro(centroId);
   const [nombre, setNombre] = useState('');
+  const [categoria, setCategoria] = useState('');
+  const [proveedor, setProveedor] = useState('');
   const [unidad, setUnidad] = useState('UNIDAD');
+  const [equivalenciaUnidad, setEquivalenciaUnidad] = useState('');
+  const [equivalenciaCantidad, setEquivalenciaCantidad] = useState('');
   const [stockInicial, setStockInicial] = useState('');
   const [costo, setCosto] = useState('');
   const [minimo, setMinimo] = useState('');
@@ -84,11 +96,23 @@ function AltaInsumoModal({ centroId, onClose }: { centroId: number; onClose: () 
     e.preventDefault();
     setError('');
     if (nombre.trim().length < 1) { setError('El nombre es obligatorio.'); return; }
+    // Media equivalencia no dice nada; el servidor la rechaza igual, pero se
+    // avisa acá para no hacer el viaje.
+    const tieneUnidad = equivalenciaUnidad.trim() !== '';
+    const tieneCantidad = equivalenciaCantidad.trim() !== '';
+    if (tieneUnidad !== tieneCantidad) {
+      setError('Para el contenido por unidad, elegí también la medida (kg, gr, lt, ml) o dejá la cantidad vacía.');
+      return;
+    }
     try {
       await alta.mutateAsync({
         nombre: nombre.trim(), unidad_medida: unidad,
         stock_inicial: Number(stockInicial) || 0, costo_unitario: Number(costo) || 0,
         stock_minimo: Number(minimo) || 0, punto_critico: Number(critico) || 0,
+        categoria_insumo: categoria.trim() || undefined,
+        proveedor: proveedor.trim() || undefined,
+        equivalencia_unidad: tieneUnidad ? equivalenciaUnidad.trim() : undefined,
+        equivalencia_cantidad: tieneCantidad ? Number(equivalenciaCantidad) : undefined,
       });
       onClose();
     } catch (e: unknown) {
@@ -104,31 +128,45 @@ function AltaInsumoModal({ centroId, onClose }: { centroId: number; onClose: () 
           <button type="button" className="admin-modal-close" onClick={onClose}>×</button>
         </div>
         <div className="admin-modal-body">
-          <div className="form-group">
-            <label>Nombre</label>
-            <input value={nombre} onChange={e => setNombre(e.target.value)} placeholder="Ej: Fideo" />
-          </div>
-          <div className="form-group">
-            <label>Unidad de medida</label>
-            <select value={unidad} onChange={e => setUnidad(e.target.value)}>
-              {['KG', 'GR', 'UNIDAD', 'LT', 'ML'].map(u => <option key={u} value={u}>{u}</option>)}
-            </select>
-          </div>
-          <div className="form-group">
-            <label>Stock inicial</label>
-            <input type="number" step="0.01" min="0" value={stockInicial} onChange={e => setStockInicial(e.target.value)} />
-          </div>
-          <div className="form-group">
-            <label>Costo unitario</label>
-            <input type="number" step="0.01" min="0" value={costo} onChange={e => setCosto(e.target.value)} />
-          </div>
-          <div className="form-group">
-            <label>Stock mínimo</label>
-            <input type="number" step="0.01" min="0" value={minimo} onChange={e => setMinimo(e.target.value)} />
-          </div>
-          <div className="form-group">
-            <label>Punto crítico</label>
-            <input type="number" step="0.01" min="0" value={critico} onChange={e => setCritico(e.target.value)} />
+          <div className="form-grid">
+            <div className="form-group full">
+              <label>Nombre</label>
+              <input value={nombre} onChange={e => setNombre(e.target.value)} placeholder="Ej: Fideo" />
+            </div>
+            <div className="form-group">
+              <label>Categoría</label>
+              <input value={categoria} onChange={e => setCategoria(e.target.value)} placeholder="Ej: Granos" />
+            </div>
+            <UnidadFieldGroup
+              unidadMedida={unidad}
+              unidadesParaSelect={UNIDADES_MEDIDA.map((u, i) => ({ id: i, nombre: u, activo: true }))}
+              equivalenciaUnidad={equivalenciaUnidad}
+              equivalenciaCantidad={equivalenciaCantidad}
+              onUnidadChange={setUnidad}
+              onEquivalenciaUnidadChange={setEquivalenciaUnidad}
+              onEquivalenciaCantidadChange={setEquivalenciaCantidad}
+            />
+            <div className="form-group">
+              <label>Stock inicial</label>
+              <input type="number" step="0.01" min="0" value={stockInicial} onChange={e => setStockInicial(e.target.value)} />
+            </div>
+            <div className="form-group">
+              <label>Costo unitario</label>
+              <input type="number" step="0.000001" min="0" value={costo} onChange={e => setCosto(e.target.value)} />
+            </div>
+            <CostoAyuda unidadBase={unidad} onCalculado={setCosto} />
+            <div className="form-group">
+              <label>Stock mínimo</label>
+              <input type="number" step="0.01" min="0" value={minimo} onChange={e => setMinimo(e.target.value)} />
+            </div>
+            <div className="form-group">
+              <label>Punto crítico</label>
+              <input type="number" step="0.01" min="0" value={critico} onChange={e => setCritico(e.target.value)} />
+            </div>
+            <div className="form-group full">
+              <label>Proveedor</label>
+              <input value={proveedor} onChange={e => setProveedor(e.target.value)} placeholder="A quién se le compra" />
+            </div>
           </div>
           {error && <div className="gate-warning" style={{ marginTop: 10 }}>{error}</div>}
         </div>
@@ -237,14 +275,29 @@ function AccionModal({ centroId, item, accion, onClose }: {
   );
 }
 
-type Pestana = 'inventario' | 'movimientos' | 'produccion' | 'envios';
+type Pestana = 'inventario' | 'productos' | 'movimientos' | 'produccion' | 'envios';
 
 const PESTANAS: { id: Pestana; label: string }[] = [
   { id: 'inventario',  label: 'Insumo bruto' },
+  { id: 'productos',   label: 'Productos' },
   { id: 'movimientos', label: 'Movimientos' },
   { id: 'produccion',  label: 'Producción' },
   { id: 'envios',      label: 'Envíos a sucursal' },
 ];
+
+/**
+ * El Centro guarda las dos cosas en la misma tabla, pero no se operan igual: el
+ * insumo bruto se compra y se consume produciendo; el producto terminado se
+ * produce o se compra, y se despacha. Verlos mezclados hacía imposible
+ * responder "¿qué productos tengo?" desde el Centro, que es donde ahora se
+ * decide todo.
+ *
+ * "Producción" es otra cosa y sigue aparte: lista solo lo que el Centro
+ * FABRICA, o sea los que tienen receta. Un producto que el Centro compra
+ * aparece en "Productos" pero no ahí, porque no hay nada que producir.
+ */
+const ES_BRUTO = (i: Insumo) => !i.es_producto;
+const ES_PRODUCTO = (i: Insumo) => !!i.es_producto;
 
 export default function CentroProduccionPage() {
   const { data: centros = [] } = useCentrosProduccion();
@@ -286,7 +339,8 @@ export default function CentroProduccionPage() {
    * cuesta una recarga, que era el motivo de montar el núcleo siempre.
    */
   const cambiarTab = (destino: Pestana) => {
-    if (destino === 'inventario' && (tab === 'produccion' || tab === 'envios')) {
+    const vuelveAlInventario = destino === 'inventario' || destino === 'productos';
+    if (vuelveAlInventario && (tab === 'produccion' || tab === 'envios')) {
       setRefresco(r => r + 1);
     }
     setTab(destino);
@@ -300,9 +354,12 @@ export default function CentroProduccionPage() {
   // baja en el centro sigue listada para poder reactivarla, pero su stock ya
   // no es mercadería del centro.
   const activos = insumos.filter(i => i.activo);
-  const valorizado = activos.reduce((acc, i) => acc + i.stock_actual * i.costo_promedio, 0);
-  const criticos = activos.filter(i => stockState(i) === 'critico' || stockState(i) === 'agotado').length;
-  const bajos = activos.filter(i => stockState(i) === 'bajo').length;
+  // Los KPI son de la pestaña que se está mirando: sumar el bruto con los
+  // terminados daría un "valorizado" que no le sirve a nadie para decidir.
+  const deLaPestana = (t: Pestana) => activos.filter(t === 'productos' ? ES_PRODUCTO : ES_BRUTO);
+  const valorizadoDe = (t: Pestana) => deLaPestana(t).reduce((acc, i) => acc + i.stock_actual * i.costo_promedio, 0);
+  const criticosDe = (t: Pestana) => deLaPestana(t).filter(i => stockState(i) === 'critico' || stockState(i) === 'agotado').length;
+  const bajosDe = (t: Pestana) => deLaPestana(t).filter(i => stockState(i) === 'bajo').length;
 
   return (
     <AdminPanel>
@@ -367,12 +424,15 @@ export default function CentroProduccionPage() {
           {tab === 'produccion' && <ProduccionCentro centroId={centroId} />}
           {tab === 'envios' && <EnviosCentro centroId={centroId} />}
 
-          {tab === 'inventario' && (
+          {(tab === 'inventario' || tab === 'productos') && (
             <div className="kpi-grid">
-              <KpiCard label="Insumos en el centro" value={activos.length} />
-              <KpiCard label="Inventario valorizado" value={<MoneyText value={valorizado} />} highlight />
-              <KpiCard label="Stock bajo" value={bajos} accent="var(--amber)" />
-              <KpiCard label="Crítico" value={criticos} accent="var(--danger)" />
+              <KpiCard
+                label={tab === 'productos' ? 'Productos en el centro' : 'Insumos en el centro'}
+                value={activos.filter(tab === 'productos' ? ES_PRODUCTO : ES_BRUTO).length}
+              />
+              <KpiCard label="Inventario valorizado" value={<MoneyText value={valorizadoDe(tab)} />} highlight />
+              <KpiCard label="Stock bajo" value={bajosDe(tab)} accent="var(--amber)" />
+              <KpiCard label="Crítico" value={criticosDe(tab)} accent="var(--danger)" />
             </div>
           )}
 
@@ -381,10 +441,13 @@ export default function CentroProduccionPage() {
           <NucleoInventario
             ambito={AMBITO_CENTRO}
             contextoId={centroId}
-            vista={tab === 'inventario' ? 'insumos' : tab === 'movimientos' ? 'movimientos' : 'oculto'}
+            vista={tab === 'inventario' || tab === 'productos' ? 'insumos' : tab === 'movimientos' ? 'movimientos' : 'oculto'}
+            filtroFilas={tab === 'productos' ? ES_PRODUCTO : ES_BRUTO}
             onInsumos={setInsumos}
             refresco={refresco}
-            mensajeSinInsumos="Este centro todavía no tiene insumo bruto cargado."
+            mensajeSinInsumos={tab === 'productos'
+              ? 'Este centro todavía no tiene productos. Se agregan creando el producto desde Producción.'
+              : 'Este centro todavía no tiene insumo bruto cargado.'}
             accionSinInsumos={
               <button className="admin-btn primary" onClick={() => setAltaInsumoAbierto(true)} type="button">
                 + Nuevo insumo

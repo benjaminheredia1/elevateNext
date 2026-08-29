@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import apiClient from '@/hooks/api';
+import { extrasDelCentro } from './alta-desde-centro';
 import {
   foodCostColor, classifyMenu, menuClassMeta, buildablePortions, computeRecipeCost, foodCostPct,
 } from './inventoryData';
@@ -350,10 +351,7 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, sucur
       insumo_reventa_id: p.insumo_reventa_id ?? undefined,
       imagen_url: p.imagen_url || undefined,
     };
-    if (centroId && p.tipo === 'ELABORADO') {
-      body.centro_id = centroId;
-      body.receta_centro = p.receta.map(({ insumo_id, cantidad_utilizada }) => ({ insumo_id, cantidad_utilizada }));
-    }
+    Object.assign(body, extrasDelCentro(centroId, p.tipo, p.receta));
     // Editando una sucursal se manda la decisión explícita de qué queda
     // heredado; el resto queda propio del local aunque hoy coincida con el
     // catálogo. Editando el catálogo no se manda: no hay de quién heredar.

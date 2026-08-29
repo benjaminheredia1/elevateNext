@@ -137,6 +137,13 @@ export interface ItemInventarioCentro {
   uso_diario_promedio: number | null;
   fecha_baja: string | null;
   motivo_baja: string | null;
+  /**
+   * Si esta fila es un producto terminado (algún producto la apunta como su
+   * insumo espejo) o insumo bruto. El Centro maneja las dos cosas en la misma
+   * tabla, pero no son lo mismo para quien opera: el bruto se compra y se
+   * consume produciendo; el terminado se produce o se compra, y se despacha.
+   */
+  es_producto: boolean;
 }
 
 /**
@@ -158,6 +165,9 @@ export async function inventarioDeCentro(centroId: number, db: Db = prisma): Pro
         select: {
           id: true, nombre: true, unidad_medida: true, categoria_insumo: true, proveedor: true,
           es_mixto: true, equivalencia_unidad: true, equivalencia_cantidad: true,
+          // Con que exista UN producto que lo apunte alcanza para saber que es
+          // un terminado; no hace falta traerlos todos.
+          productos_reventa: { select: { id: true }, take: 1 },
         },
       },
     },
@@ -181,6 +191,7 @@ export async function inventarioDeCentro(centroId: number, db: Db = prisma): Pro
     punto_critico: fila.punto_critico,
     activo: fila.activo,
     es_mixto: fila.insumo.es_mixto,
+    es_producto: fila.insumo.productos_reventa.length > 0,
     equivalencia_unidad: fila.insumo.equivalencia_unidad,
     equivalencia_cantidad: fila.insumo.equivalencia_cantidad,
     // Tres campos que el panel espera y el Centro no tiene con qué llenar.

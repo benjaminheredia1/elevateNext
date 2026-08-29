@@ -24,6 +24,13 @@ interface AltaInsumoInput {
   costo_unitario: number;
   stock_minimo: number;
   punto_critico: number;
+  // Ficha del catálogo. Solo se escriben cuando el insumo se CREA: si ya existe
+  // se reutiliza el del negocio y su ficha es la que vale, igual que con la
+  // unidad de medida.
+  categoria_insumo?: string;
+  proveedor?: string;
+  equivalencia_unidad?: string;
+  equivalencia_cantidad?: number;
 }
 
 /**
@@ -71,6 +78,10 @@ export async function altaInsumoEnCentro(
         stock_minimo: input.stock_minimo,
         punto_critico: input.punto_critico,
         costo_promedio: input.costo_unitario,
+        categoria_insumo: input.categoria_insumo || null,
+        proveedor: input.proveedor || null,
+        equivalencia_unidad: input.equivalencia_unidad || null,
+        equivalencia_cantidad: input.equivalencia_cantidad ?? null,
       },
     });
   }
