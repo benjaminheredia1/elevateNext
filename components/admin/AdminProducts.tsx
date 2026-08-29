@@ -688,13 +688,17 @@ export default function AdminProducts(
         />
       )}
 
+      {/* Desde el Centro se edita el CATÁLOGO, no la ficha de un local: mandar la
+          sucursal hacía que editar un producto en el Centro escribiera los
+          overrides de Fitbull, y el encabezado lo anunciaba. */}
       {wizard && (
         <AdminProductWizard
           initial={wizard}
           avgSales={avgSales}
           avgMargin={avgMargin}
-          sucursalId={sucursal ? Number(sucursal) : undefined}
-          sucursalNombre={sucursal ? nombreSucursal ?? undefined : undefined}
+          sucursalId={esCentro || !sucursal ? undefined : Number(sucursal)}
+          sucursalNombre={esCentro || !sucursal ? undefined : nombreSucursal ?? undefined}
+          centroId={esCentro ? centroId : undefined}
           onClose={() => setWizard(null)}
           onSaved={() => { setWizard(null); load(); }}
         />

@@ -675,11 +675,30 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, sucur
           {/* STEP 4 — revisar */}
           {step === 3 && (
             <div>
+              {/* Food cost, margen y clasificación salen del PRECIO y de las
+                  VENTAS, que son de la sucursal. Desde el Centro no significan
+                  nada —y el rinde de acá se calcula con stock de un local—, así
+                  que se muestra lo que sí es suyo: cuánto cuesta la unidad. */}
               <div className="review-stats">
-                <div className="review-stat"><div className="review-stat-label">Food Cost</div><div className="review-stat-val" style={{ color: foodCostColor(fc) }}>{Math.round(fc)}%</div></div>
-                <div className="review-stat"><div className="review-stat-label">Margen contribución</div><div className="review-stat-val" style={{ color: 'var(--fresh)' }}>Bs {margin.toFixed(1)}</div></div>
-                <div className="review-stat"><div className="review-stat-label">Clasificación</div><div className="review-stat-val">{menuClassMeta[clazz].icon} {clazz}</div></div>
-                <div className="review-stat"><div className="review-stat-label">Rinde</div><div className="review-stat-val">{rinde} porc.</div></div>
+                {centroId ? (
+                  <>
+                    <div className="review-stat">
+                      <div className="review-stat-label">Costo por unidad</div>
+                      <div className="review-stat-val" style={{ color: 'var(--orange)' }}>Bs {cost.toFixed(2)}</div>
+                    </div>
+                    <div className="review-stat">
+                      <div className="review-stat-label">Cómo se abastece</div>
+                      <div className="review-stat-val">{p.tipo === 'ELABORADO' ? 'Se produce' : 'Se compra'}</div>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="review-stat"><div className="review-stat-label">Food Cost</div><div className="review-stat-val" style={{ color: foodCostColor(fc) }}>{Math.round(fc)}%</div></div>
+                    <div className="review-stat"><div className="review-stat-label">Margen contribución</div><div className="review-stat-val" style={{ color: 'var(--fresh)' }}>Bs {margin.toFixed(1)}</div></div>
+                    <div className="review-stat"><div className="review-stat-label">Clasificación</div><div className="review-stat-val">{menuClassMeta[clazz].icon} {clazz}</div></div>
+                    <div className="review-stat"><div className="review-stat-label">Rinde</div><div className="review-stat-val">{rinde} porc.</div></div>
+                  </>
+                )}
               </div>
               {!canPublish && (
                 <div className="gate-warning">
@@ -687,7 +706,9 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, sucur
                   <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>{gate.map((g, i) => <li key={i}>{g}</li>)}</ul>
                 </div>
               )}
-              {canPublish && fc > 40 && (
+              {/* El aviso de food cost alto también es de la sucursal: sin su
+                  precio, el porcentaje no se puede calcular. */}
+              {!centroId && canPublish && fc > 40 && (
                 <div className="gate-warning" style={{ background: 'rgba(232,163,23,.1)', borderColor: 'rgba(232,163,23,.3)', color: 'var(--amber)' }}>
                   Food Cost {Math.round(fc)}% — alto. Puedes publicar igual, pero revisa precio o receta.
                 </div>
