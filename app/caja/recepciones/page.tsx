@@ -64,6 +64,13 @@ export default function RecepcionesPage() {
                 <div className="admin-cell-sub">
                   {row.detalles.map(d => `${d.insumo.nombre} ×${d.cantidad_enviada}`).join(' · ')}
                 </div>
+                {/* Se avisa desde el listado y no solo dentro del modal: quien
+                    recibe decide si abre el envío mirando esta fila. */}
+                {row.estado === 'EN_TRANSITO' && row.detalles.some(d => d.nuevo_en_sucursal) && (
+                  <span className="cat-badge" style={{ marginTop: 4, background: 'var(--amber)', color: 'white' }}>
+                    Trae productos nuevos para este local
+                  </span>
+                )}
               </div>
             )},
             { key: 'estado', header: 'Estado', render: (row: Traslado) => (

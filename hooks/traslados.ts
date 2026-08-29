@@ -12,6 +12,11 @@ export interface TrasladoDetalle {
   cantidad_recibida: number | null;
   costo_unitario: number;
   insumo: { nombre: string; unidad_medida: string };
+  /**
+   * Primera vez que este local recibe este producto. Recibirlo no es reponer
+   * stock: es sumarlo al catálogo del local, y quien confirma tiene que saberlo.
+   */
+  nuevo_en_sucursal: boolean;
 }
 
 export interface Traslado {

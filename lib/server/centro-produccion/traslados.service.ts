@@ -320,7 +320,7 @@ export async function listarTraslados(
   filtros: { centroId?: number; sucursalId?: number; estado?: 'EN_TRANSITO' | 'RECIBIDO' | 'ANULADO' },
   db: Db = prisma,
 ) {
-  return db.traslado.findMany({
+  const traslados = await db.traslado.findMany({
     where: {
       ...(filtros.centroId ? { centro_id: filtros.centroId } : {}),
       ...(filtros.sucursalId ? { sucursal_id: filtros.sucursalId } : {}),
@@ -333,6 +333,39 @@ export async function listarTraslados(
     },
     orderBy: { fecha_envio: 'desc' },
   });
+
+  // ¿Es la primera vez que este local recibe este producto?
+  //
+  // Recibir algo que nunca manejó no es reponer stock: es sumar un producto al
+  // catálogo de ese local. Quien confirma la recepción tiene que saberlo, o al
+  // día siguiente aparece en su inventario algo que no sabe de dónde salió.
+  //
+  // "Nuevo" es NO TENER la fila de stock, no tenerla en cero: un local que se
+  // quedó sin brownies sigue siendo un local que vende brownies.
+  const paresBuscados = traslados.flatMap(t => t.detalles.map(d => ({
+    insumo_id: d.insumo_id,
+    sucursal_id: t.sucursal_id,
+  })));
+  if (paresBuscados.length === 0) {
+    return traslados.map(t => ({ ...t, detalles: t.detalles.map(d => ({ ...d, nuevo_en_sucursal: false })) }));
+  }
+
+  const existentes = await db.stockSucursal.findMany({
+    where: {
+      insumo_id: { in: [...new Set(paresBuscados.map(p => p.insumo_id))] },
+      sucursal_id: { in: [...new Set(paresBuscados.map(p => p.sucursal_id))] },
+    },
+    select: { insumo_id: true, sucursal_id: true },
+  });
+  const yaLoManeja = new Set(existentes.map(f => `${f.insumo_id}:${f.sucursal_id}`));
+
+  return traslados.map(t => ({
+    ...t,
+    detalles: t.detalles.map(d => ({
+      ...d,
+      nuevo_en_sucursal: !yaLoManeja.has(`${d.insumo_id}:${t.sucursal_id}`),
+    })),
+  }));
 }
 
 /**

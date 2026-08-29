@@ -3,7 +3,7 @@ import prisma from '@/lib/prisma';
 import type { Session } from '@/lib/server/auth/session';
 import { altaInsumoEnCentro, registrarCompraCentro } from './insumos-centro.service';
 import { definirRecetaCentro, registrarProduccion } from './produccion.service';
-import { crearEnvio, recibirTraslado } from './traslados.service';
+import { crearEnvio, recibirTraslado, listarTraslados } from './traslados.service';
 import { abrirTurno, registrarVentaFisica } from '@/lib/server/caja/caja.service';
 
 /**
@@ -233,5 +233,60 @@ describe('despacho del Centro y venta en la sucursal', () => {
     // Y el insumo bruto del Centro NO se movió con la venta: ya se consumió al
     // producir. Si bajara acá, se estaría descontando dos veces.
     expect(await stockCentro(brutoId)).toBe(brutoAntes);
+  }, 60_000);
+
+  /**
+   * El aviso de "producto nuevo" al recibir.
+   *
+   * Cuando llega algo que el local NUNCA manejó, la recepción tiene que
+   * decirlo: no es reponer stock, es sumar un producto al catálogo de ese
+   * local. Quien recibe tiene que saber que después de confirmar va a tener
+   * algo que antes no vendía.
+   *
+   * Y solo la primera vez: en cuanto lo tiene, deja de ser noticia.
+   */
+  it('A2. la recepción avisa cuando el producto es nuevo para ese local, y solo la primera vez', async () => {
+    const { espejoId } = await elaboradoProducido(`Novedad ${sufijo}`, 6);
+
+    const { traslado: primero } = await prisma.$transaction((tx) =>
+      crearEnvio(tx, centroId, sucursalId, [{ insumo_id: espejoId, cantidad: 2 }], 'Primera vez', admin.id, 'DUENO'));
+
+    const enTransito = await listarTraslados({ centroId, estado: 'EN_TRANSITO' });
+    const detalleNuevo = enTransito
+      .find(t => t.id === primero.id)!
+      .detalles.find(d => d.insumo_id === espejoId)!;
+    expect(detalleNuevo.nuevo_en_sucursal).toBe(true);
+
+    await prisma.$transaction((tx) => recibirTraslado(tx, primero.id, [], admin.id, 'DUENO'));
+
+    // Segundo envío del MISMO producto al MISMO local: ya no es novedad.
+    const { traslado: segundo } = await prisma.$transaction((tx) =>
+      crearEnvio(tx, centroId, sucursalId, [{ insumo_id: espejoId, cantidad: 2 }], 'Segunda vez', admin.id, 'DUENO'));
+
+    const otraVez = await listarTraslados({ centroId, estado: 'EN_TRANSITO' });
+    const detalleConocido = otraVez
+      .find(t => t.id === segundo.id)!
+      .detalles.find(d => d.insumo_id === espejoId)!;
+    expect(detalleConocido.nuevo_en_sucursal).toBe(false);
+
+    await prisma.$transaction((tx) => recibirTraslado(tx, segundo.id, [], admin.id, 'DUENO'));
+  }, 60_000);
+
+  it('A3. un producto que el local tiene en CERO no es novedad: ya lo maneja', async () => {
+    // La condición es "no lo tiene", no "no le queda". Un local que se quedó sin
+    // stock de algo que vende todas las semanas no necesita que le avisen nada.
+    const { espejoId } = await elaboradoProducido(`Agotado ${sufijo}`, 4);
+    await prisma.stockSucursal.create({
+      data: { insumo_id: espejoId, sucursal_id: sucursalId, stock_actual: 0, costo_promedio: 1.5 },
+    });
+
+    const { traslado } = await prisma.$transaction((tx) =>
+      crearEnvio(tx, centroId, sucursalId, [{ insumo_id: espejoId, cantidad: 2 }], 'Reposicion', admin.id, 'DUENO'));
+
+    const lista = await listarTraslados({ centroId, estado: 'EN_TRANSITO' });
+    const detalle = lista.find(t => t.id === traslado.id)!.detalles.find(d => d.insumo_id === espejoId)!;
+    expect(detalle.nuevo_en_sucursal).toBe(false);
+
+    await prisma.$transaction((tx) => recibirTraslado(tx, traslado.id, [], admin.id, 'DUENO'));
   }, 60_000);
 });

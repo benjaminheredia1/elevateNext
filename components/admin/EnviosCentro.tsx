@@ -207,10 +207,23 @@ export function RecibirModal({ traslado, onClose }: { traslado: Traslado; onClos
             Vienen precargadas las cantidades que salieron del centro. Corregí solo lo que
             llegó distinto: <strong>lo que falte se registra como merma del local</strong>.
           </p>
+          {traslado.detalles.some(d => d.nuevo_en_sucursal) && (
+            <div className="gate-warning" style={{ marginBottom: 14 }}>
+              Hay productos que este local <strong>nunca manejó</strong>. Al confirmar la
+              recepción pasan a formar parte de su inventario.
+            </div>
+          )}
 
           {traslado.detalles.map(d => (
             <div className="form-group" key={d.id}>
-              <label>{d.insumo.nombre} — salieron {d.cantidad_enviada} {d.insumo.unidad_medida}</label>
+              <label>
+                {d.insumo.nombre} — salieron {d.cantidad_enviada} {d.insumo.unidad_medida}
+                {d.nuevo_en_sucursal && (
+                  <span className="cat-badge" style={{ marginLeft: 8, background: 'var(--amber)', color: 'white' }}>
+                    Nuevo en este local
+                  </span>
+                )}
+              </label>
               <input
                 type="number" step="0.01" min="0" max={d.cantidad_enviada}
                 value={cantidades[d.insumo_id] ?? ''}
