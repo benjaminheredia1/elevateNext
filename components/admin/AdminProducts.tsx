@@ -85,10 +85,14 @@ export default function AdminProducts(
   // esto dice cuántas ya fabricó o compró y están esperando el envío.
   const { data: inventarioCentro = [] } = useInventarioCentro(esCentro ? centroId ?? null : null);
   const stockEnCentro = useMemo(() => {
-    const mapa = new Map<number, number>();
-    for (const fila of inventarioCentro) mapa.set(fila.insumo_id, fila.stock_actual);
+    const mapa = new Map<number, { stock: number; costo: number }>();
+    for (const fila of inventarioCentro) {
+      mapa.set(fila.insumo_id, { stock: fila.stock_actual, costo: fila.costo_promedio });
+    }
     return mapa;
   }, [inventarioCentro]);
+  const enCentro = (insumoId: number | null) =>
+    insumoId == null ? undefined : stockEnCentro.get(insumoId);
   const [productos, setProductos] = useState<ApiProducto[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -324,14 +328,16 @@ export default function AdminProducts(
             {activos.length} productos · {publicados} publicados{enRevision.length > 0 ? ` · ${enRevision.length} en revisión` : ''}{eliminados.length > 0 ? ` · ${eliminados.length} eliminados` : ''}
             {/* Precio, costo y rinde son de este local: decirlo evita leer los
                 números de una sucursal creyendo que son de otra. */}
-            {nombreSucursal && <> · precios y rinde de <strong>{nombreSucursal}</strong></>}
+            {!esCentro && nombreSucursal && <> · precios y rinde de <strong>{nombreSucursal}</strong></>}
+            {esCentro && <> · costo y stock del <strong>Centro de Producción</strong></>}
           </p>
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
           <BotonExportarExcel url={`/api/admin/productos/export${sucursal ? `?sucursal=${sucursal}` : ''}`} />
           {/* El precio, el costo y el rinde son siempre de UN local: sumarlos
               entre sucursales daría un número que no existe en ninguna. */}
-          <SucursalSelector value={sucursal} onChange={setSucursal} permitirTodas={false} />
+          {/* El Centro no es una sucursal: elegir un local acá no significa nada. */}
+          {!esCentro && <SucursalSelector value={sucursal} onChange={setSucursal} permitirTodas={false} />}
           {/* Un local nuevo arranca sin catálogo: este es el camino para llenarlo
               sin duplicar productos con el mismo nombre. */}
           {sucursales.length > 1 && sucursal && (
@@ -496,10 +502,14 @@ export default function AdminProducts(
         <table className="admin-table">
           <thead>
             <tr>
-              <th>Producto</th><th>Tipo</th><th className="num">Precio</th><th className="num">Costo</th>
-              <th className="num">Food Cost</th>{!esCentro && <th>Clase</th>}
-              {esCentro && <th className="num">En el centro</th>}
-              <th className="num">Rinde</th><th>Estado</th><th>Acciones</th>
+              <th>Producto</th><th>Tipo</th>
+              {/* Precio, food cost, clase y rinde son de la SUCURSAL: los
+                  calcula la API para el local seleccionado. En el Centro
+                  mostrarían números de otro y ya no hay local que elegir. */}
+              {!esCentro && <><th className="num">Precio</th><th className="num">Costo</th><th className="num">Food Cost</th><th>Clase</th></>}
+              {esCentro && <><th className="num">Costo en el centro</th><th className="num">En el centro</th></>}
+              {!esCentro && <th className="num">Rinde</th>}
+              <th>Estado</th><th>Acciones</th>
             </tr>
           </thead>
           <tbody>
@@ -528,16 +538,29 @@ export default function AdminProducts(
                     </div>
                   </td>
                   <td><span className="cat-badge">{etiquetaTipo(p.tipo, ambito)}</span></td>
-                  <td className="num">Bs {p.precio}</td>
-                  <td className="num dim">Bs {costo.toFixed(1)}</td>
-                  <td className="num"><span className="margin-badge" style={{ color: foodCostColor(fc), background: 'var(--canvas)' }}>{p.precio > 0 ? Math.round(fc) : '—'}%</span></td>
+                  {!esCentro && (
+                    <>
+                      <td className="num">Bs {p.precio}</td>
+                      <td className="num dim">Bs {costo.toFixed(1)}</td>
+                      <td className="num"><span className="margin-badge" style={{ color: foodCostColor(fc), background: 'var(--canvas)' }}>{p.precio > 0 ? Math.round(fc) : '—'}%</span></td>
+                    </>
+                  )}
                   {!esCentro && <td><span className="menu-class-badge">{menuClassMeta[clazz].icon} {clazz}</span></td>}
                   {esCentro && (
-                    <td className="num">
-                      <span className="stock-val">{p.insumo_reventa_id != null ? (stockEnCentro.get(p.insumo_reventa_id) ?? 0) : '—'}</span>
-                    </td>
+                    <>
+                      {/* El costo REAL del Centro: lo que le cuesta producirlo o
+                          comprarlo, no lo que le cuesta a un local. */}
+                      <td className="num dim">
+                        {enCentro(p.insumo_reventa_id) ? `Bs ${enCentro(p.insumo_reventa_id)!.costo.toFixed(2)}` : '—'}
+                      </td>
+                      <td className="num">
+                        <span className="stock-val">{enCentro(p.insumo_reventa_id)?.stock ?? 0}</span>
+                      </td>
+                    </>
                   )}
-                  <td className="num"><span className={`stock-val ${rinde === 0 ? 'low' : ''}`}>{rinde}</span></td>
+                  {/* El rinde del Centro —cuántas puede fabricar con su bruto—
+                      se calcula distinto y vive en la pestaña Producción. */}
+                  {!esCentro && <td className="num"><span className={`stock-val ${rinde === 0 ? 'low' : ''}`}>{rinde}</span></td>}
                   <td><span className={`pub-badge ${pubBadgeClass[pub]}`}>{pub.toLowerCase()}</span></td>
                   <td>
                     <div className="action-btns">
