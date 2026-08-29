@@ -45,7 +45,10 @@ export default defineConfig({
     command: 'npm run dev:e2e',
     url: `http://127.0.0.1:${PUERTO}/login`,
     reuseExistingServer: !process.env.CI,
-    timeout: 180_000,
+    // Generoso porque `dev:e2e` COMPILA antes de servir, y el build completo
+    // ronda el minuto y medio. Con el timeout viejo (180 s) la suite empezó a
+    // caerse por el arranque y no por los tests.
+    timeout: 600_000,
     stdout: 'pipe',
     stderr: 'pipe',
   },

@@ -144,6 +144,13 @@ export interface ItemInventarioCentro {
    * consume produciendo; el terminado se produce o se compra, y se despacha.
    */
   es_producto: boolean;
+  /** El producto del que esta fila es el espejo, si lo es. */
+  producto_id: number | null;
+  /**
+   * Cómo abastece el Centro ese producto: ELABORADO lo produce, cualquier otra
+   * cosa la compra. Null en el insumo bruto, que no es producto de nadie.
+   */
+  producto_tipo: string | null;
 }
 
 /**
@@ -166,8 +173,10 @@ export async function inventarioDeCentro(centroId: number, db: Db = prisma): Pro
           id: true, nombre: true, unidad_medida: true, categoria_insumo: true, proveedor: true,
           es_mixto: true, equivalencia_unidad: true, equivalencia_cantidad: true,
           // Con que exista UN producto que lo apunte alcanza para saber que es
-          // un terminado; no hace falta traerlos todos.
-          productos_reventa: { select: { id: true }, take: 1 },
+          // un terminado; no hace falta traerlos todos. Se trae también su tipo
+          // porque de eso depende cómo lo abastece el Centro: produciéndolo o
+          // comprándolo.
+          productos_reventa: { select: { id: true, tipo: true }, take: 1 },
         },
       },
     },
@@ -192,6 +201,8 @@ export async function inventarioDeCentro(centroId: number, db: Db = prisma): Pro
     activo: fila.activo,
     es_mixto: fila.insumo.es_mixto,
     es_producto: fila.insumo.productos_reventa.length > 0,
+    producto_id: fila.insumo.productos_reventa[0]?.id ?? null,
+    producto_tipo: fila.insumo.productos_reventa[0]?.tipo ?? null,
     equivalencia_unidad: fila.insumo.equivalencia_unidad,
     equivalencia_cantidad: fila.insumo.equivalencia_cantidad,
     // Tres campos que el panel espera y el Centro no tiene con qué llenar.

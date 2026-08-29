@@ -6,6 +6,7 @@ import apiClient from '@/hooks/api';
 import DataTable from '@/components/ui/DataTable';
 import EmptyState from '@/components/ui/EmptyState';
 import MoneyText from '@/components/ui/MoneyText';
+import KpiCard from '@/components/ui/KpiCard';
 import AdminProductWizard, { type WizardInitial } from '@/components/admin/AdminProductWizard';
 import {
   useRindeCentro, useDefinirRecetaCentro, useRegistrarProduccion, useInventarioCentro,
@@ -238,8 +239,60 @@ function ProducirModal({ centroId, producto, onClose }: {
   );
 }
 
+/**
+ * Fila de la pantalla: un producto del Centro, lo fabrique o lo compre.
+ *
+ * Antes esta lista salía solo del rinde, o sea solo de los que tienen receta.
+ * Los de reventa no aparecían en ningún lado, y son justamente los que hay que
+ * mirar para saber cuánto se puede despachar sin producir nada.
+ */
+interface FilaProduccion {
+  producto_id: number;
+  nombre: string;
+  /** ELABORADO lo produce el Centro; el resto lo compra. */
+  tipo: string;
+  /** Unidades hechas o compradas, listas para despachar. */
+  enStock: number;
+  /** Cuántas MÁS podría fabricar con el bruto de hoy. Solo el elaborado. */
+  rinde: RindeProducto | null;
+  costoUnitario: number;
+}
+
 export default function ProduccionCentro({ centroId }: { centroId: number }) {
   const { data: productos = [], isLoading, refetch } = useRindeCentro(centroId);
+  const { data: inventario = [], isLoading: cargandoInventario } = useInventarioCentro(centroId);
+  const [filtro, setFiltro] = useState<'todos' | 'ELABORADO' | 'REVENTA'>('todos');
+
+  const filas = useMemo<FilaProduccion[]>(() => {
+    const rindePorProducto = new Map(productos.map(r => [r.producto_id, r]));
+    // La lista base es el inventario de terminados del Centro: ahí está TODO lo
+    // que puede despachar. El rinde se le engancha al que tenga receta.
+    return inventario
+      .filter((i: ItemStockCentro) => i.es_producto && i.producto_id != null)
+      .map((i: ItemStockCentro) => {
+        const rinde = rindePorProducto.get(i.producto_id!) ?? null;
+        return {
+          producto_id: i.producto_id!,
+          nombre: i.nombre,
+          tipo: i.producto_tipo ?? 'REVENTA',
+          enStock: i.stock_actual,
+          rinde,
+          // El costo del elaborado sale de su receta; el del comprado, de lo
+          // que se pagó por él (el promedio ponderado de su stock).
+          costoUnitario: rinde?.costo_unitario ?? i.costo_promedio,
+        };
+      })
+      .sort((a, b) => a.nombre.localeCompare(b.nombre));
+  }, [inventario, productos]);
+
+  const visibles = filtro === 'todos'
+    ? filas
+    : filas.filter(f => (filtro === 'ELABORADO' ? f.tipo === 'ELABORADO' : f.tipo !== 'ELABORADO'));
+
+  // Los totales son de lo que se está mirando: es la pregunta que responde la
+  // pantalla —cuánto puedo producir y cuánto puedo enviar sin producir nada—.
+  const totalEnStock = visibles.reduce((acc, f) => acc + f.enStock, 0);
+  const totalProducible = visibles.reduce((acc, f) => acc + (f.rinde?.unidades_posibles ?? 0), 0);
   const [recetaAbierta, setRecetaAbierta] = useState<{ inicial: RindeProducto | null } | null>(null);
   const [produciendo, setProduciendo] = useState<RindeProducto | null>(null);
   const [creandoProducto, setCreandoProducto] = useState(false);
@@ -276,42 +329,83 @@ export default function ProduccionCentro({ centroId }: { centroId: number }) {
         <ProducirModal centroId={centroId} producto={produciendo} onClose={() => setProduciendo(null)} />
       )}
 
-      {isLoading ? (
-        <EmptyState title="Cargando recetas…" />
-      ) : productos.length === 0 ? (
+      <div className="admin-cat-filters" style={{ marginBottom: 12 }}>
+        {([['todos', 'Todos'], ['ELABORADO', 'Elaborados'], ['REVENTA', 'Reventa']] as const).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            className={`cat-filter-btn ${filtro === id ? 'active' : ''}`}
+            onClick={() => setFiltro(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <div className="kpi-grid" style={{ marginBottom: 16 }}>
+        <KpiCard label="Productos" value={visibles.length} />
+        <KpiCard label="Unidades listas para enviar" value={totalEnStock} highlight />
+        <KpiCard label="Unidades que puede producir" value={totalProducible} accent="var(--fresh)" />
+      </div>
+
+      {isLoading || cargandoInventario ? (
+        <EmptyState title="Cargando…" />
+      ) : visibles.length === 0 ? (
         <EmptyState
-          title="Todavía no hay recetas de producción"
-          hint="Definí qué insumo bruto lleva cada producto para poder fabricarlo acá."
+          title={filtro === 'todos' ? 'Este centro todavía no tiene productos' : 'Nada en este filtro'}
+          hint={filtro === 'ELABORADO'
+            ? 'Definí la receta de un producto para poder fabricarlo acá.'
+            : 'Los productos que el Centro compra aparecen acá con su stock.'}
         />
       ) : (
         <DataTable
-          data={productos}
-          rowKey={(row: RindeProducto) => row.producto_id}
+          data={visibles}
+          rowKey={(row: FilaProduccion) => row.producto_id}
           columns={[
-            { key: 'nombre', header: 'Producto', render: (row: RindeProducto) => (
+            { key: 'nombre', header: 'Producto', render: (row: FilaProduccion) => (
               <div>
                 <div className="admin-cell-title">{row.nombre}</div>
                 <div className="admin-cell-sub">
-                  {row.insumos.map(i => `${i.nombre} ${i.cantidad_utilizada} ${i.unidad_medida}`).join(' · ')}
+                  {row.rinde
+                    ? row.rinde.insumos.map(i => `${i.nombre} ${i.cantidad_utilizada} ${i.unidad_medida}`).join(' · ')
+                    : 'Se compra hecho'}
                 </div>
               </div>
             )},
-            { key: 'rinde', header: 'Alcanza para', className: 'num',
-              render: (row: RindeProducto) => `${row.unidades_posibles} u.` },
+            { key: 'tipo', header: 'Cómo se abastece', render: (row: FilaProduccion) => (
+              <span className="cat-badge">{row.tipo === 'ELABORADO' ? 'Se produce' : 'Se compra'}</span>
+            )},
+            { key: 'stock', header: 'Listas para enviar', className: 'num',
+              render: (row: FilaProduccion) => `${row.enStock} u.` },
+            // Solo el elaborado tiene rinde: de lo que se compra no hay nada que
+            // fabricar, y poner un 0 ahí se leería como "no queda", que es otra
+            // cosa.
+            { key: 'rinde', header: 'Puede producir', className: 'num',
+              render: (row: FilaProduccion) => row.rinde ? `${row.rinde.unidades_posibles} u.` : '—' },
             { key: 'costo', header: 'Costo por unidad', className: 'num',
-              render: (row: RindeProducto) => <MoneyText value={row.costo_unitario} /> },
-            { key: 'acciones', header: '', render: (row: RindeProducto) => (
+              render: (row: FilaProduccion) => <MoneyText value={row.costoUnitario} /> },
+            { key: 'acciones', header: '', render: (row: FilaProduccion) => (
               <div style={{ display: 'flex', gap: 6 }}>
-                <button
-                  className="admin-btn ghost sm"
-                  onClick={() => setProduciendo(row)}
-                  disabled={row.unidades_posibles === 0}
-                >
-                  Producir
-                </button>
-                <button className="admin-btn ghost sm" onClick={() => setRecetaAbierta({ inicial: row })}>
-                  Receta
-                </button>
+                {row.rinde ? (
+                  <>
+                    <button
+                      className="admin-btn ghost sm"
+                      onClick={() => setProduciendo(row.rinde!)}
+                      disabled={row.rinde.unidades_posibles === 0}
+                    >
+                      Producir
+                    </button>
+                    <button className="admin-btn ghost sm" onClick={() => setRecetaAbierta({ inicial: row.rinde })}>
+                      Receta
+                    </button>
+                  </>
+                ) : (
+                  // Sin receta no hay nada que producir, pero sí se le puede
+                  // definir una: es como un comprado pasa a fabricarse.
+                  <button className="admin-btn ghost sm" onClick={() => setRecetaAbierta({ inicial: null })}>
+                    Definir receta
+                  </button>
+                )}
               </div>
             )},
           ]}

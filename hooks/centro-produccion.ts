@@ -29,6 +29,9 @@ export interface ItemStockCentro {
   nivel: 'ok' | 'bajo' | 'critico' | 'baja';
   /** Si la fila es un producto terminado o insumo bruto. */
   es_producto: boolean;
+  producto_id: number | null;
+  /** ELABORADO = el Centro lo produce; el resto lo compra. */
+  producto_tipo: string | null;
 }
 
 export function useCentrosProduccion() {
