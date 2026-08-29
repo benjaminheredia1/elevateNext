@@ -274,6 +274,36 @@ test.describe('centro de producción de punta a punta', () => {
     ]);
     expect(respuesta.status(), await respuesta.text()).toBe(201);
 
+    // Aparece en la lista del CENTRO sin haber sido enviado a ningun lado: el
+    // catalogo del Centro es el suyo, no el de una sucursal.
     await expect(page.locator('tr', { hasText: PRODUCTO_LOMITO }).first()).toBeVisible({ timeout: 20_000 });
+
+    // Y NO quedo habilitado en ninguna sucursal: eso pasa recien cuando le
+    // llega un envio.
+    const habilitaciones = await page.evaluate(async (nombre) => {
+      const lista = await (await fetch('/api/admin/productos', { credentials: 'include' })).json();
+      const items = Array.isArray(lista) ? lista : lista?.data ?? lista?.items ?? [];
+      const p = items.find((x: { nombre: string }) => x.nombre === nombre);
+      return (p?.sucursales ?? []).length;
+    }, PRODUCTO_LOMITO);
+    expect(habilitaciones).toBe(0);
+
+    // Al reabrirlo la receta sigue ahi: se lee de la del Centro, no de la
+    // local, que en estos productos esta vacia a proposito.
+    await page.locator('tr', { hasText: PRODUCTO_LOMITO }).first().getByTitle(/editar/i).first().click();
+    await expect(page.locator('.wizard-steps')).toBeVisible({ timeout: 20_000 });
+
+    // Se avanza paso a paso esperando que el indicador cambie: encadenar clics
+    // hacia que el segundo llegara antes de que el wizard re-renderizara.
+    const pasoActivo = page.locator('.wizard-step.active .wizard-step-label');
+    await expect(pasoActivo).toContainText('1.');
+    await page.getByRole('button', { name: /siguiente/i }).click();
+    await expect(pasoActivo).toContainText('2.');
+    await page.getByRole('button', { name: /siguiente/i }).click();
+    await expect(pasoActivo).toContainText('3.');
+
+    // El selector de insumo muestra el elegido como valor del input.
+    await expect(page.getByPlaceholder('Buscar insumo...').first())
+      .toHaveValue(new RegExp(INSUMO_CARNE), { timeout: 20_000 });
   });
 });

@@ -11,6 +11,7 @@ import BotonExportarExcel from '@/components/ui/BotonExportarExcel';
 import SucursalSelector from '@/components/ui/SucursalSelector';
 import CopiarProductosModal from '@/components/admin/CopiarProductosModal';
 import { useSucursales } from '@/hooks/sucursales';
+import { useQueryClient } from '@tanstack/react-query';
 import { useSucursalAdmin } from '@/hooks/sucursal-admin';
 import { useInventarioCentro, useRindeCentro } from '@/hooks/centro-produccion';
 import { etiquetaTipo } from './etiqueta-tipo';
@@ -102,6 +103,16 @@ export default function AdminProducts(
   // la pantalla leía el lugar equivocado: mostraba "sin ficha" en productos que
   // sí tienen receta, y al abrir el editor la receta aparecía en blanco.
   const { data: rindeCentro = [] } = useRindeCentro(esCentro ? centroId ?? null : null);
+  const qc = useQueryClient();
+  /**
+   * Los datos del Centro —receta y stock— los trae React Query, y se piden al
+   * montar la pantalla. Sin invalidarlos, un producto recién creado no figura en
+   * ese caché: al reabrirlo la receta salía vacía, como si no se hubiera
+   * guardado, y guardarlo de nuevo la borraba de verdad.
+   */
+  const refrescarCentro = () => {
+    if (esCentro) qc.invalidateQueries({ queryKey: ['centro-produccion'] });
+  };
   const recetaDelCentro = useMemo(() => {
     const mapa = new Map<number, { insumo_id: number; cantidad_utilizada: number }[]>();
     for (const r of rindeCentro) {
@@ -158,7 +169,11 @@ export default function AdminProducts(
   const load = () => {
     const mio = ++pedido.current;
     setLoading(true);
-    apiClient.get(`/api/admin/productos${sucursal ? `?sucursal=${sucursal}` : ''}`)
+    // El Centro pide el catálogo COMPLETO, sin sucursal. Con `?sucursal=` el
+    // endpoint devuelve solo lo habilitado en ese local, así que el Centro veía
+    // el catálogo de una sucursal en vez del suyo: un producto recién creado
+    // —que todavía no llegó a ningún lado— no aparecía en su propia lista.
+    apiClient.get(`/api/admin/productos${!esCentro && sucursal ? `?sucursal=${sucursal}` : ''}`)
       .then(res => {
         // Respuesta de una carga vieja: la descarta, ya hay otra más nueva.
         if (mio !== pedido.current) return;
@@ -170,8 +185,10 @@ export default function AdminProducts(
 
   useEffect(() => {
     // Sin la sucursal resuelta no se pide nada: el pedido saldría sin local y
-    // traería el catálogo de todo el negocio.
-    if (!listo) return;
+    // traería el catálogo de todo el negocio. En el Centro no aplica —ahí el
+    // catálogo completo es justamente lo que se quiere— y esperar a una
+    // sucursal que no se usa solo demoraría la pantalla.
+    if (!esCentro && !listo) return;
     load();
     apiClient.get('/api/categoria')
       .then(r => {
@@ -180,7 +197,7 @@ export default function AdminProducts(
       })
       .catch(() => setDbCategorias(['Todos']));
     // El precio, el costo y el rinde dependen del local: se recarga al cambiarlo.
-  }, [sucursal, listo]);
+  }, [sucursal, listo, esCentro]);
 
   // Los productos en BAJA son la "eliminación lógica": no aparecen entre los activos,
   // ni en la tienda, ni en caja, hasta que se restauren desde la pestaña Eliminados.
@@ -741,7 +758,7 @@ export default function AdminProducts(
           sucursalNombre={esCentro || !sucursal ? undefined : nombreSucursal ?? undefined}
           centroId={esCentro ? centroId : undefined}
           onClose={() => setWizard(null)}
-          onSaved={() => { setWizard(null); load(); }}
+          onSaved={() => { setWizard(null); load(); refrescarCentro(); }}
         />
       )}
     </div>
