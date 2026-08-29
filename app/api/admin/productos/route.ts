@@ -37,6 +37,11 @@ export async function GET(req: NextRequest) {
           include: { insumo: { include: { stocks: { where: { sucursal_id: sucursalId } } } } },
         },
         sucursales: { where: { sucursal_id: sucursalId } },
+        // El insumo espejo con su stock EN ESTE LOCAL. Desde el corte, lo que
+        // la sucursal vende sale de acá y no de una receta: sin esto la
+        // pantalla no tiene con qué decir cuántas unidades le quedan, y mostraba
+        // 0 en productos que acababan de recibir mercadería.
+        insumo_reventa: { include: { stocks: { where: { sucursal_id: sucursalId } } } },
       },
       orderBy: { nombre: 'asc' },
     });

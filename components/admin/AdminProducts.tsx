@@ -30,6 +30,8 @@ interface ApiProducto {
   tipo: Tipo;
   estado_publicacion: Estado;
   insumo_reventa_id: number | null;
+  /** Insumo espejo con su stock en la sucursal consultada. */
+  insumo_reventa?: { stocks?: { stock_actual: number }[] } | null;
   ventas_acumuladas: number;
   calorias: number | null;
   proteina: string | null;
@@ -598,14 +600,20 @@ export default function AdminProducts(
               const clazz = classifyMenu(p.ventas_acumuladas || 0, margin, avgSales, avgMargin);
               // En el Centro, "sin ficha" es no tener receta DE PRODUCCIÓN. La
               // local está vacía a propósito y marcaba a todos como sin ficha.
-              const noRecipe = p.tipo === 'ELABORADO' && (esCentro
+              // Un producto con insumo espejo NO necesita receta local: la
+              // sucursal lo vende 1:1 contra ese insumo. Marcarlo "sin ficha"
+              // era pedirle algo que desde el corte ya no le corresponde tener.
+              const noRecipe = p.tipo === 'ELABORADO' && !p.insumo_reventa_id && (esCentro
                 ? (recetaDelCentro.get(p.id)?.length ?? 0) === 0
                 : p.recetaProducto_id.length === 0);
               // Ni reventa ni terciado tienen receta local: su rinde no se
               // calcula desde insumos, es el stock del insumo vinculado.
-              const rinde = p.tipo !== 'ELABORADO'
-                ? '—'
-                // El rinde es el del local seleccionado, no el total del negocio.
+              // Con espejo, lo que la sucursal puede vender son las unidades que
+              // tiene de ese insumo: le llegaron hechas del Centro. Sin espejo
+              // —producto viejo con receta local— se calcula desde sus insumos.
+              // El rinde es siempre el del local seleccionado.
+              const rinde = p.insumo_reventa_id
+                ? Math.floor(p.insumo_reventa?.stocks?.[0]?.stock_actual ?? 0)
                 : buildablePortions(p.recetaProducto_id.map(r => ({ stock: r.insumo?.stocks?.[0]?.stock_actual ?? 0, cantidad: r.cantidad_utilizada })));
               const pub = p.estado_publicacion;
               return (

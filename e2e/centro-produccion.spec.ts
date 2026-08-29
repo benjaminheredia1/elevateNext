@@ -203,6 +203,18 @@ test.describe('centro de producción de punta a punta', () => {
     await expect(modal(page)).toBeHidden({ timeout: 20_000 });
 
     await expect(page.locator('tr', { hasText: PRODUCTO }).first()).toContainText(/recibido/i, { timeout: 20_000 });
+
+    // Y en el catalogo del LOCAL: el producto tiene sus unidades para vender y
+    // no reclama ficha tecnica. Desde el corte la sucursal no arma nada, vende
+    // 1:1 contra el espejo que le llego, asi que exigirle receta local era
+    // pedirle algo que ya no le corresponde.
+    await ingresar(page, DUENO);
+    await page.goto('/admin/products');
+    await page.getByPlaceholder(/buscar producto/i).fill(PRODUCTO);
+    const fila = page.locator('tr', { hasText: PRODUCTO }).first();
+    await expect(fila).toBeVisible({ timeout: 30_000 });
+    await expect(fila).not.toContainText(/sin ficha/i);
+    await expect(fila).toContainText(String(A_ENVIAR));
   });
 
   test('desde Productos se puede dar de alta un producto', async ({ page }) => {
