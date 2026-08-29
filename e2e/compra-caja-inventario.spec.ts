@@ -112,7 +112,14 @@ test.describe('compra de insumo, inventario y caja', () => {
     // hace segura de visitar aunque otro test lo haya dejado abierto.
     await page.goto('/caja/apertura');
     const botonAbrir = page.getByRole('button', { name: /^abrir caja$/i });
-    if (await botonAbrir.isEnabled()) {
+    // Se espera a que la pantalla resuelva si hay turno abierto ANTES de mirar
+    // el botón. Preguntarle isEnabled() recién cargada devolvía true y para
+    // cuando llegaba el clic ya estaba deshabilitado, así que el test se
+    // quedaba esperando un botón que nunca se iba a poder apretar. Y con un
+    // turno ya abierto el botón directamente no existe: la pantalla muestra
+    // otra cosa, así que tampoco alcanza con esperar a que aparezca.
+    await page.waitForLoadState('networkidle').catch(() => {});
+    if (await botonAbrir.count() > 0 && await botonAbrir.isEnabled()) {
       await campo(page, 'Efectivo inicial').fill('500');
       await campo(page, 'QR inicial').fill('0');
       await botonAbrir.click();

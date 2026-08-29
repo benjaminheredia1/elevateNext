@@ -337,4 +337,64 @@ describe('POST /api/admin/productos — alta desde el Centro', () => {
 
     expect(response.status).toBe(422);
   });
+
+  it('publica un ELABORADO creado en el Centro con su receta de producción', async () => {
+    // Reportado desde la pantalla: se cargaba la receta (Carne 200 gr, Bs 8),
+    // se apretaba "Publicar al menú" y el servidor devolvía 422 "falta receta
+    // con insumos y cantidades validas".
+    //
+    // assertPublicable miraba `receta`, la de VENTA, que en un alta del Centro
+    // va vacía a propósito —la ficha viaja en `receta_centro`— y el insumo
+    // espejo todavía no existe: lo crea definirRecetaCentro más adelante, en la
+    // misma transacción. O sea que se le pedía algo que en ese instante no
+    // podía tener.
+    const access_token = await token();
+    const marca = await prisma.marca.findFirstOrThrow();
+    const sufijo = Date.now();
+
+    const carne = await prisma.insumo.create({
+      data: { nombre: `Carne publicar ${sufijo}`, unidad_medida: 'GR', stock_actual: 1000, stock_minimo: 0, costo_promedio: 0.04 },
+    });
+    insumoIds.push(carne.id);
+    await prisma.stockCentro.create({
+      data: { centro_id: centroId, insumo_id: carne.id, stock_actual: 1000, costo_promedio: 0.04 },
+    });
+
+    const response = await alta(access_token, {
+      nombre: `Plato publicado ${sufijo}`,
+      descripcion: 'x',
+      precio: 25,
+      tipo: 'ELABORADO',
+      estado_publicacion: 'PUBLICADO',
+      marcas: [marca.id],
+      permitir_duplicado: true,
+      centro_id: centroId,
+      receta_centro: [{ insumo_id: carne.id, cantidad_utilizada: 200 }],
+    });
+    const body = await response.json();
+
+    expect(response.status, JSON.stringify(body)).toBe(201);
+    productoIds.push(body.data.id);
+    expect(body.data.estado_publicacion).toBe('PUBLICADO');
+  });
+
+  it('un ELABORADO sin receta de ningún tipo sigue sin poder publicarse', async () => {
+    // La regla no se afloja: sin receta local NI de producción no hay de dónde
+    // descontar al vender.
+    const access_token = await token();
+    const marca = await prisma.marca.findFirstOrThrow();
+
+    const response = await alta(access_token, {
+      nombre: `Plato sin nada ${Date.now()}`,
+      descripcion: 'x',
+      precio: 25,
+      tipo: 'ELABORADO',
+      estado_publicacion: 'PUBLICADO',
+      marcas: [marca.id],
+      permitir_duplicado: true,
+      centro_id: centroId,
+    });
+
+    expect(response.status).toBe(422);
+  });
 });

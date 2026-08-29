@@ -101,6 +101,7 @@ export async function POST(req: NextRequest) {
         tiene_nuevo_insumo_reventa: !!parsed.nuevo_insumo_reventa,
         marcas: parsed.marcas,
         recetaProducto_id: parsed.receta,
+        tiene_receta_centro: parsed.receta_centro.length > 0,
       });
     }
 

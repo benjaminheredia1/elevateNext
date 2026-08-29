@@ -32,7 +32,7 @@ function campoModal(page: Page, etiqueta: string) {
 
 const modal = (page: Page) => page.locator('.admin-modal');
 
-async function irAlCentro(page: Page, pestana: 'Insumo bruto' | 'Producción' | 'Envíos a sucursal') {
+async function irAlCentro(page: Page, pestana: 'Insumo bruto' | 'Productos' | 'Movimientos' | 'Producción' | 'Envíos a sucursal') {
   await page.goto('/admin/centro-produccion');
   // level: 1 para no chocar con el <h2> de un modal, que dice casi lo mismo.
   await expect(page.getByRole('heading', { level: 1, name: /centro de producción/i })).toBeVisible({ timeout: 30_000 });
