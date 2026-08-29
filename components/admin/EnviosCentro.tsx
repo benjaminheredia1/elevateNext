@@ -38,7 +38,11 @@ function NuevoEnvioModal({ centroId, onClose }: { centroId: number; onClose: () 
   const [observaciones, setObservaciones] = useState('');
   const [error, setError] = useState('');
 
-  const conStock = inventario.filter((i: ItemStockCentro) => i.activo && i.stock_actual > 0);
+  // Solo producto TERMINADO. Mandarle insumo bruto a un local le devolvería
+  // algo que ya no sabe manejar: perdió las recetas, la compra y el alta de
+  // insumo con el corte. El servidor lo rechaza igual —esconderlo del selector
+  // no sería autorización—, esto es para no ofrecer lo que va a rebotar.
+  const conStock = inventario.filter((i: ItemStockCentro) => i.activo && i.stock_actual > 0 && i.es_producto);
 
   const valorEstimado = useMemo(() => lineas.reduce((acc, l) => {
     const item = conStock.find(i => String(i.insumo_id) === l.insumo_id);

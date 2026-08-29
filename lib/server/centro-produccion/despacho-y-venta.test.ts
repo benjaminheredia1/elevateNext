@@ -289,4 +289,25 @@ describe('despacho del Centro y venta en la sucursal', () => {
 
     await prisma.$transaction((tx) => recibirTraslado(tx, traslado.id, [], admin.id, 'DUENO'));
   }, 60_000);
+
+  it('G. el insumo bruto NO se puede despachar a una sucursal', async () => {
+    // Con el corte la sucursal perdió las recetas, la compra y el alta de
+    // insumo: mandarle harina le devuelve algo que no puede convertir en nada, y
+    // le mete de nuevo insumo bruto en el inventario, que es justo lo que el
+    // corte vino a sacar.
+    const alta = await prisma.$transaction((tx) => altaInsumoEnCentro(tx, centroId, {
+      nombre: `Harina suelta ${sufijo}`, unidad_medida: 'KG',
+      stock_inicial: 0, costo_unitario: 0, stock_minimo: 0, punto_critico: 0,
+    }, admin.id, 'DUENO'));
+    insumoIds.push(alta.insumo.id);
+    await prisma.$transaction((tx) =>
+      registrarCompraCentro(tx, centroId, alta.insumo.id, 10, 6, 'Compra', admin.id, 'DUENO'));
+
+    await expect(prisma.$transaction((tx) =>
+      crearEnvio(tx, centroId, sucursalId, [{ insumo_id: alta.insumo.id, cantidad: 2 }], 'No deberia salir', admin.id, 'DUENO'),
+    )).rejects.toThrow(/insumo bruto/i);
+
+    // Y no se descontó nada: el rechazo es antes de tocar el stock.
+    expect(await stockCentro(alta.insumo.id)).toBe(10);
+  }, 60_000);
 });

@@ -18,6 +18,7 @@ describe('traslados.service', () => {
   let centroId: number;
   let sucursalId: number;
   let insumoId: number;
+  let productoId: number;
   let adminId: number;
 
   const valorCentro = async () => {
@@ -51,6 +52,16 @@ describe('traslados.service', () => {
       stock_inicial: 100, costo_unitario: 3, stock_minimo: 0, punto_critico: 0,
     }, adminId, 'DUENO'));
     insumoId = alta.insumo.id;
+
+    // La empanada es un producto TERMINADO, y solo eso se despacha a una
+    // sucursal: se le da el producto que la apunta como espejo, que es lo que
+    // la hace terminada y no insumo bruto.
+    productoId = (await prisma.producto.create({
+      data: {
+        nombre: `Empanada traslado test ${Date.now()}`, descripcion: 'x', precio: 8,
+        tipo: 'REVENTA', estado_publicacion: 'BORRADOR', insumo_reventa_id: insumoId,
+      },
+    })).id;
   });
 
   afterAll(async () => {
@@ -61,6 +72,10 @@ describe('traslados.service', () => {
     await prisma.stockCentro.deleteMany({ where: { centro_id: centroId } });
     await prisma.movimientoInterno.deleteMany({ where: { insumo_id: insumoId } });
     await prisma.stockSucursal.deleteMany({ where: { insumo_id: insumoId } });
+    if (productoId != null) {
+      await prisma.producto.update({ where: { id: productoId }, data: { insumo_reventa_id: null } });
+      await prisma.producto.delete({ where: { id: productoId } });
+    }
     await prisma.insumo.delete({ where: { id: insumoId } });
     await prisma.centroProduccion.delete({ where: { id: centroId } });
   });

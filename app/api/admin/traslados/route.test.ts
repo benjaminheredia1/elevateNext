@@ -12,6 +12,7 @@ describe('/api/admin/traslados', () => {
   let centroId: number;
   let sucursalId: number;
   let insumoId: number;
+  let productoId: number;
 
   const token = async () => (await login('benjaherediaruiz@gmail.com', 'benja122')).access_token;
 
@@ -39,6 +40,15 @@ describe('/api/admin/traslados', () => {
       stock_inicial: 50, costo_unitario: 4, stock_minimo: 0, punto_critico: 0,
     }, admin.id, 'DUENO'));
     insumoId = alta.insumo.id;
+
+    // Solo se despacha producto TERMINADO: el insumo necesita el producto que
+    // lo apunta como espejo para contar como tal.
+    productoId = (await prisma.producto.create({
+      data: {
+        nombre: `Terminado ruta traslado ${Date.now()}`, descripcion: 'x', precio: 9,
+        tipo: 'REVENTA', estado_publicacion: 'BORRADOR', insumo_reventa_id: insumoId,
+      },
+    })).id;
   });
 
   afterAll(async () => {
@@ -49,6 +59,10 @@ describe('/api/admin/traslados', () => {
     await prisma.stockCentro.deleteMany({ where: { centro_id: centroId } });
     await prisma.movimientoInterno.deleteMany({ where: { insumo_id: insumoId } });
     await prisma.stockSucursal.deleteMany({ where: { insumo_id: insumoId } });
+    if (productoId != null) {
+      await prisma.producto.update({ where: { id: productoId }, data: { insumo_reventa_id: null } });
+      await prisma.producto.delete({ where: { id: productoId } });
+    }
     await prisma.insumo.delete({ where: { id: insumoId } });
     await prisma.centroProduccion.delete({ where: { id: centroId } });
   });

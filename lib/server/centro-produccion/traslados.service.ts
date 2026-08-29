@@ -84,7 +84,16 @@ export async function crearEnvio(
 
   const stocks = await tx.stockCentro.findMany({
     where: { centro_id: centroId, insumo_id: { in: insumoIds } },
-    include: { insumo: { select: { nombre: true, unidad_medida: true } } },
+    include: {
+      insumo: {
+        select: {
+          nombre: true, unidad_medida: true,
+          // Con que exista un producto que lo apunte alcanza para saber que es
+          // terminado.
+          productos_reventa: { select: { id: true }, take: 1 },
+        },
+      },
+    },
   });
 
   // Se valida todo antes de descontar: el mensaje tiene que decir qué línea
@@ -93,6 +102,14 @@ export async function crearEnvio(
   for (const linea of lineas) {
     const stock = stocks.find(s => s.insumo_id === linea.insumo_id);
     if (!stock) { problemas.push(`El insumo ${linea.insumo_id} no está en el inventario del centro`); continue; }
+    // A la sucursal solo va producto TERMINADO. Mandarle insumo bruto le
+    // devolvería algo que ya no sabe manejar: con el corte perdió las recetas,
+    // la compra y el alta de insumo, así que esa harina se quedaría ahí sin
+    // forma de convertirse en nada.
+    if (stock.insumo.productos_reventa.length === 0) {
+      problemas.push(`${stock.insumo.nombre} es insumo bruto y no se despacha a una sucursal: enviá el producto terminado`);
+      continue;
+    }
     if (stock.stock_actual < linea.cantidad) {
       problemas.push(`${stock.insumo.nombre}: hay ${stock.stock_actual} ${stock.insumo.unidad_medida} y se quieren enviar ${linea.cantidad}`);
     }

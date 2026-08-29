@@ -80,6 +80,9 @@ export default function AdminProducts(
   { ambito = 'sucursal', centroId }: { ambito?: 'sucursal' | 'centro'; centroId?: number } = {},
 ) {
   const esCentro = ambito === 'centro';
+  // En el Centro conviene separar lo que fabrica de lo que compra: son dos
+  // trabajos distintos —producir y reponer— y se miran en momentos distintos.
+  const [filtroCentro, setFiltroCentro] = useState<'todos' | 'ELABORADO' | 'REVENTA'>('todos');
   // Cuántas unidades TIENE el Centro de cada producto, listas para despachar.
   // No es el rinde: el rinde dice cuántas podría fabricar con el bruto de hoy,
   // esto dice cuántas ya fabricó o compró y están esperando el envío.
@@ -186,7 +189,11 @@ export default function AdminProducts(
     const ms = p.nombre.toLowerCase().includes(search.toLowerCase());
     const mc = filterCat === 'Todos' || p.categoria_id.some(c => c.categoria?.nombre === filterCat);
     const mp = filterPub === 'todos' || p.estado_publicacion === filterPub;
-    return ms && mc && mp;
+    // En el Centro se separa lo que fabrica de lo que compra. Un TERCIADO se
+    // cuenta con los de reventa: el Centro tampoco lo produce.
+    const mt = !esCentro || filtroCentro === 'todos'
+      || (filtroCentro === 'ELABORADO' ? p.tipo === 'ELABORADO' : p.tipo !== 'ELABORADO');
+    return ms && mc && mp && mt;
   });
 
   const eliminadosFiltrados = eliminados.filter(p =>
@@ -339,8 +346,11 @@ export default function AdminProducts(
           {/* El Centro no es una sucursal: elegir un local acá no significa nada. */}
           {!esCentro && <SucursalSelector value={sucursal} onChange={setSucursal} permitirTodas={false} />}
           {/* Un local nuevo arranca sin catálogo: este es el camino para llenarlo
-              sin duplicar productos con el mismo nombre. */}
-          {sucursales.length > 1 && sucursal && (
+              sin duplicar productos con el mismo nombre. Es de sucursal a
+              sucursal —copiar la carta de Fitbull a un local nuevo, en cero—.
+              En el Centro no significa nada: el Centro no copia cartas de
+              nadie, produce y despacha. */}
+          {!esCentro && sucursales.length > 1 && sucursal && (
             <button className="admin-btn" onClick={() => setCopiarAbierto(true)}>Agregar de otra sucursal</button>
           )}
           {/* Los productos nacen en el Centro, junto con su receta de producción:
@@ -375,6 +385,20 @@ export default function AdminProducts(
           <div className="admin-cat-filters">
             {PUB_FILTERS.map(f => (
               <button key={f} className={`cat-filter-btn ${filterPub === f ? 'active' : ''}`} onClick={() => setFilterPub(f)}>{pubLabel[f]}</button>
+            ))}
+          </div>
+        )}
+        {esCentro && vista === 'activos' && (
+          <div className="admin-cat-filters">
+            {([['todos', 'Todos'], ['ELABORADO', 'Los que produce'], ['REVENTA', 'Los que compra']] as const).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                className={`cat-filter-btn ${filtroCentro === id ? 'active' : ''}`}
+                onClick={() => setFiltroCentro(id)}
+              >
+                {label}
+              </button>
             ))}
           </div>
         )}

@@ -27,6 +27,8 @@ export interface ItemStockCentro {
   punto_critico: number;
   activo: boolean;
   nivel: 'ok' | 'bajo' | 'critico' | 'baja';
+  /** Si la fila es un producto terminado o insumo bruto. */
+  es_producto: boolean;
 }
 
 export function useCentrosProduccion() {
