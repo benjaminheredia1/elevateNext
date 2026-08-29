@@ -61,7 +61,22 @@ const EditIcon = <svg width="15" height="15" viewBox="0 0 24 24" fill="none" str
 const TrashIcon = <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" /></svg>;
 const BajaIcon = <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="4.93" y1="4.93" x2="19.07" y2="19.07" /></svg>;
 
-export default function AdminProducts() {
+/**
+ * Catálogo de productos. La misma pantalla sirve a la sucursal y al Centro,
+ * porque el catálogo es uno solo; lo que cambia es qué necesita ver cada uno.
+ *
+ * En el CENTRO se muestra la naturaleza real del producto —Elaborado si lo
+ * fabrica, Reventa si lo compra—, que es lo que decide cómo abastecerlo. En la
+ * SUCURSAL todo se rotula Terciado: le llega hecho y no le cambia nada saber si
+ * allá lo hornearon o lo compraron.
+ *
+ * La clase de menú (Estrella, Caballo, Puzzle, Perro) NO se muestra en el
+ * Centro: se calcula con las ventas acumuladas contra el promedio, y vender es
+ * cosa de la sucursal. En el Centro solo se produce y se despacha, así que ahí
+ * "Estrella" no significaría nada.
+ */
+export default function AdminProducts({ ambito = 'sucursal' }: { ambito?: 'sucursal' | 'centro' } = {}) {
+  const esCentro = ambito === 'centro';
   const [productos, setProductos] = useState<ApiProducto[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -470,7 +485,7 @@ export default function AdminProducts() {
           <thead>
             <tr>
               <th>Producto</th><th>Tipo</th><th className="num">Precio</th><th className="num">Costo</th>
-              <th className="num">Food Cost</th><th>Clase</th><th className="num">Rinde</th><th>Estado</th><th>Acciones</th>
+              <th className="num">Food Cost</th>{!esCentro && <th>Clase</th>}<th className="num">Rinde</th><th>Estado</th><th>Acciones</th>
             </tr>
           </thead>
           <tbody>
@@ -498,14 +513,11 @@ export default function AdminProducts() {
                       <span className="product-cell-desc">{(p.descripcion ?? '').slice(0, 50)}{(p.descripcion ?? '').length > 50 ? '…' : ''}</span>
                     </div>
                   </td>
-                  {/* Este catálogo es el de la sucursal: todo le llega hecho del
-                      Centro, así que se rotula terciado sin importar si allá lo
-                      hornean o lo compran. El tipo real sigue en la BD. */}
-                  <td><span className="cat-badge">{etiquetaTipo(p.tipo, 'sucursal')}</span></td>
+                  <td><span className="cat-badge">{etiquetaTipo(p.tipo, ambito)}</span></td>
                   <td className="num">Bs {p.precio}</td>
                   <td className="num dim">Bs {costo.toFixed(1)}</td>
                   <td className="num"><span className="margin-badge" style={{ color: foodCostColor(fc), background: 'var(--canvas)' }}>{p.precio > 0 ? Math.round(fc) : '—'}%</span></td>
-                  <td><span className="menu-class-badge">{menuClassMeta[clazz].icon} {clazz}</span></td>
+                  {!esCentro && <td><span className="menu-class-badge">{menuClassMeta[clazz].icon} {clazz}</span></td>}
                   <td className="num"><span className={`stock-val ${rinde === 0 ? 'low' : ''}`}>{rinde}</span></td>
                   <td><span className={`pub-badge ${pubBadgeClass[pub]}`}>{pub.toLowerCase()}</span></td>
                   <td>

@@ -6,6 +6,7 @@ import KpiCard from '@/components/ui/KpiCard';
 import MoneyText from '@/components/ui/MoneyText';
 import EmptyState from '@/components/ui/EmptyState';
 import ProduccionCentro from '@/components/admin/ProduccionCentro';
+import AdminProducts from '@/components/admin/AdminProducts';
 import EnviosCentro from '@/components/admin/EnviosCentro';
 import NucleoInventario from '@/components/admin/inventario/NucleoInventario';
 import { AMBITO_CENTRO } from '@/components/admin/inventario/ambitos';
@@ -297,7 +298,6 @@ const PESTANAS: { id: Pestana; label: string }[] = [
  * aparece en "Productos" pero no ahí, porque no hay nada que producir.
  */
 const ES_BRUTO = (i: Insumo) => !i.es_producto;
-const ES_PRODUCTO = (i: Insumo) => !!i.es_producto;
 
 export default function CentroProduccionPage() {
   const { data: centros = [] } = useCentrosProduccion();
@@ -356,10 +356,12 @@ export default function CentroProduccionPage() {
   const activos = insumos.filter(i => i.activo);
   // Los KPI son de la pestaña que se está mirando: sumar el bruto con los
   // terminados daría un "valorizado" que no le sirve a nadie para decidir.
-  const deLaPestana = (t: Pestana) => activos.filter(t === 'productos' ? ES_PRODUCTO : ES_BRUTO);
-  const valorizadoDe = (t: Pestana) => deLaPestana(t).reduce((acc, i) => acc + i.stock_actual * i.costo_promedio, 0);
-  const criticosDe = (t: Pestana) => deLaPestana(t).filter(i => stockState(i) === 'critico' || stockState(i) === 'agotado').length;
-  const bajosDe = (t: Pestana) => deLaPestana(t).filter(i => stockState(i) === 'bajo').length;
+  // Los KPI son del insumo bruto: es lo que se controla en esta pestaña. El
+  // stock de terminados se ve en Productos y en Producción.
+  const bruto = activos.filter(ES_BRUTO);
+  const valorizadoBruto = bruto.reduce((acc, i) => acc + i.stock_actual * i.costo_promedio, 0);
+  const criticosBruto = bruto.filter(i => stockState(i) === 'critico' || stockState(i) === 'agotado').length;
+  const bajosBruto = bruto.filter(i => stockState(i) === 'bajo').length;
 
   return (
     <AdminPanel>
@@ -421,18 +423,19 @@ export default function CentroProduccionPage() {
         <EmptyState title="Cargando inventario…" />
       ) : (
         <>
+          {/* El catálogo es el mismo de /admin/productos: la pantalla que el
+              usuario ya conoce, con el tipo real de cada producto porque acá se
+              decide si se fabrica o se compra. */}
+          {tab === 'productos' && <AdminProducts ambito="centro" />}
           {tab === 'produccion' && <ProduccionCentro centroId={centroId} />}
           {tab === 'envios' && <EnviosCentro centroId={centroId} />}
 
-          {(tab === 'inventario' || tab === 'productos') && (
+          {tab === 'inventario' && (
             <div className="kpi-grid">
-              <KpiCard
-                label={tab === 'productos' ? 'Productos en el centro' : 'Insumos en el centro'}
-                value={activos.filter(tab === 'productos' ? ES_PRODUCTO : ES_BRUTO).length}
-              />
-              <KpiCard label="Inventario valorizado" value={<MoneyText value={valorizadoDe(tab)} />} highlight />
-              <KpiCard label="Stock bajo" value={bajosDe(tab)} accent="var(--amber)" />
-              <KpiCard label="Crítico" value={criticosDe(tab)} accent="var(--danger)" />
+              <KpiCard label="Insumos en el centro" value={activos.filter(ES_BRUTO).length} />
+              <KpiCard label="Inventario valorizado" value={<MoneyText value={valorizadoBruto} />} highlight />
+              <KpiCard label="Stock bajo" value={bajosBruto} accent="var(--amber)" />
+              <KpiCard label="Crítico" value={criticosBruto} accent="var(--danger)" />
             </div>
           )}
 
@@ -441,13 +444,11 @@ export default function CentroProduccionPage() {
           <NucleoInventario
             ambito={AMBITO_CENTRO}
             contextoId={centroId}
-            vista={tab === 'inventario' || tab === 'productos' ? 'insumos' : tab === 'movimientos' ? 'movimientos' : 'oculto'}
-            filtroFilas={tab === 'productos' ? ES_PRODUCTO : ES_BRUTO}
+            vista={tab === 'inventario' ? 'insumos' : tab === 'movimientos' ? 'movimientos' : 'oculto'}
+            filtroFilas={ES_BRUTO}
             onInsumos={setInsumos}
             refresco={refresco}
-            mensajeSinInsumos={tab === 'productos'
-              ? 'Este centro todavía no tiene productos. Se agregan creando el producto desde Producción.'
-              : 'Este centro todavía no tiene insumo bruto cargado.'}
+            mensajeSinInsumos="Este centro todavía no tiene insumo bruto cargado."
             accionSinInsumos={
               <button className="admin-btn primary" onClick={() => setAltaInsumoAbierto(true)} type="button">
                 + Nuevo insumo
