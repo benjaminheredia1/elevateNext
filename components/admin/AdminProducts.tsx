@@ -12,6 +12,7 @@ import SucursalSelector from '@/components/ui/SucursalSelector';
 import CopiarProductosModal from '@/components/admin/CopiarProductosModal';
 import { useSucursales } from '@/hooks/sucursales';
 import { useSucursalAdmin } from '@/hooks/sucursal-admin';
+import { useInventarioCentro } from '@/hooks/centro-produccion';
 import { etiquetaTipo } from './etiqueta-tipo';
 
 type Tipo = 'ELABORADO' | 'REVENTA' | 'TERCIADO';
@@ -75,8 +76,19 @@ const BajaIcon = <svg width="15" height="15" viewBox="0 0 24 24" fill="none" str
  * cosa de la sucursal. En el Centro solo se produce y se despacha, así que ahí
  * "Estrella" no significaría nada.
  */
-export default function AdminProducts({ ambito = 'sucursal' }: { ambito?: 'sucursal' | 'centro' } = {}) {
+export default function AdminProducts(
+  { ambito = 'sucursal', centroId }: { ambito?: 'sucursal' | 'centro'; centroId?: number } = {},
+) {
   const esCentro = ambito === 'centro';
+  // Cuántas unidades TIENE el Centro de cada producto, listas para despachar.
+  // No es el rinde: el rinde dice cuántas podría fabricar con el bruto de hoy,
+  // esto dice cuántas ya fabricó o compró y están esperando el envío.
+  const { data: inventarioCentro = [] } = useInventarioCentro(esCentro ? centroId ?? null : null);
+  const stockEnCentro = useMemo(() => {
+    const mapa = new Map<number, number>();
+    for (const fila of inventarioCentro) mapa.set(fila.insumo_id, fila.stock_actual);
+    return mapa;
+  }, [inventarioCentro]);
   const [productos, setProductos] = useState<ApiProducto[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -485,7 +497,9 @@ export default function AdminProducts({ ambito = 'sucursal' }: { ambito?: 'sucur
           <thead>
             <tr>
               <th>Producto</th><th>Tipo</th><th className="num">Precio</th><th className="num">Costo</th>
-              <th className="num">Food Cost</th>{!esCentro && <th>Clase</th>}<th className="num">Rinde</th><th>Estado</th><th>Acciones</th>
+              <th className="num">Food Cost</th>{!esCentro && <th>Clase</th>}
+              {esCentro && <th className="num">En el centro</th>}
+              <th className="num">Rinde</th><th>Estado</th><th>Acciones</th>
             </tr>
           </thead>
           <tbody>
@@ -518,6 +532,11 @@ export default function AdminProducts({ ambito = 'sucursal' }: { ambito?: 'sucur
                   <td className="num dim">Bs {costo.toFixed(1)}</td>
                   <td className="num"><span className="margin-badge" style={{ color: foodCostColor(fc), background: 'var(--canvas)' }}>{p.precio > 0 ? Math.round(fc) : '—'}%</span></td>
                   {!esCentro && <td><span className="menu-class-badge">{menuClassMeta[clazz].icon} {clazz}</span></td>}
+                  {esCentro && (
+                    <td className="num">
+                      <span className="stock-val">{p.insumo_reventa_id != null ? (stockEnCentro.get(p.insumo_reventa_id) ?? 0) : '—'}</span>
+                    </td>
+                  )}
                   <td className="num"><span className={`stock-val ${rinde === 0 ? 'low' : ''}`}>{rinde}</span></td>
                   <td><span className={`pub-badge ${pubBadgeClass[pub]}`}>{pub.toLowerCase()}</span></td>
                   <td>

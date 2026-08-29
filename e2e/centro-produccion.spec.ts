@@ -173,6 +173,10 @@ test.describe('centro de producción de punta a punta', () => {
 
     await modal(page).locator('select').first().selectOption({ index: 1 });   // sucursal destino
     const insumos = modal(page).locator('select').nth(1);
+    // Las opciones llegan por React Query: leerlas antes de que la respuesta
+    // vuelva daba una lista con solo "Elegí…" y el test fallaba diciendo que el
+    // producto no estaba, cuando en realidad todavía no había cargado.
+    await expect(insumos.locator('option', { hasText: PRODUCTO })).toHaveCount(1, { timeout: 20_000 });
     const opciones = await insumos.locator('option').allInnerTexts();
     const idx = opciones.findIndex(o => o.includes(PRODUCTO));
     expect(idx).toBeGreaterThan(0);

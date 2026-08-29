@@ -426,7 +426,7 @@ export default function CentroProduccionPage() {
           {/* El catálogo es el mismo de /admin/productos: la pantalla que el
               usuario ya conoce, con el tipo real de cada producto porque acá se
               decide si se fabrica o se compra. */}
-          {tab === 'productos' && <AdminProducts ambito="centro" />}
+          {tab === 'productos' && <AdminProducts ambito="centro" centroId={centroId} />}
           {tab === 'produccion' && <ProduccionCentro centroId={centroId} />}
           {tab === 'envios' && <EnviosCentro centroId={centroId} />}
 
