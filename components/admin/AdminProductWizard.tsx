@@ -10,9 +10,11 @@ import { convertir, unidadesEntrada, redondearCantidad } from '@/lib/unidades';
 const TIPOS_PRODUCTO = [
   { id: 'ELABORADO' as const, titulo: '🍳 Elaborado', detalle: 'Se prepara en cocina. Requiere receta.' },
   { id: 'REVENTA'   as const, titulo: '🏷️ Reventa',   detalle: 'Se compra terminado. Mapeo 1:1 a un insumo.' },
-  // El terciado comparte toda la mecánica de venta con la reventa; lo que
-  // cambia es de dónde sale su stock, y eso se administra en el Centro.
-  { id: 'TERCIADO'  as const, titulo: '🏭 Terciado',  detalle: 'Se produce en el Centro y llega por envío. Mapeo 1:1 a un insumo.' },
+  // TERCIADO ya no se ofrece: el tipo describe cómo lo abastece EL CENTRO, y el
+  // Centro solo hace dos cosas —produce o compra—. "Terciado" es cómo lo ve la
+  // sucursal, a la que todo le llega hecho, y eso lo resuelve etiquetaTipo() al
+  // dibujar. Los productos viejos marcados TERCIADO se siguen leyendo como
+  // reventa, que es lo que son desde el Centro: mercadería que compra.
 ];
 
 

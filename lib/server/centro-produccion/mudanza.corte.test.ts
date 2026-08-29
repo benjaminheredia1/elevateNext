@@ -316,13 +316,36 @@ describe('mudanza del insumo bruto al Centro', () => {
       });
       expect(gondola.stock_actual).toBe(12);
 
-      // El tipo en la BD es la verdad DEL CENTRO —si lo compra o lo produce— y
-      // el corte no lo toca. "Terciado" es solo como lo ve la sucursal, y de
-      // eso se encarga etiquetaTipo() al dibujar, no una escritura.
+      // El tipo en la BD es la verdad DEL CENTRO —si lo compra o lo produce—:
+      // el corte no convierte lo elaborado en otra cosa. Lo unico que normaliza
+      // es TERCIADO, que desde el Centro no existe (ver el caso siguiente).
       const elaboradoDespues = await tx.producto.findUniqueOrThrow({ where: { id: elaborado.id } });
       const reventaDespues = await tx.producto.findUniqueOrThrow({ where: { id: reventa.id } });
       expect(elaboradoDespues.tipo).toBe('ELABORADO');
       expect(reventaDespues.tipo).toBe('REVENTA');
+    });
+  }, 120_000);
+
+  it('el corte normaliza los TERCIADO: desde el Centro eso no existe', async () => {
+    await enTransaccionRevertida(async (tx) => {
+      const sufijo = Date.now() + 5;
+      const espejo = await tx.insumo.create({
+        data: { nombre: `Espejo terciado ${sufijo}`, unidad_medida: 'UNIDAD', stock_actual: 0, stock_minimo: 0, costo_promedio: 3 },
+      });
+      const terciado = await tx.producto.create({
+        data: {
+          nombre: `Terciado viejo ${sufijo}`, descripcion: 'x', precio: 10,
+          tipo: 'TERCIADO', estado_publicacion: 'PUBLICADO', insumo_reventa_id: espejo.id,
+        },
+      });
+
+      await ejecutarMudanza(centroId, usuarioId, tx);
+
+      // El Centro solo produce o compra. Un terciado es algo que alguien mas
+      // hace y el Centro compra hecho: reventa.
+      const despues = await tx.producto.findUniqueOrThrow({ where: { id: terciado.id } });
+      expect(despues.tipo).toBe('REVENTA');
+      expect(await tx.producto.count({ where: { tipo: 'TERCIADO' } })).toBe(0);
     });
   }, 120_000);
 });

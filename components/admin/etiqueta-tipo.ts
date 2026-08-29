@@ -16,7 +16,8 @@ export type ProductoTipo = 'ELABORADO' | 'REVENTA' | 'TERCIADO';
  */
 export function etiquetaTipo(tipo: ProductoTipo | string, ambito: 'sucursal' | 'centro'): string {
   if (ambito === 'sucursal') return 'Terciado';
-  if (tipo === 'ELABORADO') return 'Elaborado';
-  if (tipo === 'REVENTA') return 'Reventa';
-  return 'Terciado';
+  // En el Centro solo existen dos: lo que produce y lo que compra. Un producto
+  // viejo marcado TERCIADO cae en "Reventa", que es lo que es desde acá:
+  // mercadería que el Centro compra hecha y despacha.
+  return tipo === 'ELABORADO' ? 'Elaborado' : 'Reventa';
 }

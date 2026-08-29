@@ -272,11 +272,13 @@ export async function ejecutarMudanza(centroId: number, usuarioId: number, db: D
     });
     recetasCopiadas++;
   }
-  // El `tipo` del producto NO se toca. Es la verdad DEL CENTRO —si lo produce o
-  // lo compra—, y es lo que necesita para operar. "Terciado" es solo cómo lo ve
-  // la sucursal, a la que todo le llega hecho, y de eso se encarga
-  // `etiquetaTipo()` al dibujar la pantalla. Reescribirlo acá borraba esa
-  // distinción justo donde hace falta.
+  // El `tipo` es la verdad DEL CENTRO: si lo produce o si lo compra. Por eso NO
+  // se convierte lo elaborado en otra cosa —eso borraría la distinción justo
+  // donde hace falta—, pero sí se normaliza TERCIADO, que desde el Centro no
+  // existe: un terciado es mercadería que alguien más hace y el Centro compra
+  // hecha, o sea reventa. "Terciado" queda como lo que siempre fue de verdad:
+  // cómo lo ve la sucursal, y de eso se encarga `etiquetaTipo()` al dibujar.
+  await db.producto.updateMany({ where: { tipo: 'TERCIADO' }, data: { tipo: 'REVENTA' } });
 
   // ── Paso 5: todo producto tiene que poder reponerse ────────────────
   // Sin esto el corte dejaba huérfano a todo el catálogo de reventa: la

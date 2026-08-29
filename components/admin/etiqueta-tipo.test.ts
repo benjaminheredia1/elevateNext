@@ -16,8 +16,14 @@ describe('etiquetaTipo', () => {
     expect(etiquetaTipo('REVENTA', 'centro')).toBe('Reventa');
   });
 
+  it('en el Centro un TERCIADO viejo se lee como reventa', () => {
+    // TERCIADO no es un tipo del Centro: el Centro solo produce o compra. Un
+    // producto que quedó marcado así es mercadería que compra hecha.
+    expect(etiquetaTipo('TERCIADO', 'centro')).toBe('Reventa');
+  });
+
   it('un tipo desconocido no rompe la pantalla', () => {
     // El rótulo nunca es motivo para que una tabla deje de dibujarse.
-    expect(etiquetaTipo('LO_QUE_SEA', 'centro')).toBe('Terciado');
+    expect(etiquetaTipo('LO_QUE_SEA', 'centro')).toBe('Reventa');
   });
 });
