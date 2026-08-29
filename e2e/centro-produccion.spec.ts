@@ -204,4 +204,23 @@ test.describe('centro de producción de punta a punta', () => {
 
     await expect(page.locator('tr', { hasText: PRODUCTO }).first()).toContainText(/recibido/i, { timeout: 20_000 });
   });
+
+  test('desde Productos se puede dar de alta un producto', async ({ page }) => {
+    // El boton era un enlace a /admin/centro-produccion, pensado para la
+    // sucursal. Estando YA en el Centro apuntaba a la misma pantalla y no hacia
+    // nada. Se verifica que abra el alta de verdad.
+    await ingresar(page, DUENO);
+    await irAlCentro(page, 'Productos');
+
+    await page.getByRole('button', { name: /nuevo producto/i }).first().click();
+
+    // Se busca la barra de pasos del wizard, que no existe en ninguna otra
+    // pantalla: con un selector laxo el test pasaba igual con el boton roto.
+    await expect(page.locator('.wizard-steps')).toBeVisible({ timeout: 20_000 });
+    await expect(page.locator('.wizard-step-label').first()).toContainText('1. Básicos');
+
+    // Y desde el Centro solo se ofrecen las dos formas en que el Centro
+    // abastece: producirlo o comprarlo.
+    await expect(page.getByText('Terciado', { exact: true })).toHaveCount(0);
+  });
 });

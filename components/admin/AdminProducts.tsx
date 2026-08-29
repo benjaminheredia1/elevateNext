@@ -76,6 +76,16 @@ const BajaIcon = <svg width="15" height="15" viewBox="0 0 24 24" fill="none" str
  * cosa de la sucursal. En el Centro solo se produce y se despacha, así que ahí
  * "Estrella" no significaría nada.
  */
+/**
+ * Producto en blanco para el alta desde el Centro. Nace ELABORADO y en borrador:
+ * lo que lo hace producible es la receta, y publicarlo es una decisión aparte.
+ */
+const PRODUCTO_NUEVO: WizardInitial = {
+  nombre: '', descripcion: '', precio: 0, calorias: null, proteina: null,
+  tipo: 'ELABORADO', estado_publicacion: 'BORRADOR', imagen_url: null,
+  categorias: [], marcas: [], receta: [], insumo_reventa_id: null,
+};
+
 export default function AdminProducts(
   { ambito = 'sucursal', centroId }: { ambito?: 'sucursal' | 'centro'; centroId?: number } = {},
 ) {
@@ -353,12 +363,19 @@ export default function AdminProducts(
           {!esCentro && sucursales.length > 1 && sucursal && (
             <button className="admin-btn" onClick={() => setCopiarAbierto(true)}>Agregar de otra sucursal</button>
           )}
-          {/* Los productos nacen en el Centro, junto con su receta de producción:
-              el catálogo de la sucursal administra precio, foto y publicación de
-              lo que ya existe. El servidor lo exige igual (422 sin centro_id);
-              esto es solo para no mandar al usuario a un formulario que va a
-              rebotar. */}
-          <a className="admin-btn primary" href="/admin/centro-produccion">+ Nuevo Producto (en el Centro)</a>
+          {/* Los productos nacen en el Centro, junto con su receta de producción.
+              Desde la SUCURSAL el botón es un enlace: su catálogo administra
+              precio, foto y publicación de lo que ya existe, y el servidor
+              rechaza el alta sin centro_id igual (422) — el enlace solo evita
+              mandar al usuario a un formulario que va a rebotar.
+
+              Estando YA en el Centro, en cambio, ese enlace apuntaba a la misma
+              pantalla y no hacía nada: acá el botón abre el alta. */}
+          {esCentro ? (
+            <button className="admin-btn primary" onClick={() => setWizard(PRODUCTO_NUEVO)}>+ Nuevo Producto</button>
+          ) : (
+            <a className="admin-btn primary" href="/admin/centro-produccion">+ Nuevo Producto (en el Centro)</a>
+          )}
         </div>
       </div>
 
