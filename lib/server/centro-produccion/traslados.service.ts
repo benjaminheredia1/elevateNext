@@ -89,8 +89,18 @@ export async function crearEnvio(
         select: {
           nombre: true, unidad_medida: true,
           // Con que exista un producto que lo apunte alcanza para saber que es
-          // terminado.
-          productos_reventa: { select: { id: true }, take: 1 },
+          // terminado. Se trae también su ficha en la sucursal de destino para
+          // saber si ese local lo dio de baja.
+          productos_reventa: {
+            select: {
+              id: true,
+              sucursales: {
+                where: { sucursal_id: sucursalId },
+                select: { fecha_baja: true },
+              },
+            },
+            take: 1,
+          },
         },
       },
     },
@@ -108,6 +118,25 @@ export async function crearEnvio(
     // forma de convertirse en nada.
     if (stock.insumo.productos_reventa.length === 0) {
       problemas.push(`${stock.insumo.nombre} es insumo bruto y no se despacha a una sucursal: enviá el producto terminado`);
+      continue;
+    }
+    // Dado de baja EN ESTE CENTRO: el centro dejó de abastecerlo. Es lo único
+    // que significa esa baja —las sucursales que ya lo venden siguen como
+    // están—, y sin este corte no significaba nada: se podía seguir
+    // despachando lo que el centro había dado de baja.
+    if (!stock.activo) {
+      problemas.push(`${stock.insumo.nombre} está dado de baja en este centro: reactivalo si lo vas a volver a abastecer`);
+      continue;
+    }
+    // Y al revés: la sucursal decidió no venderlo más. Mandárselo igual le
+    // devuelve al local mercadería que sacó de su carta a propósito, y encima
+    // la deja parada sin poder venderla.
+    //
+    // Se mira `fecha_baja` y no `disponible`: ese flag también se usa para el
+    // "no disponible" momentáneo —lo que justamente se repone despachando—,
+    // así que frenar por él sería frenar el caso normal.
+    if (stock.insumo.productos_reventa[0]?.sucursales[0]?.fecha_baja) {
+      problemas.push(`${stock.insumo.nombre} está dado de baja en ${sucursal.nombre}: ese local tiene que restaurarlo antes de recibirlo`);
       continue;
     }
     if (stock.stock_actual < linea.cantidad) {

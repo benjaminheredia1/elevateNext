@@ -36,6 +36,43 @@ describe('traslados.service', () => {
   const valorTotal = async () =>
     (await valorCentro()) + (await valorSucursal()) + (await valorEnTransito({ centroId }));
 
+  /**
+   * Pone la ficha del producto en la sucursal en un estado dado y devuelve como
+   * dejarla igual que estaba. La ficha puede existir o no segun que tests
+   * corrieron antes —la crea la recepcion de un traslado—, asi que se hace por
+   * upsert y se restaura el valor previo en vez de borrarla.
+   */
+  async function conFichaEnSucursal(
+    estado: { disponible: boolean; motivo_baja: string | null; fecha_baja: Date | null },
+  ) {
+    const previa = await prisma.productoSucursal.findUnique({
+      where: { producto_id_sucursal_id: { producto_id: productoId, sucursal_id: sucursalId } },
+    });
+    await prisma.productoSucursal.upsert({
+      where: { producto_id_sucursal_id: { producto_id: productoId, sucursal_id: sucursalId } },
+      create: { producto_id: productoId, sucursal_id: sucursalId, precio: 8, ...estado },
+      update: estado,
+    });
+    return {
+      restaurar: async () => {
+        if (previa) {
+          await prisma.productoSucursal.update({
+            where: { id: previa.id },
+            data: {
+              disponible: previa.disponible,
+              motivo_baja: previa.motivo_baja,
+              fecha_baja: previa.fecha_baja,
+            },
+          });
+        } else {
+          await prisma.productoSucursal.delete({
+            where: { producto_id_sucursal_id: { producto_id: productoId, sucursal_id: sucursalId } },
+          });
+        }
+      },
+    };
+  }
+
   beforeAll(async () => {
     const admin = await prisma.usuario.findFirstOrThrow({ where: { rol: 'DUENO' } });
     adminId = admin.id;
@@ -73,6 +110,7 @@ describe('traslados.service', () => {
     await prisma.movimientoInterno.deleteMany({ where: { insumo_id: insumoId } });
     await prisma.stockSucursal.deleteMany({ where: { insumo_id: insumoId } });
     if (productoId != null) {
+      await prisma.productoSucursal.deleteMany({ where: { producto_id: productoId } });
       await prisma.producto.update({ where: { id: productoId }, data: { insumo_reventa_id: null } });
       await prisma.producto.delete({ where: { id: productoId } });
     }
@@ -185,6 +223,59 @@ describe('traslados.service', () => {
       prisma.$transaction((tx) =>
         crearEnvio(tx, centroId, sucursalId, [{ insumo_id: insumoId, cantidad: 9999 }], undefined, adminId, 'DUENO')),
     ).rejects.toThrow(/No se puede enviar/);
+  });
+
+  it('no se despacha lo que el centro dio de baja', async () => {
+    // La baja en el centro significa exactamente esto: dejo de abastecerlo.
+    // Sin este corte no significaba nada —se seguia despachando igual— y las
+    // sucursales recibian mercaderia que el centro ya habia discontinuado.
+    await prisma.stockCentro.update({
+      where: { centro_id_insumo_id: { centro_id: centroId, insumo_id: insumoId } },
+      data: { activo: false },
+    });
+    try {
+      await expect(
+        prisma.$transaction((tx) =>
+          crearEnvio(tx, centroId, sucursalId, [{ insumo_id: insumoId, cantidad: 1 }], undefined, adminId, 'DUENO')),
+      ).rejects.toThrow(/dado de baja en este centro/);
+    } finally {
+      await prisma.stockCentro.update({
+        where: { centro_id_insumo_id: { centro_id: centroId, insumo_id: insumoId } },
+        data: { activo: true },
+      });
+    }
+  });
+
+  it('no se despacha a una sucursal que dio de baja ese producto', async () => {
+    // La baja del local es suya y no la decide el centro: mandarle igual la
+    // mercaderia le devuelve algo que saco de su carta a proposito, y encima
+    // se la deja parada sin poder venderla.
+    // La ficha ya existe: la crea la recepcion del traslado de mas arriba, que
+    // es como un local empieza a vender lo que le llega.
+    const antes = await conFichaEnSucursal({ disponible: false, motivo_baja: 'Baja de prueba', fecha_baja: new Date() });
+    try {
+      await expect(
+        prisma.$transaction((tx) =>
+          crearEnvio(tx, centroId, sucursalId, [{ insumo_id: insumoId, cantidad: 1 }], undefined, adminId, 'DUENO')),
+      ).rejects.toThrow(/dado de baja en/);
+    } finally {
+      await antes.restaurar();
+    }
+  });
+
+  it('un producto solo marcado "no disponible" si se puede reabastecer', async () => {
+    // `disponible: false` tambien es el "se acabo" momentaneo, que es justo lo
+    // que se repone despachando. Frenar por ese flag frenaria el caso normal:
+    // la baja de verdad es la que tiene fecha.
+    const antes = await conFichaEnSucursal({ disponible: false, motivo_baja: null, fecha_baja: null });
+    try {
+      const { traslado } = await prisma.$transaction((tx) =>
+        crearEnvio(tx, centroId, sucursalId, [{ insumo_id: insumoId, cantidad: 1 }], undefined, adminId, 'DUENO'));
+      expect(traslado.estado).toBe('EN_TRANSITO');
+      await prisma.$transaction((tx) => anularTraslado(tx, traslado.id, 'Limpieza del test', adminId, 'DUENO'));
+    } finally {
+      await antes.restaurar();
+    }
   });
 
   it('el correlativo del centro avanza sin repetirse', async () => {
