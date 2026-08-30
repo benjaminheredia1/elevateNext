@@ -148,7 +148,65 @@ export async function sembrarProductoConEspejo(
   if (!resultado.ok) {
     throw new Error(`No se pudo sembrar "${datos.nombre}": ${resultado.status} ${resultado.cuerpo}`);
   }
-  return JSON.parse(resultado.cuerpo).data.id as number;
+
+  const creado = JSON.parse(resultado.cuerpo).data as { id: number; insumo_reventa_id: number | null };
+
+  // El stock inicial del alta entra al CENTRO: es el origen. Para que el local
+  // lo tenga hay que despachárselo, que es exactamente como llega en la
+  // realidad. Mover en vez de sembrar dos veces también mantiene bien el
+  // consolidado: el negocio tiene lo que compró una sola vez.
+  if (datos.stock > 0 && creado.insumo_reventa_id) {
+    await despacharAlLocal(page, {
+      insumoId: creado.insumo_reventa_id,
+      sucursalNombre: datos.sucursalNombre ?? '',
+      cantidad: datos.stock,
+    });
+  }
+
+  return creado.id;
+}
+
+/** Despacha del Centro a una sucursal y lo recibe: el camino real de la mercadería. */
+export async function despacharAlLocal(
+  page: Page,
+  datos: { insumoId: number; sucursalNombre: string; cantidad: number },
+): Promise<void> {
+  const resultado = await page.evaluate(async (d) => {
+    const sucs = await (await fetch('/api/sucursales', { credentials: 'include' })).json();
+    // Sin nombre, la primera: la principal, donde caen los specs que no crean
+    // sucursal propia.
+    const sucursalId = d.sucursalNombre
+      ? (sucs?.data ?? []).find((x: { nombre: string }) => x.nombre === d.sucursalNombre)?.id
+      : (sucs?.data ?? [])[0]?.id;
+
+    const centros = await (await fetch('/api/admin/centros-produccion', { credentials: 'include' })).json();
+    const centroId = centros?.items?.[0]?.id;
+
+    const envio = await fetch('/api/admin/traslados', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        centro_id: centroId, sucursal_id: sucursalId,
+        lineas: [{ insumo_id: d.insumoId, cantidad: d.cantidad }],
+        observaciones: 'Despacho sembrado por el E2E',
+      }),
+    });
+    if (!envio.ok) return { ok: false, status: envio.status, cuerpo: await envio.text() };
+
+    const trasladoId = (await envio.json())?.data?.traslado?.id;
+    const recibo = await fetch('/api/admin/traslados/recibir', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ traslado_id: trasladoId, recibido: [] }),
+    });
+    return { ok: recibo.ok, status: recibo.status, cuerpo: await recibo.text() };
+  }, datos);
+
+  if (!resultado.ok) {
+    throw new Error(`No se pudo despachar el insumo ${datos.insumoId}: ${resultado.status} ${resultado.cuerpo}`);
+  }
 }
 
 /**
@@ -161,22 +219,32 @@ export async function sembrarProductoConEspejo(
  */
 export async function fijarStockEnSucursal(
   page: Page,
-  datos: { insumoNombre: string; sucursalNombre: string; stock: number },
+  datos: { insumoNombre: string; sucursalNombre: string; stock: number; insumoId?: number },
 ): Promise<void> {
   const resultado = await page.evaluate(async (d) => {
     const sucs = await (await fetch('/api/sucursales', { credentials: 'include' })).json();
-    const sucursalId = (sucs?.data ?? []).find((x: { nombre: string }) => x.nombre === d.sucursalNombre)?.id;
+    // Sin nombre, la primera: es la principal, que es donde caen los specs que
+    // no crean sucursales propias.
+    const sucursalId = d.sucursalNombre
+      ? (sucs?.data ?? []).find((x: { nombre: string }) => x.nombre === d.sucursalNombre)?.id
+      : (sucs?.data ?? [])[0]?.id;
 
-    const lista = await (await fetch('/api/insumo?incluir_inactivos=1', { credentials: 'include' })).json();
-    const insumo = (Array.isArray(lista) ? lista : lista?.data ?? [])
-      .find((i: { nombre: string }) => i.nombre === d.insumoNombre);
+    // Con el id a mano no se busca: un espejo recién creado vive solo en el
+    // Centro y los listados de insumo lo esconden a propósito —para que nadie
+    // arme una ficha con algo que la sucursal no tiene—.
+    let insumoId = d.insumoId;
+    if (!insumoId) {
+      const lista = await (await fetch('/api/insumo?incluir_inactivos=1', { credentials: 'include' })).json();
+      insumoId = (Array.isArray(lista) ? lista : lista?.data ?? [])
+        .find((i: { nombre: string }) => i.nombre === d.insumoNombre)?.id;
+    }
 
     const res = await fetch('/api/admin/insumos/conteo', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       credentials: 'include',
       body: JSON.stringify({
-        insumo_id: insumo?.id,
+        insumo_id: insumoId,
         nuevo_stock: d.stock,
         sucursal_id: sucursalId,
         descripcion: 'Conteo sembrado por el E2E',

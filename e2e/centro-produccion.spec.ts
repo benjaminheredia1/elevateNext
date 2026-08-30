@@ -318,4 +318,104 @@ test.describe('centro de producción de punta a punta', () => {
     await expect(page.getByPlaceholder('Buscar insumo...').first())
       .toHaveValue(new RegExp(INSUMO_CARNE), { timeout: 20_000 });
   });
+
+  test('un producto que el Centro COMPRA se puede reponer desde Produccion', async ({ page }) => {
+    // Sin esto no habia forma de reponerlos: la compra vive en "Insumo bruto",
+    // que los excluye por no ser ingredientes; el catalogo no tiene acciones de
+    // stock; y Produccion solo producia. El Centro se quedaba con mercaderia
+    // que solo podia despachar hasta agotarla.
+    const REVENTA = unico('E2E Agua');
+
+    await ingresar(page, DUENO);
+    await page.goto('/admin/centro-produccion');
+
+    // Un producto de reventa creado desde el Centro: no lleva receta.
+    const alta = await page.evaluate(async ({ nombre, centroNombre }) => {
+      // Por NOMBRE y no el primero de la lista: la BD de tests acumula centros
+      // de corridas anteriores, y el producto terminaba en uno ajeno.
+      const centros = await (await fetch('/api/admin/centros-produccion', { credentials: 'include' })).json();
+      const centroId = (centros?.items ?? []).find((c: { nombre: string }) => c.nombre === centroNombre)?.id;
+      const res = await fetch('/api/admin/productos', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, credentials: 'include',
+        body: JSON.stringify({
+          nombre, descripcion: 'x', precio: 8, tipo: 'REVENTA',
+          estado_publicacion: 'BORRADOR', categorias: [], marcas: [], receta: [],
+          permitir_duplicado: true, centro_id: centroId,
+          nuevo_insumo_reventa: { unidad_medida: 'UNIDAD', stock: 0, costo_unitario: 0 },
+        }),
+      });
+      return { ok: res.ok, cuerpo: await res.text() };
+    }, { nombre: REVENTA, centroNombre: CENTRO });
+    expect(alta.ok, alta.cuerpo).toBeTruthy();
+
+    await irAlCentro(page, 'Producción');
+    await page.getByRole('button', { name: 'Reventa', exact: true }).click();
+    const fila = page.locator('tr', { hasText: REVENTA }).first();
+    await expect(fila).toBeVisible({ timeout: 20_000 });
+    // No ofrece producir: no hay nada que fabricar.
+    await expect(fila.getByRole('button', { name: /^producir$/i })).toHaveCount(0);
+
+    await fila.getByRole('button', { name: /^comprar$/i }).click();
+    await expect(modal(page)).toBeVisible();
+    await campoModal(page, 'Cantidad').fill('24');
+    await campoModal(page, 'Costo unitario').fill('5.5');
+    await modal(page).getByRole('button', { name: /registrar compra/i }).click();
+    await expect(modal(page)).toBeHidden({ timeout: 20_000 });
+
+    // Ahora tiene 24 unidades listas para despachar.
+    await expect(page.locator('tr', { hasText: REVENTA }).first()).toContainText('24', { timeout: 20_000 });
+
+    // Y tambien se compra desde Productos, que es donde uno mira el producto y
+    // ve que esta en cero. Reponer solo desde "Produccion" obligaba a saber que
+    // esa pestaña tambien sirve para comprar, y nadie lo busca ahi.
+    await irAlCentro(page, 'Productos');
+    await page.getByPlaceholder(/buscar producto/i).fill(REVENTA);
+    const enCatalogo = page.locator('tr', { hasText: REVENTA }).first();
+    await expect(enCatalogo).toBeVisible({ timeout: 20_000 });
+    await enCatalogo.getByRole('button', { name: /comprar/i }).click();
+    await expect(modal(page)).toBeVisible();
+    await campoModal(page, 'Cantidad').fill('6');
+    await campoModal(page, 'Costo unitario').fill('5.5');
+    await modal(page).getByRole('button', { name: /registrar compra/i }).click();
+    await expect(modal(page)).toBeHidden({ timeout: 20_000 });
+    await expect(page.locator('tr', { hasText: REVENTA }).first()).toContainText('30', { timeout: 20_000 });
+  });
+
+  test('un producto del Centro se elimina del catalogo', async ({ page }) => {
+    // En el Centro la papelera borra del catalogo: no hay menu del que quitarlo
+    // y es ahi donde el producto nace, asi que es donde se deshace el que se
+    // creo por error. Antes no habia ninguna: el boton estaba atado al local
+    // guardado en el navegador, que en el Centro ya no se usa.
+    const BORRABLE = unico('E2E Borrable');
+
+    await ingresar(page, DUENO);
+    // La navegacion va ANTES del fetch: en about:blank una URL relativa no
+    // resuelve contra ningun origen.
+    await page.goto('/admin/centro-produccion');
+    const alta = await page.evaluate(async ({ nombre, centroNombre }) => {
+      const centros = await (await fetch('/api/admin/centros-produccion', { credentials: 'include' })).json();
+      const centroId = (centros?.items ?? []).find((c: { nombre: string }) => c.nombre === centroNombre)?.id;
+      const res = await fetch('/api/admin/productos', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, credentials: 'include',
+        body: JSON.stringify({
+          nombre, descripcion: 'x', precio: 8, tipo: 'REVENTA',
+          estado_publicacion: 'BORRADOR', categorias: [], marcas: [], receta: [],
+          permitir_duplicado: true, centro_id: centroId,
+          nuevo_insumo_reventa: { unidad_medida: 'UNIDAD', stock: 0, costo_unitario: 0 },
+        }),
+      });
+      return { ok: res.ok, cuerpo: await res.text() };
+    }, { nombre: BORRABLE, centroNombre: CENTRO });
+    expect(alta.ok, alta.cuerpo).toBeTruthy();
+
+    await irAlCentro(page, 'Productos');
+    await page.getByPlaceholder(/buscar producto/i).fill(BORRABLE);
+    const fila = page.locator('tr', { hasText: BORRABLE }).first();
+    await expect(fila).toBeVisible({ timeout: 20_000 });
+
+    await fila.getByRole('button', { name: /eliminar del catálogo/i }).click();
+    await fila.getByRole('button', { name: /^sí$/i }).click();
+
+    await expect(page.locator('tr', { hasText: BORRABLE })).toHaveCount(0, { timeout: 20_000 });
+  });
 });

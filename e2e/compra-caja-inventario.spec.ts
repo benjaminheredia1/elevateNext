@@ -107,30 +107,48 @@ test.describe('compra de insumo, inventario y caja', () => {
   test('el cajero registra el egreso y la caja baja por ese monto', async ({ page }) => {
     await ingresar(page, CAJERO);
 
-    // Sin turno abierto la caja no acepta movimientos, así que se abre uno.
-    // La página de apertura deshabilita el botón si ya hay turno, lo que la
-    // hace segura de visitar aunque otro test lo haya dejado abierto.
-    await page.goto('/caja/apertura');
-    const botonAbrir = page.getByRole('button', { name: /^abrir caja$/i });
-    // Se espera a que la pantalla resuelva si hay turno abierto ANTES de mirar
-    // el botón. Preguntarle isEnabled() recién cargada devolvía true y para
-    // cuando llegaba el clic ya estaba deshabilitado, así que el test se
-    // quedaba esperando un botón que nunca se iba a poder apretar. Y con un
-    // turno ya abierto el botón directamente no existe: la pantalla muestra
-    // otra cosa, así que tampoco alcanza con esperar a que aparezca.
-    await page.waitForLoadState('networkidle').catch(() => {});
-    if (await botonAbrir.count() > 0 && await botonAbrir.isEnabled()) {
-      await campo(page, 'Efectivo inicial').fill('500');
-      await campo(page, 'QR inicial').fill('0');
-      await botonAbrir.click();
-      await expect(page.locator('body')).toContainText(/turno|caja/i, { timeout: 30_000 });
-    }
+    // El turno se garantiza contra el SERVIDOR, no mirando la pantalla. Antes
+    // se deducía del botón de apertura —presente y habilitado = no hay turno—,
+    // y eso acertaba corriendo el spec solo pero fallaba en la suite completa,
+    // donde otro test ya había cerrado el turno del seed: la pantalla decía una
+    // cosa y la base otra, y el gasto moría con 409.
+    //
+    // Y se le mete efectivo: de una caja vacía no se paga nada, que es lo que
+    // haría el cajero de verdad antes de pagarle a un proveedor.
+    await page.goto('/caja');
+    const preparada = await page.evaluate(async (monto) => {
+      const pedir = (url: string, body: unknown) => fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(body),
+      });
+
+      const activo = await (await fetch('/api/caja/turno-activo', { credentials: 'include' })).json();
+      if (!activo?.id) {
+        const abre = await pedir('/api/caja/apertura', { apertura_efectivo: 0, apertura_qr: 0 });
+        if (!abre.ok) return { paso: 'apertura', status: abre.status, cuerpo: await abre.text() };
+      }
+
+      const ingreso = await pedir('/api/caja/ingreso', {
+        concepto: 'Fondo para el egreso del E2E', monto, metodo_pago: 'EFECTIVO',
+      });
+      return { paso: 'ingreso', status: ingreso.status, cuerpo: await ingreso.text() };
+    }, GASTO);
+    expect(preparada.status, `${preparada.paso}: ${preparada.cuerpo}`).toBe(201);
 
     await page.goto('/caja/gasto');
     await campo(page, 'Concepto').fill(`Compra ${NOMBRE_INSUMO}`);
     await campo(page, 'Monto').fill(String(GASTO));
     await page.locator('.form-group', { hasText: 'Categoría' }).locator('select').selectOption('Insumos');
+
+    // Se espera la respuesta del servidor, no solo el clic: si el gasto se
+    // rechaza, el test tiene que decir por qué en vez de quedarse esperando
+    // una fila que nunca va a existir.
+    const respuesta = page.waitForResponse(r => r.url().includes('/api/caja/gasto') && r.request().method() === 'POST');
     await page.getByRole('button', { name: /registrar gasto/i }).click();
+    const gasto = await respuesta;
+    expect(gasto.status(), await gasto.text()).toBe(201);
 
     // El libro del turno tiene que mostrarlo como salida.
     await page.goto('/caja/movimientos');
