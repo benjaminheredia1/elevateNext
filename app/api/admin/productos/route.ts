@@ -153,7 +153,11 @@ export async function POST(req: NextRequest) {
           data: {
             nombre:         parsed.nombre,
             unidad_medida:  n.unidad_medida,
-            stock_actual:   n.stock,
+            // En cero aunque el alta traiga stock: este agregado suma lo que
+            // hay EN LAS SUCURSALES —el Centro lleva su propia cuenta y por
+            // diseño no lo toca—. Sumarlo acá y de nuevo al recibir el
+            // despacho mostraba el doble de mercadería en el consolidado.
+            stock_actual:   0,
             stock_minimo:   n.punto_reorden,
             punto_critico:  n.nivel_critico,
             costo_promedio: n.costo_unitario,
@@ -162,26 +166,34 @@ export async function POST(req: NextRequest) {
           },
         });
         insumoReventaId = insumo.id;
-        // El stock inicial pertenece a la sucursal del alta.
-        await tx.stockSucursal.create({
+
+        // El stock inicial es DEL CENTRO. Es el origen: si compró 24 aguas,
+        // esas 24 son suyas hasta que despache. Acreditarlas en una sucursal
+        // —la principal, porque el alta del Centro no manda ninguna— le daba
+        // mercadería a un local que nadie abasteció.
+        //
+        // La fila se crea aunque el stock sea 0: sin ella el producto no
+        // aparece en el inventario del Centro, y no se lo puede ni comprar ni
+        // despachar. Es el mismo hueco que el corte tapó para los productos
+        // que ya existían.
+        await tx.stockCentro.create({
           data: {
+            centro_id:      parsed.centro_id!,
             insumo_id:      insumo.id,
-            sucursal_id:    sucursalId,
             stock_actual:   n.stock,
             costo_promedio: n.costo_unitario,
             stock_minimo:   n.punto_reorden,
             punto_critico:  n.nivel_critico,
           },
         });
-        // El stock inicial queda auditado como movimiento de inventario
         if (n.stock > 0) {
-          await tx.movimientoInterno.create({
+          await tx.movimientoCentro.create({
             data: {
+              centro_id:       parsed.centro_id!,
               insumo_id:       insumo.id,
-              sucursal_id:     sucursalId,
               tipo_movimiento: 'INGRESO',
               cantidad:        n.stock,
-              descripcion:     `Stock inicial de "${parsed.nombre}" (alta de insumo de reventa)`,
+              descripcion:     `Stock inicial de "${parsed.nombre}" (alta en el Centro)`,
               costo_unitario:  n.costo_unitario,
               responsable:     String(session.id),
             },

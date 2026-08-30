@@ -25,6 +25,10 @@ describe('POST /api/admin/productos', () => {
     }
     if (createdInsumoIds.length > 0) {
       await prisma.movimientoInterno.deleteMany({ where: { insumo_id: { in: createdInsumoIds } } });
+      // El stock inicial de un alta ahora entra al Centro, asi que el insumo
+      // deja rastro ahi y la FK impide borrarlo sin limpiarlo antes.
+      await prisma.movimientoCentro.deleteMany({ where: { insumo_id: { in: createdInsumoIds } } });
+      await prisma.stockCentro.deleteMany({ where: { insumo_id: { in: createdInsumoIds } } });
       await prisma.insumo.deleteMany({ where: { id: { in: createdInsumoIds } } });
     }
   });
@@ -61,7 +65,7 @@ describe('POST /api/admin/productos', () => {
     }
   });
 
-  it('registra un movimiento INGRESO por el stock inicial del insumo de reventa', async () => {
+  it('registra el stock inicial del insumo de reventa como INGRESO del Centro', async () => {
     const { access_token } = await login('benjaherediaruiz@gmail.com', 'benja122');
     const marca = await prisma.marca.findFirstOrThrow();
 
@@ -87,7 +91,10 @@ describe('POST /api/admin/productos', () => {
     createdIds.push(body.data.id);
     createdInsumoIds.push(body.data.insumo_reventa_id);
 
-    const movimientos = await prisma.movimientoInterno.findMany({
+    // El movimiento es del CENTRO, no de una sucursal: el stock inicial de un
+    // alta es mercadería que entró al Centro, que es el origen. Antes se
+    // asentaba en la sucursal principal, que no había recibido nada.
+    const movimientos = await prisma.movimientoCentro.findMany({
       where: { insumo_id: body.data.insumo_reventa_id },
     });
     expect(movimientos).toHaveLength(1);
@@ -440,4 +447,49 @@ describe('POST /api/admin/productos — alta desde el Centro', () => {
     expect(await prisma.recetasProducto.count({ where: { producto_id: body.data.id } })).toBe(0);
   });
 
+
+  it('un REVENTA creado en el Centro nace con su stock EN EL CENTRO, no en un local', async () => {
+    // El Centro es el origen: si compra 24 aguas, esas 24 son suyas hasta que
+    // despache. El alta las acreditaba en una sucursal —la principal, porque el
+    // alta del Centro no manda ninguna— y ademas no le daba al Centro fila de
+    // inventario, con lo que el producto no se podia ni comprar ni despachar
+    // desde ahi: quedaba huerfano igual que los que arreglo el corte.
+    const access_token = await token();
+    const marca = await prisma.marca.findFirstOrThrow();
+    const sufijo = Date.now();
+
+    const response = await alta(access_token, {
+      nombre: `Agua centro ${sufijo}`,
+      descripcion: 'x',
+      precio: 8,
+      tipo: 'REVENTA',
+      estado_publicacion: 'BORRADOR',
+      marcas: [marca.id],
+      permitir_duplicado: true,
+      centro_id: centroId,
+      nuevo_insumo_reventa: { unidad_medida: 'UNIDAD', stock: 24, costo_unitario: 5.5 },
+    });
+    const body = await response.json();
+    expect(response.status, JSON.stringify(body)).toBe(201);
+    productoIds.push(body.data.id);
+    const espejoId = body.data.insumo_reventa_id as number;
+    insumoIds.push(espejoId);
+
+    const enCentro = await prisma.stockCentro.findUnique({
+      where: { centro_id_insumo_id: { centro_id: centroId, insumo_id: espejoId } },
+    });
+    expect(enCentro, 'el producto tiene que existir en el inventario del Centro').not.toBeNull();
+    expect(enCentro!.stock_actual).toBe(24);
+    expect(enCentro!.costo_promedio).toBeCloseTo(5.5, 4);
+
+    // Y ningun local recibio nada: nadie se lo despacho todavia.
+    expect(await prisma.stockSucursal.count({ where: { insumo_id: espejoId } })).toBe(0);
+
+    // El agregado del negocio arranca en cero porque cuenta lo que hay EN LAS
+    // SUCURSALES: el Centro lleva su propia cuenta aparte. Si el alta lo sumaba
+    // igual, al recibir el despacho se volvia a sumar y el inventario
+    // consolidado mostraba el doble de lo que existe.
+    const espejo = await prisma.insumo.findUniqueOrThrow({ where: { id: espejoId } });
+    expect(espejo.stock_actual).toBe(0);
+  });
 });
