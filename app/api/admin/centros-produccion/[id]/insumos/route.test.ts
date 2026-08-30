@@ -1,7 +1,8 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { NextRequest } from 'next/server';
 import { POST as POST_CENTRO } from '../../route';
-import { GET, POST } from './route';
+import { GET, POST, DELETE } from './route';
+import { PUT as PUT_INSUMO } from '@/app/api/insumo/[id]/route';
 import { login } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 
@@ -167,5 +168,86 @@ describe('/api/admin/centros-produccion/[id]/insumos', () => {
     await prisma.movimientoCentro.deleteMany({ where: { centro_id: otroCentroId } });
     await prisma.stockCentro.deleteMany({ where: { centro_id: otroCentroId } });
     await prisma.centroProduccion.delete({ where: { id: otroCentroId } });
+  });
+
+  it('editar el insumo desde el centro le cambia el costo AL CENTRO', async () => {
+    // Desde el corte el insumo bruto vive solo en el centro: si la edicion
+    // escribe el costo en una sucursal —que ya ni lo lista— no cambia nada de
+    // lo que se calcula con el (produccion, valorizado, costo de la ficha).
+    const access_token = await token();
+    const nombre = `Aceite editable ${Date.now()}`;
+    const alta = await POST(
+      pedir(`/api/admin/centros-produccion/${centroId}/insumos`, 'POST', access_token, {
+        nombre, unidad_medida: 'LT', stock_inicial: 5, costo_unitario: 10, stock_minimo: 1, punto_critico: 0,
+      }),
+      { params: Promise.resolve({ id: String(centroId) }) },
+    );
+    const insumoId = (await alta.json()).data.insumo.id as number;
+    insumoIds.push(insumoId);
+
+    const editado = await PUT_INSUMO(
+      pedir(`/api/insumo/${insumoId}`, 'PUT', access_token, {
+        centro_id: centroId, nombre: `${nombre} v2`, unidad_medida: 'LT',
+        costo_promedio: 17, stock_minimo: 2, punto_critico: 1, proveedor: 'Proveedor nuevo',
+      }),
+      { params: Promise.resolve({ id: String(insumoId) }) },
+    );
+    expect(editado.status, JSON.stringify(await editado.clone().json())).toBe(200);
+
+    const enCentro = await prisma.stockCentro.findUniqueOrThrow({
+      where: { centro_id_insumo_id: { centro_id: centroId, insumo_id: insumoId } },
+    });
+    expect(enCentro.costo_promedio).toBeCloseTo(17, 4);
+    expect(enCentro.stock_minimo).toBe(2);
+    // Y no se le invento inventario a ningun local.
+    expect(await prisma.stockSucursal.count({ where: { insumo_id: insumoId } })).toBe(0);
+
+    const catalogo = await prisma.insumo.findUniqueOrThrow({ where: { id: insumoId } });
+    expect(catalogo.nombre).toBe(`${nombre} v2`);
+    expect(catalogo.proveedor).toBe('Proveedor nuevo');
+  });
+
+  it('quitar del centro solo pasa sin stock y sin movimientos', async () => {
+    const access_token = await token();
+    const nombre = `Sal quitable ${Date.now()}`;
+    const alta = await POST(
+      pedir(`/api/admin/centros-produccion/${centroId}/insumos`, 'POST', access_token, {
+        nombre, unidad_medida: 'KG', stock_inicial: 3, costo_unitario: 2,
+      }),
+      { params: Promise.resolve({ id: String(centroId) }) },
+    );
+    const insumoId = (await alta.json()).data.insumo.id as number;
+    insumoIds.push(insumoId);
+
+    // Con stock encima, se rechaza: el kardex del centro es lo que respalda el
+    // costo de todo lo que ya salio de ahi.
+    const conStock = await DELETE(
+      pedir(`/api/admin/centros-produccion/${centroId}/insumos`, 'DELETE', access_token, { insumo_id: insumoId }),
+      { params: Promise.resolve({ id: String(centroId) }) },
+    );
+    expect(conStock.status).toBe(409);
+
+    // En cero pero con el movimiento del alta, tampoco.
+    await prisma.stockCentro.update({
+      where: { centro_id_insumo_id: { centro_id: centroId, insumo_id: insumoId } },
+      data: { stock_actual: 0 },
+    });
+    const conHistorial = await DELETE(
+      pedir(`/api/admin/centros-produccion/${centroId}/insumos`, 'DELETE', access_token, { insumo_id: insumoId }),
+      { params: Promise.resolve({ id: String(centroId) }) },
+    );
+    expect(conHistorial.status).toBe(409);
+    expect((await conHistorial.json()).error).toMatch(/Dar de baja/);
+
+    // Limpio y sin historial, sale del inventario del centro sin tocar el
+    // insumo del catalogo.
+    await prisma.movimientoCentro.deleteMany({ where: { centro_id: centroId, insumo_id: insumoId } });
+    const limpio = await DELETE(
+      pedir(`/api/admin/centros-produccion/${centroId}/insumos`, 'DELETE', access_token, { insumo_id: insumoId }),
+      { params: Promise.resolve({ id: String(centroId) }) },
+    );
+    expect(limpio.status, JSON.stringify(await limpio.clone().json())).toBe(200);
+    expect(await prisma.stockCentro.count({ where: { centro_id: centroId, insumo_id: insumoId } })).toBe(0);
+    expect(await prisma.insumo.findUnique({ where: { id: insumoId } })).not.toBeNull();
   });
 });
