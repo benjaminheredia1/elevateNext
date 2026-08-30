@@ -13,6 +13,8 @@ import CopiarProductosModal from '@/components/admin/CopiarProductosModal';
 import { useSucursales } from '@/hooks/sucursales';
 import { useQueryClient } from '@tanstack/react-query';
 import { useSucursalAdmin } from '@/hooks/sucursal-admin';
+import { sucursalDeLasAcciones } from './ambito-productos';
+import ComprarEnCentro from './ComprarEnCentro';
 import { useInventarioCentro, useRindeCentro } from '@/hooks/centro-produccion';
 import { etiquetaTipo } from './etiqueta-tipo';
 
@@ -144,6 +146,8 @@ export default function AdminProducts(
   // del store del panel: es la misma que muestra la barra lateral, y tenerla
   // acá evita la copia local que había que sincronizar con un efecto.
   const { sucursal, setSucursal, listo } = useSucursalAdmin();
+  // Ver `ambito-productos.ts`: en el Centro es NINGUNA, y por qué.
+  const sucursalActiva = sucursalDeLasAcciones(ambito, sucursal ?? '');
   const { data: sucursales = [] } = useSucursales();
   // Solo se nombra cuando hay más de un local: con uno solo sería ruido.
   const nombreSucursal = sucursales.length > 1
@@ -152,6 +156,8 @@ export default function AdminProducts(
   const [sucursalesDe, setSucursalesDe] = useState<{ id: number; nombre: string; precio: number } | null>(null);
   const [copiarAbierto, setCopiarAbierto] = useState(false);
   const [quitarConfirm, setQuitarConfirm] = useState<number | null>(null);
+  const [comprando, setComprando] = useState<{ espejoId: number; nombre: string } | null>(null);
+  const [borrarConfirm, setBorrarConfirm] = useState<number | null>(null);
   const [bajaConfirm, setBajaConfirm] = useState<number | null>(null);
   const [bajaMotivo, setBajaMotivo] = useState('');
   const [dbCategorias, setDbCategorias] = useState<string[]>(['Todos']);
@@ -206,17 +212,17 @@ export default function AdminProducts(
   // Con una sucursal elegida, "dado de baja" se lee del estado local; en el
   // consolidado, del estado del catálogo.
   const deBajaAca = (p: ApiProducto) =>
-    sucursal ? p.sucursal_estado?.disponible === false : p.estado_publicacion === 'BAJA';
+    sucursalActiva ? p.sucursal_estado?.disponible === false : p.estado_publicacion === 'BAJA';
   const activos = useMemo(
     () => productos.filter(p => !deBajaAca(p) && p.estado_publicacion !== 'BAJA' && !p.en_revision),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [productos, sucursal],
+    [productos, sucursalActiva],
   );
   const enRevision = useMemo(() => productos.filter(p => p.en_revision), [productos]);
   const eliminados = useMemo(
     () => productos.filter(p => deBajaAca(p) || p.estado_publicacion === 'BAJA'),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [productos, sucursal],
+    [productos, sucursalActiva],
   );
 
   const publicados = activos.filter(p => p.estado_publicacion === 'PUBLICADO').length;
@@ -244,6 +250,9 @@ export default function AdminProducts(
     p.nombre.toLowerCase().includes(search.toLowerCase()),
   );
 
+  /** El insumo espejo de un producto: sobre él operan las acciones del Centro. */
+  const espejoDe = (id: number) => productos.find(p => p.id === id)?.insumo_reventa_id ?? null;
+
   const setEstado = async (id: number, estado: Estado) => {
     setActionError('');
     try {
@@ -251,7 +260,7 @@ export default function AdminProducts(
       // las demás sucursales no se toca.
       await apiClient.patch(`/api/admin/productos/${id}`, {
         estado_publicacion: estado,
-        ...(sucursal ? { sucursal_id: Number(sucursal) } : {}),
+        ...(sucursalActiva ? { sucursal_id: Number(sucursalActiva) } : {}),
       });
       load();
     } catch (e: unknown) {
@@ -270,9 +279,22 @@ export default function AdminProducts(
     if (!bajaMotivo.trim()) return;
     setActionError('');
     try {
-      if (sucursal) {
+      if (esCentro) {
+        // La baja del Centro es del Centro: deja de abastecer ese producto.
+        // No es la del catálogo —esa apaga el insumo espejo en TODOS los
+        // locales— ni la de una sucursal, que solo le saca la carta a uno.
+        if (!espejoDe(id)) {
+          setActionError('Ese producto no tiene insumo espejo, así que el Centro no lo abastece.');
+          setBajaConfirm(null);
+          return;
+        }
+        await apiClient.post('/api/admin/centros-produccion/baja', {
+          centro_id: centroId, insumo_id: espejoDe(id), motivo: bajaMotivo.trim(),
+        });
+        refrescarCentro();
+      } else if (sucursalActiva) {
         await apiClient.patch(`/api/admin/productos/${id}/sucursales`, {
-          accion: 'BAJA', sucursal_id: Number(sucursal), motivo: bajaMotivo.trim(),
+          accion: 'BAJA', sucursal_id: Number(sucursalActiva), motivo: bajaMotivo.trim(),
         });
       } else {
         await apiClient.patch(`/api/admin/productos/${id}`, { estado_publicacion: 'BAJA', motivo: bajaMotivo.trim() });
@@ -289,15 +311,37 @@ export default function AdminProducts(
   };
 
   /**
+   * Borra el producto del catálogo. Es la acción del Centro: ahí nacen los
+   * productos, así que ahí se deshace el que se creó por error.
+   *
+   * El servidor rechaza con 409 el que ya tiene ventas —su historial explica
+   * plata cobrada—; para ese la salida es "Dar de baja", que lo conserva.
+   */
+  const borrarDelCatalogo = async (id: number) => {
+    setActionError('');
+    try {
+      await apiClient.delete(`/api/admin/productos/${id}`);
+      setBorrarConfirm(null);
+      load();
+      refrescarCentro();
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { error?: string } } };
+      setBorrarConfirm(null);
+      setActionError(err?.response?.data?.error ?? 'No se pudo eliminar el producto.');
+      setTimeout(() => setActionError(''), 8000);
+    }
+  };
+
+  /**
    * Saca el producto del menú de la sucursal que se está viendo. No lo borra del
    * catálogo: en los otros locales sigue igual, con su precio y su historial.
    */
   const quitarDeSucursal = async (id: number) => {
-    if (!sucursal) return;
+    if (!sucursalActiva) return;
     setActionError('');
     try {
       const res = await apiClient.delete(`/api/admin/productos/${id}/sucursales`, {
-        data: { sucursal_id: Number(sucursal) },
+        data: { sucursal_id: Number(sucursalActiva) },
       });
       setQuitarConfirm(null);
       if (res.data?.data?.modo === 'DESHABILITADO') {
@@ -315,13 +359,13 @@ export default function AdminProducts(
 
   const resolverRevision = async (id: number) => {
     setActionError('');
-    if (!sucursal) {
+    if (!sucursalActiva) {
       setActionError('Elegí una sucursal: la revisión se resuelve en el local donde se abrió.');
       setTimeout(() => setActionError(''), 5000);
       return;
     }
     try {
-      await apiClient.patch(`/api/productos/${id}/resolver-revision`, { sucursal_id: Number(sucursal) });
+      await apiClient.patch(`/api/productos/${id}/resolver-revision`, { sucursal_id: Number(sucursalActiva) });
       load();
     } catch (e: unknown) {
       const err = e as { response?: { data?: { error?: string } } };
@@ -333,10 +377,18 @@ export default function AdminProducts(
   const restaurar = async (id: number) => {
     setActionError('');
     try {
-      if (sucursal) {
+      if (esCentro) {
+        // Restaurar en el Centro es volver a abastecerlo.
+        if (espejoDe(id)) {
+          await apiClient.post('/api/admin/centros-produccion/reactivar', {
+            centro_id: centroId, insumo_id: espejoDe(id),
+          });
+          refrescarCentro();
+        }
+      } else if (sucursalActiva) {
         // Vuelve al menú de este local, sin tocar el estado del catálogo.
         await apiClient.patch(`/api/admin/productos/${id}/sucursales`, {
-          accion: 'RESTAURAR', sucursal_id: Number(sucursal),
+          accion: 'RESTAURAR', sucursal_id: Number(sucursalActiva),
         });
       } else {
         // Vuelve como BORRADOR: no se muestra en tienda ni en caja hasta publicarse.
@@ -389,7 +441,7 @@ export default function AdminProducts(
           </p>
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
-          <BotonExportarExcel url={`/api/admin/productos/export${sucursal ? `?sucursal=${sucursal}` : ''}`} />
+          <BotonExportarExcel url={`/api/admin/productos/export${sucursalActiva ? `?sucursal=${sucursalActiva}` : ''}`} />
           {/* El precio, el costo y el rinde son siempre de UN local: sumarlos
               entre sucursales daría un número que no existe en ninguna. */}
           {/* El Centro no es una sucursal: elegir un local acá no significa nada. */}
@@ -682,9 +734,11 @@ export default function AdminProducts(
                         <button
                           className="action-btn delete"
                           onClick={() => { setBajaConfirm(p.id); setBajaMotivo(''); }}
-                          title={sucursal
-                            ? `Dar de baja en ${nombreSucursal ?? 'esta sucursal'} (las demás no se tocan)`
-                            : 'Dar de baja en todo el catálogo'}
+                          title={esCentro
+                            ? 'Dar de baja en este centro: deja de abastecerlo (las sucursales que ya lo venden siguen igual)'
+                            : sucursalActiva
+                              ? `Dar de baja en ${nombreSucursal ?? 'esta sucursal'} (las demás no se tocan)`
+                              : 'Dar de baja en todo el catálogo'}
                         >
                           {BajaIcon}
                         </button>
@@ -693,7 +747,40 @@ export default function AdminProducts(
                           nada más. No se ofrece borrarlo del catálogo completo:
                           cada local administra lo suyo y no puede hacerlo
                           desaparecer de los demás. */}
-                      {sucursal && (
+                      {/* Lo que el Centro compra hecho se repone acá mismo: es
+                          donde uno mira el producto y ve que está en cero. La
+                          compra también vive en Producción, pero ese nombre no
+                          es donde se la busca. */}
+                      {esCentro && p.insumo_reventa_id && !(recetaDelCentro.get(p.id)?.length ?? 0) && (
+                        <button
+                          className="action-btn edit"
+                          onClick={() => setComprando({ espejoId: p.insumo_reventa_id!, nombre: p.nombre })}
+                          title="Comprar (este producto el Centro lo compra hecho)"
+                          /* El símbolo es el contenido, así que sin esto el
+                             botón se llama "↥" para un lector de pantalla. */
+                          aria-label="Comprar"
+                        >↥</button>
+                      )}
+                      {/* En el Centro la papelera borra del catálogo: no hay
+                          menú del que quitarlo, y es acá donde el producto
+                          nace. Con ventas encima el servidor lo rechaza. */}
+                      {esCentro && (
+                        borrarConfirm === p.id ? (
+                          <div className="delete-confirm" style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                            <button className="action-btn confirm-yes" onClick={() => borrarDelCatalogo(p.id)}>Sí</button>
+                            <button className="action-btn confirm-no" onClick={() => setBorrarConfirm(null)}>No</button>
+                          </div>
+                        ) : (
+                          <button
+                            className="action-btn delete"
+                            onClick={() => setBorrarConfirm(p.id)}
+                            title="Eliminar del catálogo (solo si nunca se vendió; si se vendió, usá dar de baja)"
+                          >
+                            {TrashIcon}
+                          </button>
+                        )
+                      )}
+                      {sucursalActiva && (
                         quitarConfirm === p.id ? (
                           <div className="delete-confirm">
                             <button className="action-btn confirm-yes" onClick={() => quitarDeSucursal(p.id)}>Sí</button>
@@ -733,9 +820,18 @@ export default function AdminProducts(
       </>
       )}
 
-      {copiarAbierto && sucursal && (
+      {comprando && centroId != null && (
+        <ComprarEnCentro
+          centroId={centroId}
+          espejoId={comprando.espejoId}
+          nombre={comprando.nombre}
+          onClose={() => { setComprando(null); load(); refrescarCentro(); }}
+        />
+      )}
+
+      {copiarAbierto && sucursalActiva && (
         <CopiarProductosModal
-          destino={Number(sucursal)}
+          destino={Number(sucursalActiva)}
           destinoNombre={nombreSucursal ?? 'esta sucursal'}
           onClose={() => setCopiarAbierto(false)}
           onCopiado={(cantidad) => {

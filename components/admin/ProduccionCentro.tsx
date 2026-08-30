@@ -8,6 +8,7 @@ import EmptyState from '@/components/ui/EmptyState';
 import MoneyText from '@/components/ui/MoneyText';
 import KpiCard from '@/components/ui/KpiCard';
 import AdminProductWizard, { type WizardInitial } from '@/components/admin/AdminProductWizard';
+import ComprarEnCentro from '@/components/admin/ComprarEnCentro';
 import {
   useRindeCentro, useDefinirRecetaCentro, useRegistrarProduccion, useInventarioCentro,
   type RindeProducto, type ItemStockCentro,
@@ -248,6 +249,8 @@ function ProducirModal({ centroId, producto, onClose }: {
  */
 interface FilaProduccion {
   producto_id: number;
+  /** El insumo espejo: sobre él se compra y se despacha. */
+  espejoId: number;
   nombre: string;
   /** ELABORADO lo produce el Centro; el resto lo compra. */
   tipo: string;
@@ -273,6 +276,7 @@ export default function ProduccionCentro({ centroId }: { centroId: number }) {
         const rinde = rindePorProducto.get(i.producto_id!) ?? null;
         return {
           producto_id: i.producto_id!,
+          espejoId: i.insumo_id,
           nombre: i.nombre,
           tipo: i.producto_tipo ?? 'REVENTA',
           enStock: i.stock_actual,
@@ -295,6 +299,7 @@ export default function ProduccionCentro({ centroId }: { centroId: number }) {
   const totalProducible = visibles.reduce((acc, f) => acc + (f.rinde?.unidades_posibles ?? 0), 0);
   const [recetaAbierta, setRecetaAbierta] = useState<{ inicial: RindeProducto | null } | null>(null);
   const [produciendo, setProduciendo] = useState<RindeProducto | null>(null);
+  const [comprando, setComprando] = useState<FilaProduccion | null>(null);
   const [creandoProducto, setCreandoProducto] = useState(false);
 
   return (
@@ -327,6 +332,14 @@ export default function ProduccionCentro({ centroId }: { centroId: number }) {
       )}
       {produciendo && (
         <ProducirModal centroId={centroId} producto={produciendo} onClose={() => setProduciendo(null)} />
+      )}
+      {comprando && (
+        <ComprarEnCentro
+          centroId={centroId}
+          espejoId={comprando.espejoId}
+          nombre={comprando.nombre}
+          onClose={() => setComprando(null)}
+        />
       )}
 
       <div className="admin-cat-filters" style={{ marginBottom: 12 }}>
@@ -400,11 +413,18 @@ export default function ProduccionCentro({ centroId }: { centroId: number }) {
                     </button>
                   </>
                 ) : (
-                  // Sin receta no hay nada que producir, pero sí se le puede
-                  // definir una: es como un comprado pasa a fabricarse.
-                  <button className="admin-btn ghost sm" onClick={() => setRecetaAbierta({ inicial: null })}>
-                    Definir receta
-                  </button>
+                  <>
+                    {/* Lo que el Centro compra se repone comprándolo: es la
+                        unica forma de que estos productos vuelvan a tener stock
+                        para despachar. */}
+                    <button className="admin-btn ghost sm" onClick={() => setComprando(row)}>
+                      Comprar
+                    </button>
+                    {/* Y si algún día se decide fabricarlo, se le define receta. */}
+                    <button className="admin-btn ghost sm" onClick={() => setRecetaAbierta({ inicial: null })}>
+                      Definir receta
+                    </button>
+                  </>
                 )}
               </div>
             )},
