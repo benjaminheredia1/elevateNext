@@ -286,6 +286,9 @@
 .admin-btn.ghost { background: transparent; color: var(--slate); border-color: var(--line); }
 .admin-btn.ghost:hover { background: var(--surface); color: var(--ink); }
 .admin-btn:disabled { opacity: .5; cursor: not-allowed; }
+/* Variante compacta para botones de acción dentro de una fila de tabla: sin
+   ella la columna de acciones se come el ancho de las columnas de datos. */
+.admin-btn.sm { padding: 5px 11px; font-size: 0.78rem; border-radius: 8px; gap: 5px; }
 .admin-btn:focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
 
 .admin-tabs { display: flex; gap: 8px; margin: 0 0 22px; overflow-x: auto; padding-bottom: 4px; }

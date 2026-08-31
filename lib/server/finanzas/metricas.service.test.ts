@@ -147,6 +147,63 @@ describe('cmvPorReceta', () => {
   });
 });
 
+describe('cmvPorReceta — costo congelado por venta', () => {
+  let productoCongeladoId: number;
+  let insumoCongeladoId: number;
+  const ventaCongeladaIds: number[] = [];
+  const rangoCongelado: RangoFechas = {
+    desde: new Date('2020-06-16T00:00:00.000-04:00'),
+    hasta: new Date('2020-06-16T23:59:59.999-04:00'),
+  };
+
+  beforeAll(async () => {
+    const insumo = await prisma.insumo.create({
+      data: {
+        nombre: `Insumo congelado ${MARCADOR} ${Date.now()}`,
+        unidad_medida: 'UNIDAD', stock_actual: 100, stock_minimo: 0, costo_promedio: 3,
+      },
+    });
+    insumoCongeladoId = insumo.id;
+
+    const producto = await prisma.producto.create({
+      data: {
+        nombre: `Producto congelado ${MARCADOR} ${Date.now()}`, descripcion: 'fixture', precio: 20,
+        tipo: 'ELABORADO', estado_publicacion: 'PUBLICADO',
+        recetaProducto_id: { create: [{ insumo_id: insumoCongeladoId, sucursal_id: await sucursalPorDefectoId(), cantidad_utilizada: 1 }] },
+      },
+    });
+    productoCongeladoId = producto.id;
+
+    const venta = await prisma.transaccion.create({
+      data: {
+        sucursal_id: await sucursalPorDefectoId(), cliente_nombre: MARCADOR, total: 20,
+        estado: 'PAGADO', payment_status: 'PAGADO', created_at: new Date('2020-06-16T12:00:00.000-04:00'),
+        transaccionesDetalles_id: {
+          create: [{ producto_id: productoCongeladoId, precio_unitario: 20, cantidad: 1, costo_unitario: 3 }],
+        },
+      },
+    });
+    ventaCongeladaIds.push(venta.id);
+  });
+
+  afterAll(async () => {
+    await prisma.transaccionesDetalles.deleteMany({ where: { transaccion_id: { in: ventaCongeladaIds } } });
+    await prisma.transaccion.deleteMany({ where: { id: { in: ventaCongeladaIds } } });
+    await prisma.recetasProducto.deleteMany({ where: { producto_id: productoCongeladoId } });
+    await prisma.producto.deleteMany({ where: { id: productoCongeladoId } });
+    await prisma.insumo.deleteMany({ where: { id: insumoCongeladoId } });
+  });
+
+  it('usa el costo congelado de la línea, no el costo actual del insumo', async () => {
+    // Si el cálculo usara el costo actual, esto lo cambiaría a 50; con costo
+    // congelado no debe moverse.
+    await prisma.insumo.update({ where: { id: insumoCongeladoId }, data: { costo_promedio: 50 } });
+
+    const cmv = await cmvPorReceta(rangoCongelado);
+    expect(cmv).toBe(3);
+  });
+});
+
 describe('masVendidos', () => {
   it('cuenta solo unidades de ventas netas del rango', async () => {
     const top = await masVendidos(RANGO);

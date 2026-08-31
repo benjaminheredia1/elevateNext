@@ -14,8 +14,12 @@
     "lint": "eslint",
     "electron:dev": "electron .",
     "electron:build": "electron-builder build --win",
-    "pretest": "dotenv -e .env.test -- prisma db push && dotenv -e .env.test -- prisma db seed",
+    "pretest": "dotenv -e .env.test -- prisma db push --accept-data-loss && dotenv -e .env.test -- prisma db seed",
     "test": "vitest run",
+    "dev:e2e": "dotenv -e .env.test -- next build && dotenv -e .env.test -- next start -p 3100",
+    "build:e2e": "dotenv -e .env.test -- next build",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
     "test:watch": "vitest"
   },
   "dependencies": {
@@ -45,6 +49,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@tailwindcss/postcss": "^4",
     "@types/bcryptjs": "^2.4.6",
     "@types/jsonwebtoken": "^9.0.10",

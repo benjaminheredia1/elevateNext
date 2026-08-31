@@ -62,6 +62,7 @@ const NAV_GROUPS = [
       { to: '/admin/category', label: 'Categorías', icon: Icons.category },
       { to: '/admin/insumos', label: 'Inventario', icon: Icons.insumos, alertKey: 'insumos' },
       { to: '/admin/inventario-sucursal', label: 'Stock por Sucursal', icon: Icons.insumos },
+      { to: '/admin/centro-produccion', label: 'Centro de Producción', icon: Icons.insumos },
       { to: '/admin/bajas', label: 'Bajas', icon: Icons.bajas },
     ],
   },

@@ -43,6 +43,49 @@ describe('faltantesPublicacion', () => {
     expect(faltantes).toContain('receta con insumos y cantidades validas');
   });
 
+  it('un ELABORADO del Centro se publica con su espejo, sin receta local', () => {
+    // Encontrado probando el recorrido completo sobre el sandbox ya cortado: un
+    // producto creado en el Centro tiene su receta en RecetaCentro, no en la
+    // sucursal, y no se podia publicar. La sucursal no arma nada — vende contra
+    // el insumo espejo, 1:1 — asi que exigirle receta local le pedia algo que
+    // por diseño ya no puede tener.
+    const faltantes = faltantesPublicacion({
+      ...productoCompleto,
+      tipo: 'ELABORADO',
+      recetaProducto_id: [],
+      insumo_reventa_id: 77,
+    });
+    expect(faltantes).not.toContain('receta con insumos y cantidades validas');
+    expect(faltantes).toHaveLength(0);
+  });
+
+  it('un ELABORADO nacido en el Centro se publica con su receta de produccion', () => {
+    // En el alta desde el Centro la receta de VENTA va vacia a proposito y el
+    // espejo todavia no existe: lo crea definirRecetaCentro en la misma
+    // transaccion. Exigir receta local ahi dejaba el producto imposible de
+    // publicar, con el mensaje "falta receta con insumos y cantidades validas"
+    // apuntando a algo que por diseño ya no puede tener.
+    const faltantes = faltantesPublicacion({
+      ...productoCompleto,
+      tipo: 'ELABORADO',
+      recetaProducto_id: [],
+      insumo_reventa_id: null,
+      tiene_receta_centro: true,
+    });
+    expect(faltantes).toHaveLength(0);
+  });
+
+  it('un ELABORADO sin receta NI espejo sigue sin poder publicarse', () => {
+    // Sin ninguna de las dos cosas no hay de donde descontar al vender.
+    const faltantes = faltantesPublicacion({
+      ...productoCompleto,
+      tipo: 'ELABORADO',
+      recetaProducto_id: [],
+      insumo_reventa_id: null,
+    });
+    expect(faltantes).toContain('receta con insumos y cantidades validas');
+  });
+
   it('sigue exigiendo insumo de reventa para productos REVENTA', () => {
     const faltantes = faltantesPublicacion({
       ...productoCompleto,

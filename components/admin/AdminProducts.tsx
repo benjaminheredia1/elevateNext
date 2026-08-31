@@ -11,9 +11,15 @@ import BotonExportarExcel from '@/components/ui/BotonExportarExcel';
 import SucursalSelector from '@/components/ui/SucursalSelector';
 import CopiarProductosModal from '@/components/admin/CopiarProductosModal';
 import { useSucursales } from '@/hooks/sucursales';
+import { useQueryClient } from '@tanstack/react-query';
 import { useSucursalAdmin } from '@/hooks/sucursal-admin';
+import { sucursalDeLasAcciones } from './ambito-productos';
+import ComprarEnCentro from './ComprarEnCentro';
+import { useInventarioCentro, useRindeCentro } from '@/hooks/centro-produccion';
+import { etiquetaTipo } from './etiqueta-tipo';
 
-type Tipo = 'ELABORADO' | 'REVENTA';
+type Tipo = 'ELABORADO' | 'REVENTA' | 'TERCIADO';
+
 type Estado = 'BORRADOR' | 'PUBLICADO' | 'ARCHIVADO' | 'BAJA';
 
 interface ApiProducto {
@@ -26,6 +32,8 @@ interface ApiProducto {
   tipo: Tipo;
   estado_publicacion: Estado;
   insumo_reventa_id: number | null;
+  /** Insumo espejo con su stock en la sucursal consultada. */
+  insumo_reventa?: { stocks?: { stock_actual: number }[] } | null;
   ventas_acumuladas: number;
   calorias: number | null;
   proteina: string | null;
@@ -59,7 +67,75 @@ const EditIcon = <svg width="15" height="15" viewBox="0 0 24 24" fill="none" str
 const TrashIcon = <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" /></svg>;
 const BajaIcon = <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="4.93" y1="4.93" x2="19.07" y2="19.07" /></svg>;
 
-export default function AdminProducts() {
+/**
+ * Catálogo de productos. La misma pantalla sirve a la sucursal y al Centro,
+ * porque el catálogo es uno solo; lo que cambia es qué necesita ver cada uno.
+ *
+ * En el CENTRO se muestra la naturaleza real del producto —Elaborado si lo
+ * fabrica, Reventa si lo compra—, que es lo que decide cómo abastecerlo. En la
+ * SUCURSAL todo se rotula Terciado: le llega hecho y no le cambia nada saber si
+ * allá lo hornearon o lo compraron.
+ *
+ * La clase de menú (Estrella, Caballo, Puzzle, Perro) NO se muestra en el
+ * Centro: se calcula con las ventas acumuladas contra el promedio, y vender es
+ * cosa de la sucursal. En el Centro solo se produce y se despacha, así que ahí
+ * "Estrella" no significaría nada.
+ */
+/**
+ * Producto en blanco para el alta desde el Centro. Nace ELABORADO y en borrador:
+ * lo que lo hace producible es la receta, y publicarlo es una decisión aparte.
+ */
+const PRODUCTO_NUEVO: WizardInitial = {
+  nombre: '', descripcion: '', precio: 0, calorias: null, proteina: null,
+  tipo: 'ELABORADO', estado_publicacion: 'BORRADOR', imagen_url: null,
+  categorias: [], marcas: [], receta: [], insumo_reventa_id: null,
+};
+
+export default function AdminProducts(
+  { ambito = 'sucursal', centroId }: { ambito?: 'sucursal' | 'centro'; centroId?: number } = {},
+) {
+  const esCentro = ambito === 'centro';
+  // En el Centro conviene separar lo que fabrica de lo que compra: son dos
+  // trabajos distintos —producir y reponer— y se miran en momentos distintos.
+  const [filtroCentro, setFiltroCentro] = useState<'todos' | 'ELABORADO' | 'REVENTA'>('todos');
+  // Cuántas unidades TIENE el Centro de cada producto, listas para despachar.
+  // No es el rinde: el rinde dice cuántas podría fabricar con el bruto de hoy,
+  // esto dice cuántas ya fabricó o compró y están esperando el envío.
+  const { data: inventarioCentro = [] } = useInventarioCentro(esCentro ? centroId ?? null : null);
+  // La ficha técnica de un producto del Centro vive en RecetaCentro, no en
+  // RecetasProducto —esa es la de sucursal y por diseño está vacía—. Sin esto
+  // la pantalla leía el lugar equivocado: mostraba "sin ficha" en productos que
+  // sí tienen receta, y al abrir el editor la receta aparecía en blanco.
+  const { data: rindeCentro = [] } = useRindeCentro(esCentro ? centroId ?? null : null);
+  const qc = useQueryClient();
+  /**
+   * Los datos del Centro —receta y stock— los trae React Query, y se piden al
+   * montar la pantalla. Sin invalidarlos, un producto recién creado no figura en
+   * ese caché: al reabrirlo la receta salía vacía, como si no se hubiera
+   * guardado, y guardarlo de nuevo la borraba de verdad.
+   */
+  const refrescarCentro = () => {
+    if (esCentro) qc.invalidateQueries({ queryKey: ['centro-produccion'] });
+  };
+  const recetaDelCentro = useMemo(() => {
+    const mapa = new Map<number, { insumo_id: number; cantidad_utilizada: number }[]>();
+    for (const r of rindeCentro) {
+      mapa.set(r.producto_id, r.insumos.map(i => ({
+        insumo_id: i.insumo_id,
+        cantidad_utilizada: i.cantidad_utilizada,
+      })));
+    }
+    return mapa;
+  }, [rindeCentro]);
+  const stockEnCentro = useMemo(() => {
+    const mapa = new Map<number, { stock: number; costo: number }>();
+    for (const fila of inventarioCentro) {
+      mapa.set(fila.insumo_id, { stock: fila.stock_actual, costo: fila.costo_promedio });
+    }
+    return mapa;
+  }, [inventarioCentro]);
+  const enCentro = (insumoId: number | null) =>
+    insumoId == null ? undefined : stockEnCentro.get(insumoId);
   const [productos, setProductos] = useState<ApiProducto[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -70,6 +146,8 @@ export default function AdminProducts() {
   // del store del panel: es la misma que muestra la barra lateral, y tenerla
   // acá evita la copia local que había que sincronizar con un efecto.
   const { sucursal, setSucursal, listo } = useSucursalAdmin();
+  // Ver `ambito-productos.ts`: en el Centro es NINGUNA, y por qué.
+  const sucursalActiva = sucursalDeLasAcciones(ambito, sucursal ?? '');
   const { data: sucursales = [] } = useSucursales();
   // Solo se nombra cuando hay más de un local: con uno solo sería ruido.
   const nombreSucursal = sucursales.length > 1
@@ -78,6 +156,8 @@ export default function AdminProducts() {
   const [sucursalesDe, setSucursalesDe] = useState<{ id: number; nombre: string; precio: number } | null>(null);
   const [copiarAbierto, setCopiarAbierto] = useState(false);
   const [quitarConfirm, setQuitarConfirm] = useState<number | null>(null);
+  const [comprando, setComprando] = useState<{ espejoId: number; nombre: string } | null>(null);
+  const [borrarConfirm, setBorrarConfirm] = useState<number | null>(null);
   const [bajaConfirm, setBajaConfirm] = useState<number | null>(null);
   const [bajaMotivo, setBajaMotivo] = useState('');
   const [dbCategorias, setDbCategorias] = useState<string[]>(['Todos']);
@@ -97,7 +177,11 @@ export default function AdminProducts() {
   const load = () => {
     const mio = ++pedido.current;
     setLoading(true);
-    apiClient.get(`/api/admin/productos${sucursal ? `?sucursal=${sucursal}` : ''}`)
+    // El Centro pide el catálogo COMPLETO, sin sucursal. Con `?sucursal=` el
+    // endpoint devuelve solo lo habilitado en ese local, así que el Centro veía
+    // el catálogo de una sucursal en vez del suyo: un producto recién creado
+    // —que todavía no llegó a ningún lado— no aparecía en su propia lista.
+    apiClient.get(`/api/admin/productos${!esCentro && sucursal ? `?sucursal=${sucursal}` : ''}`)
       .then(res => {
         // Respuesta de una carga vieja: la descarta, ya hay otra más nueva.
         if (mio !== pedido.current) return;
@@ -109,8 +193,10 @@ export default function AdminProducts() {
 
   useEffect(() => {
     // Sin la sucursal resuelta no se pide nada: el pedido saldría sin local y
-    // traería el catálogo de todo el negocio.
-    if (!listo) return;
+    // traería el catálogo de todo el negocio. En el Centro no aplica —ahí el
+    // catálogo completo es justamente lo que se quiere— y esperar a una
+    // sucursal que no se usa solo demoraría la pantalla.
+    if (!esCentro && !listo) return;
     load();
     apiClient.get('/api/categoria')
       .then(r => {
@@ -119,24 +205,24 @@ export default function AdminProducts() {
       })
       .catch(() => setDbCategorias(['Todos']));
     // El precio, el costo y el rinde dependen del local: se recarga al cambiarlo.
-  }, [sucursal, listo]);
+  }, [sucursal, listo, esCentro]);
 
   // Los productos en BAJA son la "eliminación lógica": no aparecen entre los activos,
   // ni en la tienda, ni en caja, hasta que se restauren desde la pestaña Eliminados.
   // Con una sucursal elegida, "dado de baja" se lee del estado local; en el
   // consolidado, del estado del catálogo.
   const deBajaAca = (p: ApiProducto) =>
-    sucursal ? p.sucursal_estado?.disponible === false : p.estado_publicacion === 'BAJA';
+    sucursalActiva ? p.sucursal_estado?.disponible === false : p.estado_publicacion === 'BAJA';
   const activos = useMemo(
     () => productos.filter(p => !deBajaAca(p) && p.estado_publicacion !== 'BAJA' && !p.en_revision),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [productos, sucursal],
+    [productos, sucursalActiva],
   );
   const enRevision = useMemo(() => productos.filter(p => p.en_revision), [productos]);
   const eliminados = useMemo(
     () => productos.filter(p => deBajaAca(p) || p.estado_publicacion === 'BAJA'),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [productos, sucursal],
+    [productos, sucursalActiva],
   );
 
   const publicados = activos.filter(p => p.estado_publicacion === 'PUBLICADO').length;
@@ -153,12 +239,19 @@ export default function AdminProducts() {
     const ms = p.nombre.toLowerCase().includes(search.toLowerCase());
     const mc = filterCat === 'Todos' || p.categoria_id.some(c => c.categoria?.nombre === filterCat);
     const mp = filterPub === 'todos' || p.estado_publicacion === filterPub;
-    return ms && mc && mp;
+    // En el Centro se separa lo que fabrica de lo que compra. Un TERCIADO se
+    // cuenta con los de reventa: el Centro tampoco lo produce.
+    const mt = !esCentro || filtroCentro === 'todos'
+      || (filtroCentro === 'ELABORADO' ? p.tipo === 'ELABORADO' : p.tipo !== 'ELABORADO');
+    return ms && mc && mp && mt;
   });
 
   const eliminadosFiltrados = eliminados.filter(p =>
     p.nombre.toLowerCase().includes(search.toLowerCase()),
   );
+
+  /** El insumo espejo de un producto: sobre él operan las acciones del Centro. */
+  const espejoDe = (id: number) => productos.find(p => p.id === id)?.insumo_reventa_id ?? null;
 
   const setEstado = async (id: number, estado: Estado) => {
     setActionError('');
@@ -167,7 +260,7 @@ export default function AdminProducts() {
       // las demás sucursales no se toca.
       await apiClient.patch(`/api/admin/productos/${id}`, {
         estado_publicacion: estado,
-        ...(sucursal ? { sucursal_id: Number(sucursal) } : {}),
+        ...(sucursalActiva ? { sucursal_id: Number(sucursalActiva) } : {}),
       });
       load();
     } catch (e: unknown) {
@@ -186,9 +279,22 @@ export default function AdminProducts() {
     if (!bajaMotivo.trim()) return;
     setActionError('');
     try {
-      if (sucursal) {
+      if (esCentro) {
+        // La baja del Centro es del Centro: deja de abastecer ese producto.
+        // No es la del catálogo —esa apaga el insumo espejo en TODOS los
+        // locales— ni la de una sucursal, que solo le saca la carta a uno.
+        if (!espejoDe(id)) {
+          setActionError('Ese producto no tiene insumo espejo, así que el Centro no lo abastece.');
+          setBajaConfirm(null);
+          return;
+        }
+        await apiClient.post('/api/admin/centros-produccion/baja', {
+          centro_id: centroId, insumo_id: espejoDe(id), motivo: bajaMotivo.trim(),
+        });
+        refrescarCentro();
+      } else if (sucursalActiva) {
         await apiClient.patch(`/api/admin/productos/${id}/sucursales`, {
-          accion: 'BAJA', sucursal_id: Number(sucursal), motivo: bajaMotivo.trim(),
+          accion: 'BAJA', sucursal_id: Number(sucursalActiva), motivo: bajaMotivo.trim(),
         });
       } else {
         await apiClient.patch(`/api/admin/productos/${id}`, { estado_publicacion: 'BAJA', motivo: bajaMotivo.trim() });
@@ -205,15 +311,37 @@ export default function AdminProducts() {
   };
 
   /**
+   * Borra el producto del catálogo. Es la acción del Centro: ahí nacen los
+   * productos, así que ahí se deshace el que se creó por error.
+   *
+   * El servidor rechaza con 409 el que ya tiene ventas —su historial explica
+   * plata cobrada—; para ese la salida es "Dar de baja", que lo conserva.
+   */
+  const borrarDelCatalogo = async (id: number) => {
+    setActionError('');
+    try {
+      await apiClient.delete(`/api/admin/productos/${id}`);
+      setBorrarConfirm(null);
+      load();
+      refrescarCentro();
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { error?: string } } };
+      setBorrarConfirm(null);
+      setActionError(err?.response?.data?.error ?? 'No se pudo eliminar el producto.');
+      setTimeout(() => setActionError(''), 8000);
+    }
+  };
+
+  /**
    * Saca el producto del menú de la sucursal que se está viendo. No lo borra del
    * catálogo: en los otros locales sigue igual, con su precio y su historial.
    */
   const quitarDeSucursal = async (id: number) => {
-    if (!sucursal) return;
+    if (!sucursalActiva) return;
     setActionError('');
     try {
       const res = await apiClient.delete(`/api/admin/productos/${id}/sucursales`, {
-        data: { sucursal_id: Number(sucursal) },
+        data: { sucursal_id: Number(sucursalActiva) },
       });
       setQuitarConfirm(null);
       if (res.data?.data?.modo === 'DESHABILITADO') {
@@ -231,13 +359,13 @@ export default function AdminProducts() {
 
   const resolverRevision = async (id: number) => {
     setActionError('');
-    if (!sucursal) {
+    if (!sucursalActiva) {
       setActionError('Elegí una sucursal: la revisión se resuelve en el local donde se abrió.');
       setTimeout(() => setActionError(''), 5000);
       return;
     }
     try {
-      await apiClient.patch(`/api/productos/${id}/resolver-revision`, { sucursal_id: Number(sucursal) });
+      await apiClient.patch(`/api/productos/${id}/resolver-revision`, { sucursal_id: Number(sucursalActiva) });
       load();
     } catch (e: unknown) {
       const err = e as { response?: { data?: { error?: string } } };
@@ -249,10 +377,18 @@ export default function AdminProducts() {
   const restaurar = async (id: number) => {
     setActionError('');
     try {
-      if (sucursal) {
+      if (esCentro) {
+        // Restaurar en el Centro es volver a abastecerlo.
+        if (espejoDe(id)) {
+          await apiClient.post('/api/admin/centros-produccion/reactivar', {
+            centro_id: centroId, insumo_id: espejoDe(id),
+          });
+          refrescarCentro();
+        }
+      } else if (sucursalActiva) {
         // Vuelve al menú de este local, sin tocar el estado del catálogo.
         await apiClient.patch(`/api/admin/productos/${id}/sucursales`, {
-          accion: 'RESTAURAR', sucursal_id: Number(sucursal),
+          accion: 'RESTAURAR', sucursal_id: Number(sucursalActiva),
         });
       } else {
         // Vuelve como BORRADOR: no se muestra en tienda ni en caja hasta publicarse.
@@ -268,12 +404,6 @@ export default function AdminProducts() {
     }
   };
 
-  const openCreate = () => setWizard({
-    nombre: '', descripcion: '', precio: 0, calorias: null, proteina: null,
-    tipo: 'ELABORADO', estado_publicacion: 'BORRADOR', imagen_url: null,
-    categorias: [], marcas: [], receta: [], insumo_reventa_id: null,
-  });
-
   const openEdit = (p: ApiProducto) => setWizard({
     id: p.id,
     nombre: p.nombre,
@@ -286,7 +416,12 @@ export default function AdminProducts() {
     imagen_url: p.imagen_url,
     categorias: p.categoria_id.map(c => c.categoria.id),
     marcas: p.marcas.map(m => m.marca.id),
-    receta: p.recetaProducto_id.map(r => ({ insumo_id: r.insumo_id, cantidad_utilizada: r.cantidad_utilizada })),
+    // Desde el Centro se edita SU ficha: la de producción. Cargar la local
+    // —vacía— hacía que la receta pareciera perdida y que al guardar se mandara
+    // en blanco, borrando la que sí existía.
+    receta: esCentro
+      ? (recetaDelCentro.get(p.id) ?? [])
+      : p.recetaProducto_id.map(r => ({ insumo_id: r.insumo_id, cantidad_utilizada: r.cantidad_utilizada })),
     insumo_reventa_id: p.insumo_reventa_id,
     // Qué campos toma del catálogo, para que el wizard lo diga en pantalla.
     heredado: p.heredado,
@@ -301,20 +436,37 @@ export default function AdminProducts() {
             {activos.length} productos · {publicados} publicados{enRevision.length > 0 ? ` · ${enRevision.length} en revisión` : ''}{eliminados.length > 0 ? ` · ${eliminados.length} eliminados` : ''}
             {/* Precio, costo y rinde son de este local: decirlo evita leer los
                 números de una sucursal creyendo que son de otra. */}
-            {nombreSucursal && <> · precios y rinde de <strong>{nombreSucursal}</strong></>}
+            {!esCentro && nombreSucursal && <> · precios y rinde de <strong>{nombreSucursal}</strong></>}
+            {esCentro && <> · costo y stock del <strong>Centro de Producción</strong></>}
           </p>
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
-          <BotonExportarExcel url={`/api/admin/productos/export${sucursal ? `?sucursal=${sucursal}` : ''}`} />
+          <BotonExportarExcel url={`/api/admin/productos/export${sucursalActiva ? `?sucursal=${sucursalActiva}` : ''}`} />
           {/* El precio, el costo y el rinde son siempre de UN local: sumarlos
               entre sucursales daría un número que no existe en ninguna. */}
-          <SucursalSelector value={sucursal} onChange={setSucursal} permitirTodas={false} />
+          {/* El Centro no es una sucursal: elegir un local acá no significa nada. */}
+          {!esCentro && <SucursalSelector value={sucursal} onChange={setSucursal} permitirTodas={false} />}
           {/* Un local nuevo arranca sin catálogo: este es el camino para llenarlo
-              sin duplicar productos con el mismo nombre. */}
-          {sucursales.length > 1 && sucursal && (
+              sin duplicar productos con el mismo nombre. Es de sucursal a
+              sucursal —copiar la carta de Fitbull a un local nuevo, en cero—.
+              En el Centro no significa nada: el Centro no copia cartas de
+              nadie, produce y despacha. */}
+          {!esCentro && sucursales.length > 1 && sucursal && (
             <button className="admin-btn" onClick={() => setCopiarAbierto(true)}>Agregar de otra sucursal</button>
           )}
-          <button className="admin-btn primary" onClick={openCreate}>+ Nuevo Producto</button>
+          {/* Los productos nacen en el Centro, junto con su receta de producción.
+              Desde la SUCURSAL el botón es un enlace: su catálogo administra
+              precio, foto y publicación de lo que ya existe, y el servidor
+              rechaza el alta sin centro_id igual (422) — el enlace solo evita
+              mandar al usuario a un formulario que va a rebotar.
+
+              Estando YA en el Centro, en cambio, ese enlace apuntaba a la misma
+              pantalla y no hacía nada: acá el botón abre el alta. */}
+          {esCentro ? (
+            <button className="admin-btn primary" onClick={() => setWizard(PRODUCTO_NUEVO)}>+ Nuevo Producto</button>
+          ) : (
+            <a className="admin-btn primary" href="/admin/centro-produccion">+ Nuevo Producto (en el Centro)</a>
+          )}
         </div>
       </div>
 
@@ -341,6 +493,20 @@ export default function AdminProducts() {
           <div className="admin-cat-filters">
             {PUB_FILTERS.map(f => (
               <button key={f} className={`cat-filter-btn ${filterPub === f ? 'active' : ''}`} onClick={() => setFilterPub(f)}>{pubLabel[f]}</button>
+            ))}
+          </div>
+        )}
+        {esCentro && vista === 'activos' && (
+          <div className="admin-cat-filters">
+            {([['todos', 'Todos'], ['ELABORADO', 'Los que produce'], ['REVENTA', 'Los que compra']] as const).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                className={`cat-filter-btn ${filtroCentro === id ? 'active' : ''}`}
+                onClick={() => setFiltroCentro(id)}
+              >
+                {label}
+              </button>
             ))}
           </div>
         )}
@@ -468,8 +634,14 @@ export default function AdminProducts() {
         <table className="admin-table">
           <thead>
             <tr>
-              <th>Producto</th><th>Tipo</th><th className="num">Precio</th><th className="num">Costo</th>
-              <th className="num">Food Cost</th><th>Clase</th><th className="num">Rinde</th><th>Estado</th><th>Acciones</th>
+              <th>Producto</th><th>Tipo</th>
+              {/* Precio, food cost, clase y rinde son de la SUCURSAL: los
+                  calcula la API para el local seleccionado. En el Centro
+                  mostrarían números de otro y ya no hay local que elegir. */}
+              {!esCentro && <><th className="num">Precio</th><th className="num">Costo</th><th className="num">Food Cost</th><th>Clase</th></>}
+              {esCentro && <><th className="num">Costo en el centro</th><th className="num">En el centro</th></>}
+              {!esCentro && <th className="num">Rinde</th>}
+              <th>Estado</th><th>Acciones</th>
             </tr>
           </thead>
           <tbody>
@@ -478,10 +650,22 @@ export default function AdminProducts() {
               const fc = p.food_cost_pct ?? 0;
               const margin = p.precio - costo;
               const clazz = classifyMenu(p.ventas_acumuladas || 0, margin, avgSales, avgMargin);
-              const noRecipe = p.tipo === 'ELABORADO' && p.recetaProducto_id.length === 0;
-              const rinde = p.tipo === 'REVENTA'
-                ? '—'
-                // El rinde es el del local seleccionado, no el total del negocio.
+              // En el Centro, "sin ficha" es no tener receta DE PRODUCCIÓN. La
+              // local está vacía a propósito y marcaba a todos como sin ficha.
+              // Un producto con insumo espejo NO necesita receta local: la
+              // sucursal lo vende 1:1 contra ese insumo. Marcarlo "sin ficha"
+              // era pedirle algo que desde el corte ya no le corresponde tener.
+              const noRecipe = p.tipo === 'ELABORADO' && !p.insumo_reventa_id && (esCentro
+                ? (recetaDelCentro.get(p.id)?.length ?? 0) === 0
+                : p.recetaProducto_id.length === 0);
+              // Ni reventa ni terciado tienen receta local: su rinde no se
+              // calcula desde insumos, es el stock del insumo vinculado.
+              // Con espejo, lo que la sucursal puede vender son las unidades que
+              // tiene de ese insumo: le llegaron hechas del Centro. Sin espejo
+              // —producto viejo con receta local— se calcula desde sus insumos.
+              // El rinde es siempre el del local seleccionado.
+              const rinde = p.insumo_reventa_id
+                ? Math.floor(p.insumo_reventa?.stocks?.[0]?.stock_actual ?? 0)
                 : buildablePortions(p.recetaProducto_id.map(r => ({ stock: r.insumo?.stocks?.[0]?.stock_actual ?? 0, cantidad: r.cantidad_utilizada })));
               const pub = p.estado_publicacion;
               return (
@@ -495,12 +679,30 @@ export default function AdminProducts() {
                       <span className="product-cell-desc">{(p.descripcion ?? '').slice(0, 50)}{(p.descripcion ?? '').length > 50 ? '…' : ''}</span>
                     </div>
                   </td>
-                  <td><span className="cat-badge">{p.tipo === 'REVENTA' ? 'Reventa' : 'Elaborado'}</span></td>
-                  <td className="num">Bs {p.precio}</td>
-                  <td className="num dim">Bs {costo.toFixed(1)}</td>
-                  <td className="num"><span className="margin-badge" style={{ color: foodCostColor(fc), background: 'var(--canvas)' }}>{p.precio > 0 ? Math.round(fc) : '—'}%</span></td>
-                  <td><span className="menu-class-badge">{menuClassMeta[clazz].icon} {clazz}</span></td>
-                  <td className="num"><span className={`stock-val ${rinde === 0 ? 'low' : ''}`}>{rinde}</span></td>
+                  <td><span className="cat-badge">{etiquetaTipo(p.tipo, ambito)}</span></td>
+                  {!esCentro && (
+                    <>
+                      <td className="num">Bs {p.precio}</td>
+                      <td className="num dim">Bs {costo.toFixed(1)}</td>
+                      <td className="num"><span className="margin-badge" style={{ color: foodCostColor(fc), background: 'var(--canvas)' }}>{p.precio > 0 ? Math.round(fc) : '—'}%</span></td>
+                    </>
+                  )}
+                  {!esCentro && <td><span className="menu-class-badge">{menuClassMeta[clazz].icon} {clazz}</span></td>}
+                  {esCentro && (
+                    <>
+                      {/* El costo REAL del Centro: lo que le cuesta producirlo o
+                          comprarlo, no lo que le cuesta a un local. */}
+                      <td className="num dim">
+                        {enCentro(p.insumo_reventa_id) ? `Bs ${enCentro(p.insumo_reventa_id)!.costo.toFixed(2)}` : '—'}
+                      </td>
+                      <td className="num">
+                        <span className="stock-val">{enCentro(p.insumo_reventa_id)?.stock ?? 0}</span>
+                      </td>
+                    </>
+                  )}
+                  {/* El rinde del Centro —cuántas puede fabricar con su bruto—
+                      se calcula distinto y vive en la pestaña Producción. */}
+                  {!esCentro && <td className="num"><span className={`stock-val ${rinde === 0 ? 'low' : ''}`}>{rinde}</span></td>}
                   <td><span className={`pub-badge ${pubBadgeClass[pub]}`}>{pub.toLowerCase()}</span></td>
                   <td>
                     <div className="action-btns">
@@ -532,9 +734,11 @@ export default function AdminProducts() {
                         <button
                           className="action-btn delete"
                           onClick={() => { setBajaConfirm(p.id); setBajaMotivo(''); }}
-                          title={sucursal
-                            ? `Dar de baja en ${nombreSucursal ?? 'esta sucursal'} (las demás no se tocan)`
-                            : 'Dar de baja en todo el catálogo'}
+                          title={esCentro
+                            ? 'Dar de baja en este centro: deja de abastecerlo (las sucursales que ya lo venden siguen igual)'
+                            : sucursalActiva
+                              ? `Dar de baja en ${nombreSucursal ?? 'esta sucursal'} (las demás no se tocan)`
+                              : 'Dar de baja en todo el catálogo'}
                         >
                           {BajaIcon}
                         </button>
@@ -543,7 +747,40 @@ export default function AdminProducts() {
                           nada más. No se ofrece borrarlo del catálogo completo:
                           cada local administra lo suyo y no puede hacerlo
                           desaparecer de los demás. */}
-                      {sucursal && (
+                      {/* Lo que el Centro compra hecho se repone acá mismo: es
+                          donde uno mira el producto y ve que está en cero. La
+                          compra también vive en Producción, pero ese nombre no
+                          es donde se la busca. */}
+                      {esCentro && p.insumo_reventa_id && !(recetaDelCentro.get(p.id)?.length ?? 0) && (
+                        <button
+                          className="action-btn edit"
+                          onClick={() => setComprando({ espejoId: p.insumo_reventa_id!, nombre: p.nombre })}
+                          title="Comprar (este producto el Centro lo compra hecho)"
+                          /* El símbolo es el contenido, así que sin esto el
+                             botón se llama "↥" para un lector de pantalla. */
+                          aria-label="Comprar"
+                        >↥</button>
+                      )}
+                      {/* En el Centro la papelera borra del catálogo: no hay
+                          menú del que quitarlo, y es acá donde el producto
+                          nace. Con ventas encima el servidor lo rechaza. */}
+                      {esCentro && (
+                        borrarConfirm === p.id ? (
+                          <div className="delete-confirm" style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                            <button className="action-btn confirm-yes" onClick={() => borrarDelCatalogo(p.id)}>Sí</button>
+                            <button className="action-btn confirm-no" onClick={() => setBorrarConfirm(null)}>No</button>
+                          </div>
+                        ) : (
+                          <button
+                            className="action-btn delete"
+                            onClick={() => setBorrarConfirm(p.id)}
+                            title="Eliminar del catálogo (solo si nunca se vendió; si se vendió, usá dar de baja)"
+                          >
+                            {TrashIcon}
+                          </button>
+                        )
+                      )}
+                      {sucursalActiva && (
                         quitarConfirm === p.id ? (
                           <div className="delete-confirm">
                             <button className="action-btn confirm-yes" onClick={() => quitarDeSucursal(p.id)}>Sí</button>
@@ -583,9 +820,18 @@ export default function AdminProducts() {
       </>
       )}
 
-      {copiarAbierto && sucursal && (
+      {comprando && centroId != null && (
+        <ComprarEnCentro
+          centroId={centroId}
+          espejoId={comprando.espejoId}
+          nombre={comprando.nombre}
+          onClose={() => { setComprando(null); load(); refrescarCentro(); }}
+        />
+      )}
+
+      {copiarAbierto && sucursalActiva && (
         <CopiarProductosModal
-          destino={Number(sucursal)}
+          destino={Number(sucursalActiva)}
           destinoNombre={nombreSucursal ?? 'esta sucursal'}
           onClose={() => setCopiarAbierto(false)}
           onCopiado={(cantidad) => {
@@ -604,15 +850,19 @@ export default function AdminProducts() {
         />
       )}
 
+      {/* Desde el Centro se edita el CATÁLOGO, no la ficha de un local: mandar la
+          sucursal hacía que editar un producto en el Centro escribiera los
+          overrides de Fitbull, y el encabezado lo anunciaba. */}
       {wizard && (
         <AdminProductWizard
           initial={wizard}
           avgSales={avgSales}
           avgMargin={avgMargin}
-          sucursalId={sucursal ? Number(sucursal) : undefined}
-          sucursalNombre={sucursal ? nombreSucursal ?? undefined : undefined}
+          sucursalId={esCentro || !sucursal ? undefined : Number(sucursal)}
+          sucursalNombre={esCentro || !sucursal ? undefined : nombreSucursal ?? undefined}
+          centroId={esCentro ? centroId : undefined}
           onClose={() => setWizard(null)}
-          onSaved={() => { setWizard(null); load(); }}
+          onSaved={() => { setWizard(null); load(); refrescarCentro(); }}
         />
       )}
     </div>

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireAuth, requireRole } from '@/lib/server/auth/session';
 import { handleApiError } from '@/lib/server/errors';
+import { definirRecetaCentro } from '@/lib/server/centro-produccion/produccion.service';
 import { ProductoConFichaSchema } from '@/lib/server/dto/inventario.dto';
 import { alcanceSucursal, resolverSucursal } from '@/lib/server/sucursales/sucursal.service';
 import { parseSucursal } from '@/lib/server/finanzas/rango';
@@ -36,6 +37,11 @@ export async function GET(req: NextRequest) {
           include: { insumo: { include: { stocks: { where: { sucursal_id: sucursalId } } } } },
         },
         sucursales: { where: { sucursal_id: sucursalId } },
+        // El insumo espejo con su stock EN ESTE LOCAL. Desde el corte, lo que
+        // la sucursal vende sale de acá y no de una receta: sin esto la
+        // pantalla no tiene con qué decir cuántas unidades le quedan, y mostraba
+        // 0 en productos que acababan de recibir mercadería.
+        insumo_reventa: { include: { stocks: { where: { sucursal_id: sucursalId } } } },
       },
       orderBy: { nombre: 'asc' },
     });
@@ -86,7 +92,9 @@ export async function POST(req: NextRequest) {
     requireRole(session, ['DUENO', 'ADMIN']);
 
     const body   = await req.json();
-    const parsed = ProductoConFichaSchema.parse(body);
+    // `es_alta` lo decide el handler, nunca el cliente: el spread pisa lo que
+    // venga en el body.
+    const parsed = ProductoConFichaSchema.parse({ ...body, es_alta: true });
     if (parsed.estado_publicacion === 'PUBLICADO') {
       assertPublicable({
         nombre: parsed.nombre,
@@ -98,6 +106,7 @@ export async function POST(req: NextRequest) {
         tiene_nuevo_insumo_reventa: !!parsed.nuevo_insumo_reventa,
         marcas: parsed.marcas,
         recetaProducto_id: parsed.receta,
+        tiene_receta_centro: parsed.receta_centro.length > 0,
       });
     }
 
@@ -134,13 +143,21 @@ export async function POST(req: NextRequest) {
 
       // 0. Reventa: crear el insumo de inventario automáticamente (si se enviaron sus datos)
       let insumoReventaId = parsed.insumo_reventa_id ?? null;
-      if (parsed.tipo === 'REVENTA' && parsed.nuevo_insumo_reventa && !insumoReventaId) {
+      // TERCIADO entra por el mismo camino que REVENTA: los dos necesitan un
+      // insumo propio del que descontar al vender. La diferencia está en cómo
+      // se abastece ese insumo (compra vs. producción en el Centro), que no es
+      // asunto del alta del producto.
+      if (parsed.tipo !== 'ELABORADO' && parsed.nuevo_insumo_reventa && !insumoReventaId) {
         const n = parsed.nuevo_insumo_reventa;
         const insumo = await tx.insumo.create({
           data: {
             nombre:         parsed.nombre,
             unidad_medida:  n.unidad_medida,
-            stock_actual:   n.stock,
+            // En cero aunque el alta traiga stock: este agregado suma lo que
+            // hay EN LAS SUCURSALES —el Centro lleva su propia cuenta y por
+            // diseño no lo toca—. Sumarlo acá y de nuevo al recibir el
+            // despacho mostraba el doble de mercadería en el consolidado.
+            stock_actual:   0,
             stock_minimo:   n.punto_reorden,
             punto_critico:  n.nivel_critico,
             costo_promedio: n.costo_unitario,
@@ -149,26 +166,34 @@ export async function POST(req: NextRequest) {
           },
         });
         insumoReventaId = insumo.id;
-        // El stock inicial pertenece a la sucursal del alta.
-        await tx.stockSucursal.create({
+
+        // El stock inicial es DEL CENTRO. Es el origen: si compró 24 aguas,
+        // esas 24 son suyas hasta que despache. Acreditarlas en una sucursal
+        // —la principal, porque el alta del Centro no manda ninguna— le daba
+        // mercadería a un local que nadie abasteció.
+        //
+        // La fila se crea aunque el stock sea 0: sin ella el producto no
+        // aparece en el inventario del Centro, y no se lo puede ni comprar ni
+        // despachar. Es el mismo hueco que el corte tapó para los productos
+        // que ya existían.
+        await tx.stockCentro.create({
           data: {
+            centro_id:      parsed.centro_id!,
             insumo_id:      insumo.id,
-            sucursal_id:    sucursalId,
             stock_actual:   n.stock,
             costo_promedio: n.costo_unitario,
             stock_minimo:   n.punto_reorden,
             punto_critico:  n.nivel_critico,
           },
         });
-        // El stock inicial queda auditado como movimiento de inventario
         if (n.stock > 0) {
-          await tx.movimientoInterno.create({
+          await tx.movimientoCentro.create({
             data: {
+              centro_id:       parsed.centro_id!,
               insumo_id:       insumo.id,
-              sucursal_id:     sucursalId,
               tipo_movimiento: 'INGRESO',
               cantidad:        n.stock,
-              descripcion:     `Stock inicial de "${parsed.nombre}" (alta de insumo de reventa)`,
+              descripcion:     `Stock inicial de "${parsed.nombre}" (alta en el Centro)`,
               costo_unitario:  n.costo_unitario,
               responsable:     String(session.id),
             },
@@ -221,16 +246,29 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      // 5. Habilitación en la sucursal, con su precio y disponibilidad. Sin esta
-      //    fila el producto existe en el catálogo pero no lo vende nadie.
-      await tx.productoSucursal.create({
-        data: {
-          producto_id: prod.id,
-          sucursal_id: sucursalId,
-          precio:      parsed.precio,
-          disponible:  parsed.disponible,
-        },
-      });
+      // 4b. Receta de producción del Centro. Va con el servicio del subsistema
+      //     y no a mano, para no duplicar sus validaciones (el insumo tiene que
+      //     estar en el inventario de ESE centro, sin repetidos) ni su
+      //     resolución del insumo espejo. Adentro de esta misma transacción: si
+      //     la receta se rechaza, el producto tampoco queda creado.
+      if (parsed.centro_id && parsed.receta_centro.length > 0) {
+        await definirRecetaCentro(
+          parsed.centro_id, prod.id, parsed.receta_centro, session.id, session.rol, tx,
+        );
+      }
+
+      // 5. El alta NO habilita el producto en ninguna sucursal.
+      //
+      //    Todo producto nace en el Centro —el alta exige `centro_id` desde que
+      //    el Centro es el único origen—, y ahí todavía no es de ningún local.
+      //    Se gana el derecho a venderse en una sucursal cuando le LLEGA un
+      //    envío: `recibirTraslado` lo habilita con el precio base la primera
+      //    vez que lo recibe.
+      //
+      //    Antes se creaba la fila acá, y como el alta del Centro no manda
+      //    sucursal, `resolverSucursal` caía en la principal: al local le
+      //    aparecía en el catálogo un producto que nadie le despachó, con stock
+      //    0 y sin explicación.
 
       await logAudit({
         usuarioId: session.id, rol: session.rol, accion: 'CREO',

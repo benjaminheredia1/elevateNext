@@ -127,6 +127,8 @@ model Usuario {
   // (la del cajero y la que se elige por defecto); esta tabla es el alcance
   // completo, para el admin que administra varios locales.
   sucursales_asignadas   UsuarioSucursal[]
+  traslados_enviados     Traslado[]            @relation("TrasladoEnviado")
+  traslados_recibidos    Traslado[]            @relation("TrasladoRecibido")
   created_at             DateTime              @default(now())
   update_at              DateTime              @updatedAt
 }
@@ -326,6 +328,7 @@ model Producto {
   marcas                   ProductoMarca[]
   sucursales               ProductoSucursal[]
   combos                   ComboItem[]
+  recetasCentro            RecetaCentro[]
 }
 
 model TransaccionesDetalles {
@@ -333,6 +336,14 @@ model TransaccionesDetalles {
   transaccion_id    Int
   precio_unitario   Decimal                @db.Decimal(12, 2)
   descuentoAplicado Decimal                @default(0) @db.Decimal(12, 2)
+  /**
+   * Costo de la ficha técnica de este producto AL MOMENTO de esta venta
+   * (costo_promedio del insumo en esa sucursal × consumo de la receta). Se
+   * escribe una sola vez, al crear la venta, y nunca se recalcula: es lo que
+   * hace que el CMV de un período cerrado no cambie si después se edita el
+   * costo de un insumo. Null en ventas anteriores a este campo.
+   */
+  costo_unitario    Float?
   producto_id       Int
   cantidad          Float
   /**
@@ -407,6 +418,10 @@ model Insumo {
   // Detalle por sucursal. stock_actual/costo_promedio de arriba quedan como
   // agregado del negocio (suma de todas las sucursales).
   stocks                StockSucursal[]
+  stocksCentro          StockCentro[]        @relation("StockCentroInsumo")
+  movimientosCentro     MovimientoCentro[]   @relation("MovimientoCentroInsumo")
+  recetasCentro         RecetaCentro[]       @relation("RecetaCentroInsumo")
+  trasladosDetalle      TrasladoDetalle[]    @relation("TrasladoDetalleInsumo")
   created_at            DateTime             @default(now())
   update_at             DateTime             @updatedAt
 }
@@ -494,6 +509,11 @@ enum Tipo_movimiento {
 enum ProductoTipo {
   ELABORADO
   REVENTA
+  // Se fabrica en el Centro de Producción y se despacha a los locales. En toda
+  // la lógica de venta se comporta igual que REVENTA (descuenta 1:1 su insumo
+  // espejo, sin receta local); se distingue solo para catálogo y reportes,
+  // porque su stock no se compra: se produce.
+  TERCIADO
 }
 
 enum EstadoPublicacion {
@@ -534,8 +554,161 @@ model StockSucursal {
   @@index([sucursal_id])
 }
 
+/**
+ * Centro de Producción: compra y guarda insumo bruto, y (desde la fase 2) lo
+ * transforma en productos terminados que se despachan a las sucursales. No
+ * vende, así que no tiene caja, turnos ni menú.
+ */
+model CentroProduccion {
+  id          Int                @id @default(autoincrement())
+  nombre      String
+  direccion   String?
+  activo      Boolean            @default(true)
+  stocks      StockCentro[]
+  movimientos MovimientoCentro[]
+  recetas     RecetaCentro[]
+  traslados   Traslado[]
+  created_at  DateTime           @default(now())
+  update_at   DateTime           @updatedAt
+}
+
+/**
+ * Stock de un insumo en el Centro de Producción. Mismo shape que
+ * StockSucursal — misma tabla en espíritu, distinto dueño. Acá vive el insumo
+ * bruto que el Centro compra (fideo, avena…); desde la fase 2 también va a
+ * vivir acá el insumo espejo de cada producto terciado ya producido,
+ * esperando despacho.
+ */
+model StockCentro {
+  id             Int              @id @default(autoincrement())
+  centro_id      Int
+  insumo_id      Int
+  stock_actual   Float            @default(0)
+  costo_promedio Float            @default(0)
+  stock_minimo   Float            @default(0)
+  punto_critico  Float            @default(0)
+  activo         Boolean          @default(true)
+  fecha_baja     DateTime?
+  motivo_baja    String?
+  centro         CentroProduccion @relation(fields: [centro_id], references: [id])
+  insumo         Insumo           @relation("StockCentroInsumo", fields: [insumo_id], references: [id], onDelete: Cascade)
+  created_at     DateTime         @default(now())
+  update_at      DateTime         @updatedAt
+
+  @@unique([centro_id, insumo_id])
+  @@index([centro_id])
+}
+
+/** Kardex del Centro de Producción. Mismo shape que MovimientoInterno. */
+// BOM de producción: de qué insumos brutos sale UNA unidad de un producto, en
+// este centro. Es a la producción lo que RecetasProducto es a la venta, y por
+// eso lleva centro_id igual que aquella lleva sucursal_id: dos centros pueden
+// producir el mismo producto con gramajes distintos.
+enum EstadoTraslado {
+  EN_TRANSITO
+  RECIBIDO
+  ANULADO
+}
+
+// Traslado del Centro a una sucursal. Va en un solo sentido por decisión del
+// negocio: al cerrar el turno no vuelve nada al Centro, así que no existe la
+// devolución y no hace falta ni un campo `tipo` ni el turno que la originaría.
+// Tampoco hay tabla de ubicación polimórfica como en Paladar: el insumo bruto
+// solo vive en el Centro, así que centro_id + sucursal_id directos alcanzan.
+//
+// Mientras está EN_TRANSITO la mercadería no está en ninguno de los dos
+// inventarios: ya salió del Centro y todavía no entró a la sucursal. Ese valor
+// "en camino" es real y se puede consultar sumando los detalles de los
+// traslados en tránsito; meterlo en cualquiera de las dos puntas haría que el
+// conteo físico de esa punta nunca cuadre.
+model Traslado {
+  id              Int               @id @default(autoincrement())
+  numero          Int
+  estado          EstadoTraslado    @default(EN_TRANSITO)
+  centro_id       Int
+  sucursal_id     Int
+  enviado_por_id  Int
+  recibido_por_id Int?
+  fecha_envio     DateTime          @default(now())
+  fecha_recepcion DateTime?
+  observaciones   String?
+  idempotency_key String?           @unique
+  centro          CentroProduccion  @relation(fields: [centro_id], references: [id])
+  sucursal        Sucursal          @relation(fields: [sucursal_id], references: [id])
+  enviado_por     Usuario           @relation("TrasladoEnviado", fields: [enviado_por_id], references: [id])
+  recibido_por    Usuario?          @relation("TrasladoRecibido", fields: [recibido_por_id], references: [id])
+  detalles        TrasladoDetalle[]
+  created_at      DateTime          @default(now())
+  update_at       DateTime          @updatedAt
+
+  @@unique([centro_id, numero])
+  @@index([sucursal_id, estado])
+}
+
+model TrasladoDetalle {
+  id                Int      @id @default(autoincrement())
+  traslado_id       Int
+  insumo_id         Int
+  cantidad_enviada  Float
+  cantidad_recibida Float?
+  // Costo congelado al salir del Centro: lo que valía la mercadería cuando se
+  // despachó. Si el costo del Centro cambia mientras el traslado viaja, lo que
+  // entra a la sucursal tiene que ser lo que salió, no lo que vale hoy.
+  costo_unitario    Float    @default(0)
+  traslado          Traslado @relation(fields: [traslado_id], references: [id], onDelete: Cascade)
+  insumo            Insumo   @relation("TrasladoDetalleInsumo", fields: [insumo_id], references: [id])
+
+  @@unique([traslado_id, insumo_id])
+}
+
+model RecetaCentro {
+  id                 Int              @id @default(autoincrement())
+  centro_id          Int
+  producto_id        Int
+  insumo_id          Int
+  cantidad_utilizada Float
+  centro             CentroProduccion @relation(fields: [centro_id], references: [id])
+  producto           Producto         @relation(fields: [producto_id], references: [id])
+  insumo             Insumo           @relation("RecetaCentroInsumo", fields: [insumo_id], references: [id])
+  created_at         DateTime         @default(now())
+  update_at          DateTime         @updatedAt
+
+  @@unique([centro_id, producto_id, insumo_id])
+  @@index([centro_id, producto_id])
+}
+
+model MovimientoCentro {
+  id              Int              @id @default(autoincrement())
+  // Clave de idempotencia: la manda el cliente (header `Idempotency-Key`) y
+  // nombra la INTENCIÓN del operador, no la petición. Un reintento de red o un
+  // segundo clic reenvían la misma clave, el índice único la rechaza y la
+  // transacción entera se revierte: no se duplica ni el movimiento ni el stock
+  // ni el recálculo del costo promedio. Nullable porque el histórico no la
+  // tiene y porque las operaciones absolutas (conteo) no la necesitan.
+  idempotency_key String?          @unique
+  centro_id       Int
+  insumo_id       Int
+  tipo_movimiento Tipo_movimiento
+  cantidad        Float
+  descripcion     String
+  costo_unitario  Float?
+  responsable     String?
+  centro          CentroProduccion @relation(fields: [centro_id], references: [id])
+  insumo          Insumo           @relation("MovimientoCentroInsumo", fields: [insumo_id], references: [id])
+  created_at      DateTime         @default(now())
+
+  @@index([centro_id, created_at])
+}
+
 model MovimientoInterno {
   id              Int             @id @default(autoincrement())
+  // Clave de idempotencia: la manda el cliente (header `Idempotency-Key`) y
+  // nombra la INTENCIÓN del operador, no la petición. Un reintento de red o un
+  // segundo clic reenvían la misma clave, el índice único la rechaza y la
+  // transacción entera se revierte: no se duplica ni el movimiento ni el stock
+  // ni el recálculo del costo promedio. Nullable porque el histórico no la
+  // tiene y porque las operaciones absolutas (conteo) no la necesitan.
+  idempotency_key String?         @unique
   insumo_id       Int
   tipo_movimiento Tipo_movimiento
   cantidad        Float
@@ -767,6 +940,7 @@ model Sucursal {
   promociones         PromocionSucursal[]
   stocks              StockSucursal[]
   movimientosInternos MovimientoInterno[]
+  traslados           Traslado[]
   gastosFijos         GastoFijo[]
   gastosOperativos    GastoOperativo[]
   activosFijos        ActivoFijo[]

@@ -51,6 +51,7 @@ export async function registrarCompra(
   userId: number,
   rol: Rol,
   sucursalId?: number,
+  idempotencyKey?: string | null,
 ) {
   const insumo = await tx.insumo.findUnique({ where: { id: insumoId } });
   if (!insumo) throw new NotFoundError('Insumo no encontrado');
@@ -85,6 +86,7 @@ export async function registrarCompra(
       descripcion:     nota ?? `Compra de ${insumo.nombre}`,
       costo_unitario:  costoUnitario,
       responsable:     String(userId),
+      idempotency_key: idempotencyKey ?? null,
     },
   });
 
@@ -109,6 +111,7 @@ export async function registrarMerma(
   userId: number,
   rol: Rol,
   sucursalId?: number,
+  idempotencyKey?: string | null,
 ) {
   const insumo = await tx.insumo.findUnique({ where: { id: insumoId } });
   if (!insumo) throw new NotFoundError('Insumo no encontrado');
@@ -127,6 +130,7 @@ export async function registrarMerma(
       cantidad:        -cantidad,
       descripcion,
       responsable:     String(userId),
+      idempotency_key: idempotencyKey ?? null,
     },
   });
 
@@ -285,18 +289,6 @@ export async function resolverConsumoInsumos(
   sucursalId?: number,
 ): Promise<Map<number, number>> {
   const sucursal = sucursalId ?? (await sucursalRecetaPorDefecto(tx));
-  const receta = await tx.recetasProducto.findMany({
-    where: { producto_id: productoId, sucursal_id: sucursal },
-    include: {
-      insumo: {
-        include: {
-          insumos_mixtos_hijo: {
-            include: { insumo_hijo: true },
-          },
-        },
-      },
-    },
-  });
 
   const consumo = new Map<number, number>();
 
@@ -320,25 +312,41 @@ export async function resolverConsumoInsumos(
     }
   }
 
-  for (const item of receta) {
-    consumirInsumo(item.insumo, item.cantidad_utilizada * cantidad);
-  }
-
-  // Productos de REVENTA: no tienen receta, mapean 1:1 a un insumo (1 producto = 1 unidad).
-  if (receta.length === 0) {
-    const producto = await tx.producto.findUnique({
-      where: { id: productoId },
-      select: { insumo_reventa_id: true },
+  // El insumo espejo manda sobre la receta local. Desde que el Centro es el
+  // único origen, un elaborado tiene las dos cosas: receta (histórica, la que
+  // ahora se ejecuta en el Centro al producir) y espejo (lo que la sucursal
+  // realmente descuenta al vender, 1:1). Si ganara la receta, la venta
+  // descontaría insumo bruto que ya no vive en la sucursal.
+  const producto = await tx.producto.findUnique({
+    where: { id: productoId },
+    select: { insumo_reventa_id: true },
+  });
+  if (producto?.insumo_reventa_id) {
+    const espejo = await tx.insumo.findUnique({
+      where: { id: producto.insumo_reventa_id },
+      include: { insumos_mixtos_hijo: { include: { insumo_hijo: true } } },
     });
-    if (producto?.insumo_reventa_id) {
-      const insumo = await tx.insumo.findUnique({
-        where: { id: producto.insumo_reventa_id },
-        include: { insumos_mixtos_hijo: { include: { insumo_hijo: true } } },
-      });
-      if (insumo) consumirInsumo(insumo, cantidad);
+    if (espejo) {
+      consumirInsumo(espejo, cantidad);
+      return consumo;
     }
   }
 
+  const receta = await tx.recetasProducto.findMany({
+    where: { producto_id: productoId, sucursal_id: sucursal },
+    include: {
+      insumo: {
+        include: {
+          insumos_mixtos_hijo: {
+            include: { insumo_hijo: true },
+          },
+        },
+      },
+    },
+  });
+  for (const item of receta) {
+    consumirInsumo(item.insumo, item.cantidad_utilizada * cantidad);
+  }
   return consumo;
 }
 

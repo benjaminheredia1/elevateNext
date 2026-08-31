@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { NextRequest } from 'next/server';
-import { PUT } from './route';
+import { PUT, DELETE } from './route';
 import { login } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 
@@ -95,5 +95,67 @@ describe('PUT /api/insumo/[id] — edición de costo por sucursal', () => {
       where: { insumo_id_sucursal_id: { insumo_id: insumoId, sucursal_id: sucursalId } },
     });
     expect(stock.stock_actual).toBe(10);
+  });
+});
+
+/**
+ * Regresión I-1: el borrado físico contaba recetas, reventa e insumos mixtos,
+ * pero no el inventario del Centro de Producción. La FK de StockCentro es
+ * ON DELETE CASCADE, así que la fila del centro se borraba en silencio y sin
+ * auditoría; y la de MovimientoCentro es RESTRICT, así que Postgres tiraba
+ * P2003 y el admin recibía un 500 genérico en vez del 409 explicativo que el
+ * endpoint da para todos los demás usos.
+ */
+describe('DELETE /api/insumo/[id] — insumo en uso por el Centro de Producción', () => {
+  let insumoId: number;
+  let centroId: number;
+
+  const token = async () => (await login('benjaherediaruiz@gmail.com', 'benja122')).access_token;
+
+  const pedirBorrado = (access_token: string) =>
+    new NextRequest(`http://localhost/api/insumo/${insumoId}`, {
+      method: 'DELETE',
+      headers: { authorization: `Bearer ${access_token}` },
+    });
+
+  beforeAll(async () => {
+    const centro = await prisma.centroProduccion.create({
+      data: { nombre: `Centro borrado test ${Date.now()}` },
+    });
+    centroId = centro.id;
+
+    const insumo = await prisma.insumo.create({
+      data: {
+        nombre: `Insumo del centro ${Date.now()}`,
+        unidad_medida: 'KG',
+        stock_actual: 0,
+        stock_minimo: 0,
+        costo_promedio: 1,
+      },
+    });
+    insumoId = insumo.id;
+
+    await prisma.stockCentro.create({
+      data: { centro_id: centroId, insumo_id: insumoId, stock_actual: 5, costo_promedio: 1 },
+    });
+  });
+
+  afterAll(async () => {
+    await prisma.stockCentro.deleteMany({ where: { centro_id: centroId } });
+    await prisma.centroProduccion.delete({ where: { id: centroId } });
+    await prisma.insumo.deleteMany({ where: { id: insumoId } });
+  });
+
+  it('devuelve 409 explicando el uso y NO borra la fila del centro', async () => {
+    const res = await DELETE(pedirBorrado(await token()), {
+      params: Promise.resolve({ id: String(insumoId) }),
+    });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/[Cc]entro/);
+
+    const sigue = await prisma.stockCentro.count({ where: { insumo_id: insumoId } });
+    expect(sigue).toBe(1);
+    const insumo = await prisma.insumo.findUnique({ where: { id: insumoId } });
+    expect(insumo).not.toBeNull();
   });
 });

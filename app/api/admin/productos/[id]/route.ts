@@ -100,7 +100,7 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
     requireRole(session, ['DUENO', 'ADMIN']);
     const { id } = await params;
     const productoId = Number(id);
-    const parsed = ProductoConFichaSchema.parse(await req.json());
+    const parsed = ProductoConFichaSchema.parse({ ...(await req.json()), es_alta: false });
     if (parsed.estado_publicacion === 'PUBLICADO') {
       assertPublicable({
         nombre: parsed.nombre,
@@ -112,6 +112,7 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
         tiene_nuevo_insumo_reventa: !!parsed.nuevo_insumo_reventa,
         marcas: parsed.marcas,
         recetaProducto_id: parsed.receta,
+        tiene_receta_centro: parsed.receta_centro.length > 0,
       });
     }
 
@@ -141,7 +142,7 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
 
       // Reventa: actualizar el insumo vinculado o crear uno nuevo con los datos enviados
       let insumoReventaId = parsed.insumo_reventa_id ?? null;
-      if (parsed.tipo === 'REVENTA' && parsed.nuevo_insumo_reventa) {
+      if (parsed.tipo !== 'ELABORADO' && parsed.nuevo_insumo_reventa) {
         const n = parsed.nuevo_insumo_reventa;
         const insumoData = {
           // El insumo espejo hereda siempre el nombre del producto (1:1). Con
@@ -455,7 +456,9 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
       // Baja/restauración espejada del insumo de reventa de uso exclusivo
       let insumoBajado = false;
       let insumoReactivado = false;
-      if (actual.tipo === 'REVENTA') {
+      // Vale igual para un terciado: su insumo espejo también es de uso
+      // exclusivo del producto y no tiene sentido sin él.
+      if (actual.tipo !== 'ELABORADO') {
         if (estado_publicacion === 'BAJA' && actual.estado_publicacion !== 'BAJA') {
           insumoBajado = await bajaInsumoExclusivoDeReventa(tx, actual, motivo!);
         } else if (actual.estado_publicacion === 'BAJA' && estado_publicacion !== 'BAJA') {

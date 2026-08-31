@@ -2,10 +2,21 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import apiClient from '@/hooks/api';
+import { extrasDelCentro } from './alta-desde-centro';
 import {
   foodCostColor, classifyMenu, menuClassMeta, buildablePortions, computeRecipeCost, foodCostPct,
 } from './inventoryData';
 import { convertir, unidadesEntrada, redondearCantidad } from '@/lib/unidades';
+const TIPOS_PRODUCTO = [
+  { id: 'ELABORADO' as const, titulo: '🍳 Elaborado', detalle: 'Se prepara en cocina. Requiere receta.' },
+  { id: 'REVENTA'   as const, titulo: '🏷️ Reventa',   detalle: 'Se compra terminado. Mapeo 1:1 a un insumo.' },
+  // TERCIADO ya no se ofrece: el tipo describe cómo lo abastece EL CENTRO, y el
+  // Centro solo hace dos cosas —produce o compra—. "Terciado" es cómo lo ve la
+  // sucursal, a la que todo le llega hecho, y eso lo resuelve etiquetaTipo() al
+  // dibujar. Los productos viejos marcados TERCIADO se siguen leyendo como
+  // reventa, que es lo que son desde el Centro: mercadería que compra.
+];
+
 
 export interface WizardInitial {
   id?: number;
@@ -14,7 +25,7 @@ export interface WizardInitial {
   precio: number;
   calorias: number | null;
   proteina: string | null;
-  tipo: 'ELABORADO' | 'REVENTA';
+  tipo: 'ELABORADO' | 'REVENTA' | 'TERCIADO';
   estado_publicacion: 'BORRADOR' | 'PUBLICADO' | 'ARCHIVADO';
   imagen_url: string | null;
   categorias: number[];
@@ -141,7 +152,7 @@ function Herencia({ heredado, onVolverAHeredar }: { heredado: boolean; onVolverA
   );
 }
 
-export default function AdminProductWizard({ initial, avgSales, avgMargin, sucursalId, sucursalNombre, onClose, onSaved }: {
+export default function AdminProductWizard({ initial, avgSales, avgMargin, sucursalId, sucursalNombre, centroId, onClose, onSaved }: {
   initial: WizardInitial;
   avgSales: number;
   avgMargin: number;
@@ -149,6 +160,13 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, sucur
    *  producto nacía siempre en la sucursal principal, aunque estuvieras
    *  parado en otra. */
   sucursalId?: number;
+  /**
+   * Alta desde el Centro de Producción. Cambia dos cosas: los insumos del paso
+   * de receta salen del inventario del Centro (no del de una sucursal), y lo
+   * que se guarda es la receta de PRODUCCIÓN, no la de venta. La sucursal no
+   * recibe receta: le llega el producto ya terminado.
+   */
+  centroId?: number;
   /** Solo para avisar en pantalla a qué local afecta lo que se está editando. */
   sucursalNombre?: string;
   onClose: () => void;
@@ -196,13 +214,18 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, sucur
     const params = new URLSearchParams({ incluir_inactivos: '1' });
     if (sucursalId) params.set('sucursal', String(sucursalId));
     if (sucursalId && yaEnReceta.length > 0) params.set('incluir_ids', yaEnReceta.join(','));
-    apiClient.get(`/api/insumo?${params}`).then(r => setInsumos(Array.isArray(r.data) ? r.data : r.data?.data ?? [])).catch(() => setInsumos([]));
+    // Desde el Centro la receta se arma con SU insumo bruto: ofrecer el de una
+    // sucursal daría una receta que el Centro no puede producir nunca.
+    const urlInsumos = centroId
+      ? `/api/admin/centros-produccion/${centroId}/insumos`
+      : `/api/insumo?${params}`;
+    apiClient.get(urlInsumos).then(r => setInsumos(Array.isArray(r.data) ? r.data : r.data?.items ?? r.data?.data ?? [])).catch(() => setInsumos([]));
     apiClient.get('/api/categoria').then(r => setCats(Array.isArray(r.data) ? r.data : r.data?.data ?? [])).catch(() => setCats([]));
     apiClient.get('/api/admin/marcas').then(r => setMarcas(r.data?.data ?? r.data?.items ?? [])).catch(() => setMarcas([]));
     // `initial` queda fuera a propósito: es la ficha con la que se abrió el
     // wizard y no cambia mientras está abierto.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sucursalId]);
+  }, [sucursalId, centroId]);
 
   const set = (patch: Partial<WizardInitial>) => setP(prev => ({ ...prev, ...patch }));
   const insumoOf = (id: number) => insumos.find(i => i.id === id);
@@ -223,7 +246,7 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, sucur
 
   // Al editar un reventa ya vinculado, precargar los datos de su insumo
   useEffect(() => {
-    if (p.tipo !== 'REVENTA' || !p.insumo_reventa_id) return;
+    if (p.tipo === 'ELABORADO' || !p.insumo_reventa_id) return;
     const ins = insumos.find(i => i.id === p.insumo_reventa_id);
     if (!ins) return;
     setReventaInsumo({
@@ -236,7 +259,7 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, sucur
     });
   }, [insumos, p.insumo_reventa_id, p.tipo]);
 
-  const STEPS = ['Básicos', 'Precio & Foto', p.tipo === 'REVENTA' ? 'Inventario' : 'Receta', 'Revisar'];
+  const STEPS = ['Básicos', 'Precio & Foto', p.tipo === 'ELABORADO' ? 'Receta' : 'Inventario', 'Revisar'];
 
   const uploadImagen = async (file: File) => {
     setUploading(true); setUploadError('');
@@ -253,12 +276,12 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, sucur
 
   /* ---- métricas en vivo ---- */
   const cost = useMemo(() => {
-    if (p.tipo === 'REVENTA') return reventaInsumo.costo_unitario;
+    if (p.tipo !== 'ELABORADO') return reventaInsumo.costo_unitario;
     return computeRecipeCost(p.receta.map(r => ({ costo: insumoOf(r.insumo_id)?.costo_promedio ?? 0, cantidad: r.cantidad_utilizada })));
   }, [p.tipo, p.receta, reventaInsumo.costo_unitario, insumos]);
   const margin = p.precio - cost;
   const fc = foodCostPct(cost, p.precio);
-  const rinde = p.tipo === 'REVENTA'
+  const rinde = p.tipo !== 'ELABORADO'
     ? Math.floor(reventaInsumo.stock)
     : buildablePortions(p.receta.map(r => ({ stock: insumoOf(r.insumo_id)?.stock_actual ?? 0, cantidad: r.cantidad_utilizada })));
   const clazz = classifyMenu(0, margin, avgSales, avgMargin);
@@ -278,7 +301,7 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, sucur
   if (insumosDeBajaEnReceta.length > 0) {
     gate.push(`La receta usa ${insumosDeBajaEnReceta.length} insumo(s) dado(s) de baja: ${insumosDeBajaEnReceta.map(item => insumoOf(item.insumo_id)?.nombre).join(', ')}. Reemplázalo(s) o quítalo(s).`);
   }
-  if (p.tipo === 'REVENTA' && !(reventaInsumo.costo_unitario > 0)) gate.push('Define el costo unitario del insumo de reventa.');
+  if (p.tipo !== 'ELABORADO' && !(reventaInsumo.costo_unitario > 0)) gate.push('Define el costo unitario del insumo vinculado.');
   const canPublish = gate.length === 0;
 
   const toggleMarca = (id: number) => {
@@ -324,20 +347,27 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, sucur
       sucursal_id: sucursalId,
       categorias: p.categorias, marcas: p.marcas,
       // Solo los campos persistibles: el estado de edición (ui_*) no viaja a la API
-      receta: p.tipo === 'REVENTA' ? [] : p.receta.map(({ insumo_id, cantidad_utilizada }) => ({ insumo_id, cantidad_utilizada })),
+      // Desde el Centro la misma receta viaja como `receta_centro`: es de
+      // producción, no de venta, y la sucursal no lleva ninguna.
+      receta: !centroId && p.tipo === 'ELABORADO' ? p.receta.map(({ insumo_id, cantidad_utilizada }) => ({ insumo_id, cantidad_utilizada })) : [],
       insumo_reventa_id: p.insumo_reventa_id ?? undefined,
       imagen_url: p.imagen_url || undefined,
     };
+    Object.assign(body, extrasDelCentro(centroId, p.tipo, p.receta));
     // Editando una sucursal se manda la decisión explícita de qué queda
     // heredado; el resto queda propio del local aunque hoy coincida con el
     // catálogo. Editando el catálogo no se manda: no hay de quién heredar.
     if (editandoSucursal) {
       body.heredar = (Object.keys(heredado) as CampoHeredable[]).filter(c => heredado[c]);
     }
-    if (p.tipo === 'REVENTA') {
+    if (p.tipo !== 'ELABORADO') {
       body.nuevo_insumo_reventa = {
         unidad_medida: reventaInsumo.unidad_medida,
-        stock: reventaInsumo.stock,
+        // Solo tiene sentido al crear el insumo espejo: con uno ya vinculado el
+        // servidor no toca el stock (eso va por Inventario), y reenviar el valor
+        // leído — que puede ser negativo si se vendió sin stock — solo rompía
+        // la validación del alta.
+        stock: p.insumo_reventa_id ? undefined : reventaInsumo.stock,
         costo_unitario: reventaInsumo.costo_unitario,
         punto_reorden: reventaInsumo.punto_reorden,
         nivel_critico: reventaInsumo.nivel_critico,
@@ -406,10 +436,10 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, sucur
               <div className="form-group full">
                 <label>Tipo de producto</label>
                 <div className="type-choice">
-                  {(['ELABORADO', 'REVENTA'] as const).map(t => (
-                    <div key={t} className={`type-card ${p.tipo === t ? 'active' : ''}`} onClick={() => set({ tipo: t })}>
-                      <h5>{t === 'ELABORADO' ? '🍳 Elaborado' : '🏷️ Reventa'}</h5>
-                      <p>{t === 'ELABORADO' ? 'Se prepara en cocina. Requiere receta.' : 'Se compra terminado. Mapeo 1:1 a un insumo.'}</p>
+                  {TIPOS_PRODUCTO.map(t => (
+                    <div key={t.id} className={`type-card ${p.tipo === t.id ? 'active' : ''}`} onClick={() => set({ tipo: t.id })}>
+                      <h5>{t.titulo}</h5>
+                      <p>{t.detalle}</p>
                     </div>
                   ))}
                 </div>
@@ -515,12 +545,23 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, sucur
 
           {/* STEP 3 — receta */}
           {step === 2 && (
-            p.tipo === 'REVENTA' ? (
+            p.tipo !== 'ELABORADO' ? (
               <div className="form-grid">
                 <div className="form-group full">
                   <span className="form-hint">
-                    Este producto de reventa se registrará automáticamente en <strong>Insumos</strong> como
-                    «{p.nombre || 'producto'}». 1 producto vendido = 1 unidad descontada.
+                    {p.tipo === 'TERCIADO' ? (
+                      <>
+                        Este producto terciado se registrará automáticamente en <strong>Insumos</strong> como
+                        «{p.nombre || 'producto'}». 1 producto vendido = 1 unidad descontada. Su stock no se
+                        compra: se produce en el Centro y llega al local por envío, así que acá el stock
+                        inicial normalmente va en cero.
+                      </>
+                    ) : (
+                      <>
+                        Este producto de reventa se registrará automáticamente en <strong>Insumos</strong> como
+                        «{p.nombre || 'producto'}». 1 producto vendido = 1 unidad descontada.
+                      </>
+                    )}
                   </span>
                 </div>
                 <div className="form-group">
@@ -634,11 +675,30 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, sucur
           {/* STEP 4 — revisar */}
           {step === 3 && (
             <div>
+              {/* Food cost, margen y clasificación salen del PRECIO y de las
+                  VENTAS, que son de la sucursal. Desde el Centro no significan
+                  nada —y el rinde de acá se calcula con stock de un local—, así
+                  que se muestra lo que sí es suyo: cuánto cuesta la unidad. */}
               <div className="review-stats">
-                <div className="review-stat"><div className="review-stat-label">Food Cost</div><div className="review-stat-val" style={{ color: foodCostColor(fc) }}>{Math.round(fc)}%</div></div>
-                <div className="review-stat"><div className="review-stat-label">Margen contribución</div><div className="review-stat-val" style={{ color: 'var(--fresh)' }}>Bs {margin.toFixed(1)}</div></div>
-                <div className="review-stat"><div className="review-stat-label">Clasificación</div><div className="review-stat-val">{menuClassMeta[clazz].icon} {clazz}</div></div>
-                <div className="review-stat"><div className="review-stat-label">Rinde</div><div className="review-stat-val">{rinde} porc.</div></div>
+                {centroId ? (
+                  <>
+                    <div className="review-stat">
+                      <div className="review-stat-label">Costo por unidad</div>
+                      <div className="review-stat-val" style={{ color: 'var(--orange)' }}>Bs {cost.toFixed(2)}</div>
+                    </div>
+                    <div className="review-stat">
+                      <div className="review-stat-label">Cómo se abastece</div>
+                      <div className="review-stat-val">{p.tipo === 'ELABORADO' ? 'Se produce' : 'Se compra'}</div>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="review-stat"><div className="review-stat-label">Food Cost</div><div className="review-stat-val" style={{ color: foodCostColor(fc) }}>{Math.round(fc)}%</div></div>
+                    <div className="review-stat"><div className="review-stat-label">Margen contribución</div><div className="review-stat-val" style={{ color: 'var(--fresh)' }}>Bs {margin.toFixed(1)}</div></div>
+                    <div className="review-stat"><div className="review-stat-label">Clasificación</div><div className="review-stat-val">{menuClassMeta[clazz].icon} {clazz}</div></div>
+                    <div className="review-stat"><div className="review-stat-label">Rinde</div><div className="review-stat-val">{rinde} porc.</div></div>
+                  </>
+                )}
               </div>
               {!canPublish && (
                 <div className="gate-warning">
@@ -646,7 +706,9 @@ export default function AdminProductWizard({ initial, avgSales, avgMargin, sucur
                   <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>{gate.map((g, i) => <li key={i}>{g}</li>)}</ul>
                 </div>
               )}
-              {canPublish && fc > 40 && (
+              {/* El aviso de food cost alto también es de la sucursal: sin su
+                  precio, el porcentaje no se puede calcular. */}
+              {!centroId && canPublish && fc > 40 && (
                 <div className="gate-warning" style={{ background: 'rgba(232,163,23,.1)', borderColor: 'rgba(232,163,23,.3)', color: 'var(--amber)' }}>
                   Food Cost {Math.round(fc)}% — alto. Puedes publicar igual, pero revisa precio o receta.
                 </div>

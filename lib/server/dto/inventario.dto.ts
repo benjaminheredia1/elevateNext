@@ -58,7 +58,11 @@ const ImagenProductoSchema = z.string().trim().refine(
 // Datos para crear/actualizar automáticamente el insumo de un producto de reventa
 export const NuevoInsumoReventaSchema = z.object({
   unidad_medida:  z.enum(['KG', 'GR', 'UNIDAD', 'LT', 'ML']).default('UNIDAD'),
-  stock:          z.number().min(0).default(0),
+  // Sin `min(0)`: un insumo ya vinculado puede tener stock negativo (se vendió
+  // sin stock) y el wizard reenvía ese valor tal cual al editar el producto.
+  // El servidor lo ignora salvo que esté creando el insumo, y ese único caso
+  // es el que valida el superRefine de ProductoConFichaSchema.
+  stock:          z.number().default(0),
   costo_unitario: z.number().min(0).default(0),
   punto_reorden:  z.number().min(0).default(0),
   nivel_critico:  z.number().min(0).default(0),
@@ -72,7 +76,7 @@ export const ProductoConFichaSchema = z.object({
   precio:             z.number().positive(),
   imagen_url:         ImagenProductoSchema.optional(),
   disponible:         z.boolean().optional().default(true),
-  tipo:               z.enum(['ELABORADO', 'REVENTA']).optional().default('ELABORADO'),
+  tipo:               z.enum(['ELABORADO', 'REVENTA', 'TERCIADO']).optional().default('ELABORADO'),
   estado_publicacion: z.enum(['BORRADOR', 'PUBLICADO', 'ARCHIVADO']).optional().default('BORRADOR'),
   calorias:           z.number().int().positive().optional(),
   proteina:           z.string().optional(),
@@ -81,6 +85,17 @@ export const ProductoConFichaSchema = z.object({
   categorias:         z.array(z.number().int().positive()).optional().default([]),
   marcas:             z.array(z.number().int().positive()).optional().default([]),
   receta:             z.array(ItemRecetaSchema).optional().default([]),
+  // Alta desde el Centro: lo que se guarda es la receta de PRODUCCIÓN
+  // (RecetaCentro), no la de venta. Un producto que nace en el Centro no lleva
+  // receta local: la sucursal lo descuenta 1:1 contra su insumo espejo.
+  centro_id:          z.number().int().positive().optional(),
+  receta_centro:      z.array(ItemRecetaSchema).optional().default([]),
+  /**
+   * Si esta petición está CREANDO el producto. Lo pone el handler, no el
+   * cliente: el POST parsea con `es_alta: true` y el PUT con `false`, y el
+   * spread hace que lo que mande el body no pueda ganarle.
+   */
+  es_alta:            z.boolean().default(false),
   // Sucursal cuya ficha técnica y precio se están editando. Si no viene, se usa
   // la principal: mantiene compatible el alta de producto de una sola sucursal.
   sucursal_id:        z.number().int().positive().optional(),
@@ -97,14 +112,48 @@ export const ProductoConFichaSchema = z.object({
   // usuario confirma que igual quiere uno nuevo (dos platos parecidos).
   permitir_duplicado: z.boolean().optional().default(false),
 }).superRefine((data, ctx) => {
-  // Exclusión de tipos: REVENTA descuenta 1:1 de su insumo vinculado; si
-  // además tuviera receta, el descuento de stock usaría la receta e ignoraría
-  // el insumo de reventa (comportamiento ambiguo).
-  if (data.tipo === 'REVENTA' && data.receta.length > 0) {
+  // Exclusión de tipos: REVENTA y TERCIADO descuentan 1:1 de su insumo
+  // vinculado; si además tuvieran receta, el descuento de stock usaría la
+  // receta e ignoraría el insumo (comportamiento ambiguo). La receta de un
+  // terciado vive en el Centro (RecetaCentro) y se consume al producir, no al
+  // vender: no es la misma receta ni el mismo momento.
+  if (data.tipo !== 'ELABORADO' && data.receta.length > 0) {
     ctx.addIssue({
       code: 'custom',
       path: ['receta'],
-      message: 'Un producto de REVENTA no lleva receta: su inventario es el insumo vinculado 1:1.',
+      message: `Un producto de ${data.tipo} no lleva receta de venta: su inventario es el insumo vinculado 1:1.`,
+    });
+  }
+
+  // Desde que el Centro es el único origen, un producto nace ahí. La sucursal
+  // administra precio, foto y publicación de lo que ya existe, no crea
+  // catálogo. Va server-side porque esconder el botón no es autorización.
+  if (data.es_alta && !data.centro_id) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['centro_id'],
+      message: 'Los productos se crean desde el Centro de Producción.',
+    });
+  }
+
+  if (data.receta_centro.length > 0 && !data.centro_id) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['centro_id'],
+      message: 'Una receta de producción necesita el centro que la ejecuta.',
+    });
+  }
+
+  // El stock enviado solo se escribe cuando el insumo espejo todavía no existe
+  // (alta): ahí sí es un stock inicial y no puede arrancar en negativo. Con un
+  // insumo ya vinculado el valor es informativo — las correcciones de stock van
+  // por Inventario (AJUSTE) — y exigirle >= 0 bloqueaba editar cualquier
+  // producto que se hubiera vendido sin stock.
+  if (!data.insumo_reventa_id && data.nuevo_insumo_reventa && data.nuevo_insumo_reventa.stock < 0) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['nuevo_insumo_reventa', 'stock'],
+      message: 'El stock inicial no puede ser negativo.',
     });
   }
 });

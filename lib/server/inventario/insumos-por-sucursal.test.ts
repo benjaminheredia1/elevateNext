@@ -25,9 +25,19 @@ let insumoA: number;
 let insumoReceta: number;
 let productoId: number;
 
-/** Ids de insumo que la API devuelve para una sucursal. */
+/**
+ * Ids de insumo que la API devuelve para una sucursal.
+ *
+ * Va con `incluir_brutos=1` porque lo que se prueba en este archivo es la
+ * MECANICA del inventario por local —que traer no mueva mercaderia, que quitar
+ * no borre el insumo del negocio, que copiar una receta arrastre sus insumos—,
+ * con fixtures de insumo bruto. Desde que la sucursal solo lista producto
+ * terminado, sin este parametro el listado los esconderia y estos casos no
+ * distinguirian nada. Que el bruto NO se vea por defecto se prueba aparte, en
+ * app/api/insumo/route.test.ts.
+ */
 async function inventarioDe(sucursalId: number, extra = '') {
-  const req = new NextRequest(`http://localhost/api/insumo?sucursal=${sucursalId}${extra}`, {
+  const req = new NextRequest(`http://localhost/api/insumo?sucursal=${sucursalId}&incluir_brutos=1${extra}`, {
     headers: { authorization: `Bearer ${token}` },
   });
   const body = await (await LISTAR_INSUMOS(req)).json();

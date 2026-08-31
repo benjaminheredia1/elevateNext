@@ -40,7 +40,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     // `Insumo` (agregado) de `StockSucursal` (por local).
     const {
       categoria_insumo, costo_promedio, equivalencia_cantidad, equivalencia_unidad, nombre, proveedor,
-      punto_critico, stock_minimo, unidad_medida, sucursal_id,
+      punto_critico, stock_minimo, unidad_medida, sucursal_id, centro_id,
     } = await request.json();
     const tieneEquivalencia = equivalencia_unidad && equivalencia_cantidad;
     const costoNum = Number(costo_promedio || 0);
@@ -52,7 +52,12 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     // Insumo de acá abajo queda como catálogo/fallback para un local que
     // todavía no maneja este insumo. Sin escribir también en StockSucursal,
     // editar el costo acá no movía nada de lo que se calcula con él.
-    const sucursalId = await resolverSucursal(sucursal_id);
+    // Con `centro_id` la edición es del Centro y su costo va a StockCentro.
+    // Desde el corte el insumo bruto vive SOLO ahí: mandar su costo a una
+    // sucursal —que ya ni lo lista— era escribirlo en un lugar que nadie lee,
+    // el mismo bug que arreglamos del lado de la sucursal pero al revés.
+    const centroId = Number(centro_id) || null;
+    const sucursalId = centroId ? null : await resolverSucursal(sucursal_id);
 
     const insumo = await prisma.$transaction(async (tx) => {
       const actualizado = await tx.insumo.update({
@@ -70,11 +75,23 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
         },
       });
 
-      await obtenerOCrearStock(insumoId, sucursalId, tx);
-      await tx.stockSucursal.update({
-        where: { insumo_id_sucursal_id: { insumo_id: insumoId, sucursal_id: sucursalId } },
-        data: { costo_promedio: costoNum, stock_minimo: minimoNum, punto_critico: criticoNum },
-      });
+      if (centroId) {
+        const enCentro = await tx.stockCentro.findUnique({
+          where: { centro_id_insumo_id: { centro_id: centroId, insumo_id: insumoId } },
+          select: { id: true },
+        });
+        if (!enCentro) throw new NotFoundError('El insumo no está en el inventario de ese centro');
+        await tx.stockCentro.update({
+          where: { centro_id_insumo_id: { centro_id: centroId, insumo_id: insumoId } },
+          data: { costo_promedio: costoNum, stock_minimo: minimoNum, punto_critico: criticoNum },
+        });
+      } else {
+        await obtenerOCrearStock(insumoId, sucursalId!, tx);
+        await tx.stockSucursal.update({
+          where: { insumo_id_sucursal_id: { insumo_id: insumoId, sucursal_id: sucursalId! } },
+          data: { costo_promedio: costoNum, stock_minimo: minimoNum, punto_critico: criticoNum },
+        });
+      }
 
       return actualizado;
     });
@@ -82,7 +99,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     await logAudit({
       usuarioId: session.id, rol: session.rol, accion: 'MODIFICO',
       entidad: 'Insumo', entidadId: insumoId,
-      detalle: `Editó insumo "${insumo.nombre}" (costo en sucursal #${sucursalId}: ${costoNum})`,
+      detalle: `Editó insumo "${insumo.nombre}" (costo en ${centroId ? `el centro #${centroId}` : `sucursal #${sucursalId}`}: ${costoNum})`,
       ip: getClientIp(request), userAgent: request.headers.get('user-agent'),
     });
 
@@ -115,6 +132,12 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
       where: { insumo_reventa_id: insumoId },
     });
 
+    // Verificar inventario del Centro de Producción. Sin este conteo el borrado
+    // pasaba: StockCentro es ON DELETE CASCADE (la fila del centro desaparecía
+    // sin auditoría) y MovimientoCentro es RESTRICT (P2003 → 500 genérico en
+    // vez del 409 explicativo que damos para todos los demás usos).
+    const enCentros = await prisma.stockCentro.count({ where: { insumo_id: insumoId } });
+
     // Verificar insumos mixtos
     const [comoHijo, comoPadre] = await Promise.all([
       prisma.insumoMixtoDetalle.count({ where: { insumo_hijo_id: insumoId } }),
@@ -133,6 +156,14 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     }
     if (comoHijo || comoPadre) {
       usos.push('insumos mixtos — quita esas referencias primero');
+    }
+    if (enCentros) {
+      usos.push(
+        // No se ofrece salida: dar de baja en el centro conserva la fila de
+        // StockCentro (activo: false), así que no destraba el borrado. Hoy no
+        // existe un "quitar del centro" equivalente al de sucursales.
+        `${enCentros} centro(s) de producción — el insumo es parte de su inventario y no puede eliminarse del catálogo`
+      );
     }
 
     if (usos.length > 0) {

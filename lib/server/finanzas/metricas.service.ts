@@ -5,8 +5,10 @@
  *
  * - Ventas (devengado): Transaccion ENTREGADO/PAGADO, sin cortesías ni
  *   canceladas. Incluye fiados y pagos online aunque no hayan tocado caja.
- * - CMV: consumo por receta de lo vendido × costo_promedio actual del insumo
- *   (no las compras del período; esas pertenecen al flujo de caja).
+ * - CMV: consumo por receta de lo vendido × costo CONGELADO en cada línea al
+ *   momento de vender; las líneas anteriores a ese campo (sin costo congelado)
+ *   caen al costo actual del insumo (no las compras del período; esas
+ *   pertenecen al flujo de caja).
  * - Gastos operativos: MovimientoCaja GASTO_OPERATIVO (sin categoría Insumos)
  *   + gastos fijos prorrateados por día.
  */
@@ -81,37 +83,45 @@ export async function ventasNetas(rango: RangoFechas, sucursal?: number): Promis
 }
 
 /**
- * CMV del período: consumo por receta de lo vendido × costo_promedio actual.
- * Productos sin receta (o de reventa sin insumo espejo) aportan 0.
+ * CMV del período: suma el costo CONGELADO de cada línea vendida
+ * (costo_unitario × cantidad). Las líneas de antes de este cambio no tienen
+ * costo congelado (quedaron en null) y caen al costo actual del insumo, igual
+ * que se comportaba todo el sistema hasta ahora — sin eso, un reporte de un
+ * período viejo se quedaría en blanco en vez de aproximar.
  */
 export async function cmvPorReceta(rango: RangoFechas, sucursal?: number): Promise<number> {
   const detalles = await prisma.transaccionesDetalles.findMany({
     where: { transaccion: whereVentasNetas(rango, sucursal) },
-    select: { producto_id: true, cantidad: true, transaccion: { select: { sucursal_id: true } } },
+    select: {
+      producto_id: true, cantidad: true, costo_unitario: true,
+      transaccion: { select: { sucursal_id: true } },
+    },
   });
 
-  // Se agrupa por (producto, sucursal) porque la ficha técnica es de cada local:
-  // el mismo plato puede llevar gramajes —y por tanto costos— distintos.
-  const cantidades = new Map<string, { productoId: number; sucursalId: number; cantidad: number }>();
+  // Las líneas sin costo congelado necesitan el costo en vivo. Se resuelven todas
+  // juntas antes de sumar: con `await` dentro del bucle, cada ficha técnica esperaba
+  // a la anterior, y como las ventas previas a este campo nunca se backfillean, ese
+  // camino es el de TODOS los reportes con datos viejos — serializarlo son cientos
+  // de consultas en fila contra una base remota.
+  const clavesPendientes = new Map<string, { productoId: number; sucursalId: number }>();
   for (const detalle of detalles) {
+    if (detalle.costo_unitario != null) continue;
     const sucursalId = detalle.transaccion.sucursal_id;
-    const clave = `${detalle.producto_id}:${sucursalId}`;
-    const previo = cantidades.get(clave);
-    if (previo) previo.cantidad += Number(detalle.cantidad);
-    else cantidades.set(clave, { productoId: detalle.producto_id, sucursalId, cantidad: Number(detalle.cantidad) });
+    clavesPendientes.set(`${detalle.producto_id}:${sucursalId}`, { productoId: detalle.producto_id, sucursalId });
   }
-
-  const costos = await Promise.all(
-    Array.from(cantidades.values()).map(async (item) => ({
-      ...item,
-      costo: await costoFichaTecnica(item.productoId, undefined, item.sucursalId),
-    })),
-  );
+  const costoEnVivo = new Map(await Promise.all(
+    Array.from(clavesPendientes, async ([clave, { productoId, sucursalId }]): Promise<[string, number]> =>
+      [clave, await costoFichaTecnica(productoId, undefined, sucursalId)]),
+  ));
 
   let cmv = 0;
-  for (const { costo, cantidad } of costos) {
-    cmv += costo * cantidad;
+  for (const detalle of detalles) {
+    const costo = detalle.costo_unitario != null
+      ? detalle.costo_unitario
+      : (costoEnVivo.get(`${detalle.producto_id}:${detalle.transaccion.sucursal_id}`) ?? 0);
+    cmv += costo * Number(detalle.cantidad);
   }
+
   return Number(cmv.toFixed(2));
 }
 
