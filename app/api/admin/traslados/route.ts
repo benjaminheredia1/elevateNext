@@ -5,6 +5,7 @@ import { handleApiError, ValidationError } from '@/lib/server/errors';
 import { leerClaveIdempotencia } from '@/lib/server/idempotencia';
 import { CrearEnvioSchema, ESTADOS_TRASLADO } from '@/lib/server/dto/centro-produccion.dto';
 import { crearEnvio, listarTraslados, valorEnTransito } from '@/lib/server/centro-produccion/traslados.service';
+import { OPCIONES_TX_TRASLADO } from '@/lib/server/centro-produccion/traslados.tx';
 
 /**
  * GET /api/admin/traslados?centro_id=&sucursal_id=&estado=
@@ -59,11 +60,12 @@ export async function POST(req: NextRequest) {
     const parsed = CrearEnvioSchema.parse(await req.json());
     const clave = leerClaveIdempotencia(req);
 
-    const result = await prisma.$transaction((tx) =>
-      crearEnvio(
+    const result = await prisma.$transaction(
+      (tx) => crearEnvio(
         tx, parsed.centro_id, parsed.sucursal_id, parsed.lineas,
         parsed.observaciones, session.id, session.rol, clave,
       ),
+      OPCIONES_TX_TRASLADO,
     );
 
     return NextResponse.json({ data: result }, { status: 201 });
