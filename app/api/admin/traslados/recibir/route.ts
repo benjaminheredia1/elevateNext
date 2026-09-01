@@ -4,6 +4,7 @@ import { requireAuth, requireRole, ForbiddenError } from '@/lib/server/auth/sess
 import { handleApiError, NotFoundError } from '@/lib/server/errors';
 import { RecibirTrasladoSchema } from '@/lib/server/dto/centro-produccion.dto';
 import { recibirTraslado } from '@/lib/server/centro-produccion/traslados.service';
+import { OPCIONES_TX_TRASLADO } from '@/lib/server/centro-produccion/traslados.tx';
 
 /**
  * Recibir es del local que recibe: lo hace el CAJERO de esa sucursal, o
@@ -28,8 +29,9 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const result = await prisma.$transaction((tx) =>
-      recibirTraslado(tx, parsed.traslado_id, parsed.recibido, session.id, session.rol),
+    const result = await prisma.$transaction(
+      (tx) => recibirTraslado(tx, parsed.traslado_id, parsed.recibido, session.id, session.rol),
+      OPCIONES_TX_TRASLADO,
     );
 
     return NextResponse.json({ data: result });

@@ -38,6 +38,26 @@ export function handleApiError(e: unknown): NextResponse {
     }
     return NextResponse.json({ error: 'Ya existe un registro con esos datos', code: 'DUPLICADO' }, { status: 409 });
   }
+
+  // P2028 = la transacción expiró · P2024 = no consiguió conexión del pool.
+  // Los dos son la base tardando más de lo que el margen permite, y los dos
+  // revierten TODO: no queda nada a medias. Sin este mapeo caen al 500 genérico
+  // de abajo y el operador ve "Error interno", que no le dice ni que puede
+  // reintentar ni que su mercadería sigue donde estaba. Fue exactamente lo que
+  // pasó con las recepciones de traslados contra la base remota.
+  if (
+    e instanceof Prisma.PrismaClientKnownRequestError &&
+    (e.code === 'P2028' || e.code === 'P2024')
+  ) {
+    console.error('Timeout de transacción:', e.code, e.message);
+    return NextResponse.json(
+      {
+        error: 'La base de datos tardó demasiado y la operación se canceló. No se registró nada: podés reintentar.',
+        code: 'TIMEOUT',
+      },
+      { status: 503 },
+    );
+  }
   console.error('API error:', e);
   return NextResponse.json({ error: 'Error interno' }, { status: 500 });
 }
