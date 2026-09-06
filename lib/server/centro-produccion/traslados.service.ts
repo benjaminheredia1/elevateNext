@@ -26,6 +26,7 @@ import { ConflictError, NotFoundError, ValidationError } from '@/lib/server/erro
 import { logAudit } from '@/lib/server/audit/audit.service';
 import { ajustarStock as ajustarStockCentro } from './stock-centro.service';
 import { registrarCompra as acreditarEnSucursal } from '@/lib/server/inventario/stock-sucursal.service';
+import { normalizarNombre } from '@/lib/server/insumos/nombres';
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -33,6 +34,7 @@ export interface LineaEnvio {
   insumo_id: number;
   cantidad: number;
 }
+
 
 /**
  * Correlativo por centro. Se calcula dentro de la transacción y lo protege el
@@ -106,12 +108,41 @@ export async function crearEnvio(
     },
   });
 
+  // Renglones que el local destino ya maneja, para detectar homónimos. Es una
+  // lista corta (los insumos de una sucursal) y se compara en memoria porque la
+  // colisión real es por tilde y mayúscula —"Sandwich pollo" vs "Sándwich
+  // pollo"—, que ningún índice de Postgres iguala sin extensiones.
+  const enDestino = await tx.stockSucursal.findMany({
+    where: { sucursal_id: sucursalId, activo: true },
+    select: { insumo_id: true, insumo: { select: { nombre: true } } },
+  });
+  const homonimosEnDestino = new Map<string, number[]>();
+  for (const fila of enDestino) {
+    const clave = normalizarNombre(fila.insumo.nombre);
+    homonimosEnDestino.set(clave, [...(homonimosEnDestino.get(clave) ?? []), fila.insumo_id]);
+  }
+
   // Se valida todo antes de descontar: el mensaje tiene que decir qué línea
   // falló, no romperse en la mitad del despacho.
   const problemas: string[] = [];
   for (const linea of lineas) {
     const stock = stocks.find(s => s.insumo_id === linea.insumo_id);
     if (!stock) { problemas.push(`El insumo ${linea.insumo_id} no está en el inventario del centro`); continue; }
+    // El local ya maneja OTRO insumo con este nombre. Despachar igual es lo que
+    // partió el inventario del snack en septiembre de 2026: el Centro abastecía
+    // un renglón y la caja descontaba el otro, así que lo enviado no bajaba
+    // nunca y lo vendido se iba a negativo. Acá es donde tiene que frenarse,
+    // porque es el único punto que sabe a qué sucursal va la mercadería.
+    const hermanos = (homonimosEnDestino.get(normalizarNombre(stock.insumo.nombre)) ?? [])
+      .filter(id => id !== linea.insumo_id);
+    if (hermanos.length > 0) {
+      problemas.push(
+        `${sucursal.nombre} ya maneja "${stock.insumo.nombre}" como el insumo #${hermanos.join(', #')}: ` +
+        `si despachás este, el local recibe en un renglón y descuenta del otro. ` +
+        `Reponé el que ya vende, o unificá los dos antes de enviar`,
+      );
+      continue;
+    }
     // A la sucursal solo va producto TERMINADO. Mandarle insumo bruto le
     // devolvería algo que ya no sabe manejar: con el corte perdió las recetas,
     // la compra y el alta de insumo, así que esa harina se quedaría ahí sin

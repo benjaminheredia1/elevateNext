@@ -10,6 +10,7 @@ import { costoFichaTecnica } from '@/lib/server/inventario/inventario.service';
 import { logAudit } from '@/lib/server/audit/audit.service';
 import { assertPublicable } from '@/lib/server/productos/publicacion';
 import { resolverProducto } from '@/lib/server/productos/overrides';
+import { buscarProductoHomonimo } from '@/lib/server/productos/nombres';
 
 // ─── GET: listar productos con estado, costo y food cost ────────────
 export async function GET(req: NextRequest) {
@@ -115,15 +116,12 @@ export async function POST(req: NextRequest) {
     // y obliga a mantener foto y descripción por duplicado, así que se avisa y
     // se ofrece habilitar el que ya existe. No se bloquea: puede haber dos platos
     // legítimamente parecidos, y para eso está `permitir_duplicado`.
+    //
+    // La comparación ignora mayúsculas, tildes y espacios de más: con el nombre
+    // crudo, "Sándwich pollo" y "Sandwich pollo" pasaban como productos
+    // distintos y el aviso no llegaba a aparecer.
     if (!parsed.permitir_duplicado) {
-      const existente = await prisma.producto.findFirst({
-        where: { nombre: { equals: parsed.nombre.trim(), mode: 'insensitive' }, estado_publicacion: { not: 'BAJA' } },
-        select: {
-          id: true,
-          nombre: true,
-          sucursales: { select: { sucursal: { select: { id: true, nombre: true } } } },
-        },
-      });
+      const existente = await buscarProductoHomonimo(parsed.nombre);
       if (existente) {
         return NextResponse.json({
           error: `Ya existe un producto llamado "${existente.nombre}".`,

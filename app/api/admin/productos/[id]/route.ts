@@ -11,6 +11,7 @@ import { assertPublicable } from '@/lib/server/productos/publicacion';
 import { resolverSucursal, alcanceSucursal } from '@/lib/server/sucursales/sucursal.service';
 import { obtenerOCrearStock } from '@/lib/server/inventario/stock-sucursal.service';
 import { bajaInsumoExclusivoDeReventa, reactivarInsumoDeReventaSiCascada } from '@/lib/server/insumos/insumos.service';
+import { buscarProductoHomonimo } from '@/lib/server/productos/nombres';
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -138,6 +139,20 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
         throw new ValidationError(
           'El tipo (elaborado/reventa) es del catálogo y se cambia desde la vista consolidada del dueño: afecta a todas las sucursales.',
         );
+      }
+
+      // Renombrar un producto para que se llame como otro que ya existe deja el
+      // mismo par indistinguible que un alta duplicada, y por esta puerta no
+      // había ningún aviso. Solo aplica al catálogo: editando un local, el
+      // nombre es un override suyo y no toca la identidad del producto.
+      if (!editaSucursal) {
+        const homonimo = await buscarProductoHomonimo(parsed.nombre, tx, productoId);
+        if (homonimo) {
+          throw new ConflictError(
+            `Ya existe un producto llamado "${homonimo.nombre.trim()}" (#${homonimo.id}). ` +
+            `Dos productos con el mismo nombre no se distinguen en el POS ni en el inventario.`,
+          );
+        }
       }
 
       // Reventa: actualizar el insumo vinculado o crear uno nuevo con los datos enviados

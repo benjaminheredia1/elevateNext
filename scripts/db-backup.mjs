@@ -4,8 +4,16 @@ import { Pool } from 'pg';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
-const connectionString = (process.env.DATABASE_URL ?? '').replace(/\?.*$/, '');
-const pool = new Pool({ connectionString, ssl: { rejectUnauthorized: false } });
+const url = process.env.DATABASE_URL ?? '';
+const connectionString = url.replace(/\?.*$/, '');
+// El SSL va solo si la URL lo pide. Forzarlo dejó el backup inutilizable
+// cuando la base pasó a Dokploy: el servidor no habla SSL y el pool ni
+// siquiera llega a conectar ("The server does not support SSL connections").
+const pideSsl = /sslmode=(require|verify-ca|verify-full)/.test(url);
+const pool = new Pool({
+  connectionString,
+  ...(pideSsl ? { ssl: { rejectUnauthorized: false } } : {}),
+});
 
 async function withRetry(fn, tries = 5) {
   let lastErr;
