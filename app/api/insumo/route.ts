@@ -3,6 +3,7 @@ import prisma from '@/lib/prisma';
 import { guard, ADMIN, STAFF } from '@/lib/server/auth/guard';
 import { alcanceSucursal, resolverSucursal } from '@/lib/server/sucursales/sucursal.service';
 import { parseSucursal } from '@/lib/server/finanzas/rango';
+import { asegurarNombreDeInsumoLibre } from '@/lib/server/insumos/nombres';
 
 // Lectura de inventario: también el cajero (vista solo lectura en /caja/insumos)
 export async function GET(req: NextRequest) {
@@ -140,6 +141,12 @@ export async function POST(request: NextRequest) {
     // registren su primer movimiento de este insumo.
     const sucursalId = await resolverSucursal(sucursal_id);
     const stockInicial = Number(stock_actual || 0);
+
+    // Dos insumos con el mismo nombre son dos renglones idénticos en la pantalla
+    // de inventario, y nadie puede saber cuál mirar: así aparecieron los cuatro
+    // "C4" y los cuatro "B4" del catálogo. El alta es el único momento en que
+    // esto se puede evitar sin costo; después hay que unificarlos a mano.
+    await asegurarNombreDeInsumoLibre(String(nombre ?? ''));
 
     // Todo en una transacción: un insumo con stock pero sin su fila de sucursal
     // (o sin su movimiento de apertura) deja el kardex descuadrado desde el día uno.

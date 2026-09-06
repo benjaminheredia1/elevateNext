@@ -11,6 +11,7 @@ import type { Rol, PrismaClient } from '@prisma/client';
 import prisma from '@/lib/prisma';
 import { ConflictError, NotFoundError, ValidationError } from '@/lib/server/errors';
 import { logAudit } from '@/lib/server/audit/audit.service';
+import { buscarInsumoHomonimo } from '@/lib/server/insumos/nombres';
 import {
   ajustarStock,
   fijarStock,
@@ -47,7 +48,13 @@ export async function altaInsumoEnCentro(
 ) {
   const nombre = input.nombre.trim();
 
-  let insumo = await tx.insumo.findFirst({ where: { nombre: { equals: nombre, mode: 'insensitive' } } });
+  // Reusar el insumo que ya existe es el objetivo de esta búsqueda, así que
+  // tiene que empatar como empata el ojo humano: "Infusión Elevate " y
+  // "Infusión Elevate" son el mismo insumo, y compararlos crudos creaba dos.
+  const existente = await buscarInsumoHomonimo(nombre, tx);
+  let insumo = existente
+    ? await tx.insumo.findUnique({ where: { id: existente.id } })
+    : null;
   if (insumo) {
     const yaEnCentro = await tx.stockCentro.findUnique({
       where: { centro_id_insumo_id: { centro_id: centroId, insumo_id: insumo.id } },
