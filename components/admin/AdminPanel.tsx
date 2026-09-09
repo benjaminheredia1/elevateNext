@@ -77,6 +77,7 @@ const NAV_GROUPS = [
     label: 'Finanzas',
     items: [
       { to: '/admin/consolidado', label: 'Consolidado', icon: Icons.analitica },
+      { to: '/admin/ventas', label: 'Ventas', icon: Icons.analitica },
       { to: '/admin/caja', label: 'Caja', icon: Icons.caja },
       { to: '/admin/flujo-caja', label: 'Flujo de Caja', icon: Icons.flujo },
       { to: '/admin/contabilidad', label: 'Contabilidad', icon: Icons.contabilidad },

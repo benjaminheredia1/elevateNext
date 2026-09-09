@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import apiClient from '@/hooks/api';
+import type { PeriodoState } from '@/components/ui/PeriodoFiltro';
 
 type MetodoPago = 'EFECTIVO' | 'QR' | 'TARJETA';
 
@@ -206,12 +207,19 @@ export function useMovimientos() {
   });
 }
 
-/** Ventas del turno (o de una fecha), con su detalle y su forma de cierre. */
-export function useVentasCaja(fecha?: string) {
+/** Ventas del turno o del período elegido, con su detalle y su forma de cierre. */
+export function useVentasCaja(periodo: PeriodoState = { rango: 'turno' }) {
   return useQuery({
-    queryKey: [...cajaKey, 'ventas', fecha ?? null],
+    queryKey: [...cajaKey, 'ventas', periodo],
     queryFn: async () => {
-      const res = await apiClient.get(`/api/caja/ventas${fecha ? `?fecha=${fecha}` : ''}`);
+      const params = new URLSearchParams({ rango: periodo.rango });
+      // Solo el rango a medida necesita fechas; mandarlas siempre ensuciaría
+      // la URL y el caché de React Query con datos que el server ignora.
+      if (periodo.rango === 'custom') {
+        if (periodo.desde) params.set('desde', periodo.desde);
+        if (periodo.hasta) params.set('hasta', periodo.hasta);
+      }
+      const res = await apiClient.get(`/api/caja/ventas?${params.toString()}`);
       return res.data as VentasCaja;
     },
   });
@@ -236,6 +244,8 @@ export interface VentaCaja {
   cliente: { id: number; nombre: string; telefono: string | null } | null;
   cliente_nombre: string | null;
   cajero: string | null;
+  sucursal_id: number;
+  sucursal: string | null;
   deuda: { saldo: number; estado: string; vencimiento: string | null } | null;
   items: {
     producto_id: number;
@@ -251,8 +261,10 @@ export interface VentaCaja {
 
 export interface VentasCaja {
   turno: { id: number; numero?: number; sucursal_id?: number } | null;
-  ambito: 'TURNO' | 'DIA';
+  ambito: 'TURNO' | 'DIA' | 'PERIODO';
   fecha: string | null;
+  desde: string | null;
+  hasta: string | null;
   ventas: VentaCaja[];
 }
 
