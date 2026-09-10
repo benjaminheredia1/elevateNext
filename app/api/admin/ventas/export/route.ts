@@ -59,6 +59,17 @@ export async function GET(req: NextRequest) {
           .join(', '),
       },
       { header: 'Total Bs', ancho: 12, tipo: 'numero', valor: v => montoExcel(v.total) },
+      // Sin esta columna, una cortesía sale idéntica a una venta cobrada —con su
+      // total completo y `payment_status` PAGADO— e infla las ventas del archivo
+      // sin que nada avise. Es el mismo criterio que usa `getVentasDeCaja`.
+      {
+        header: 'Forma', ancho: 12,
+        valor: v => (v.es_cortesia
+          ? 'Cortesía'
+          : v.payment_status === 'PENDIENTE' || v.payment_status === 'COD_PENDIENTE'
+            ? 'Fiado'
+            : 'Pagada'),
+      },
       { header: 'Estado', ancho: 14, valor: v => v.estado },
       { header: 'Pago', ancho: 14, valor: v => v.payment_status },
       { header: 'Sucursal', ancho: 22, valor: v => v.sucursal.nombre },
