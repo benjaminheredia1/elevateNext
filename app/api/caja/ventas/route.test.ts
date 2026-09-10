@@ -20,7 +20,7 @@ let turnoId: number;
 let productoId: number;
 let cajeroId: number;
 
-const pedir = () => GET(new NextRequest('http://localhost/api/caja/ventas', {
+const pedir = (query = '') => GET(new NextRequest(`http://localhost/api/caja/ventas${query}`, {
   headers: { authorization: `Bearer ${token}` },
 }));
 
@@ -130,6 +130,44 @@ describe('GET /api/caja/ventas', () => {
     });
 
     const body = await (await pedir()).json();
+    expect(body.ventas.map((v: { id: number }) => v.id)).not.toContain(ajena.id);
+
+    await prisma.transaccion.delete({ where: { id: ajena.id } });
+    await prisma.sucursal.delete({ where: { id: otra.id } });
+  });
+});
+
+describe('GET /api/caja/ventas — filtro de período', () => {
+  it('sin rango sigue mostrando el turno abierto', async () => {
+    const body = await (await pedir()).json();
+    expect(body.ambito).toBe('TURNO');
+    expect(body.turno.id).toBe(turnoId);
+  });
+
+  it('con rango mira el calendario y deja de depender del turno', async () => {
+    const body = await (await pedir('?rango=mes')).json();
+    expect(body.ambito).toBe('PERIODO');
+    expect(body.turno).toBeNull();
+    // Las cuatro del fixture son de hoy, así que caen dentro del mes en curso.
+    // Se buscan por id porque el mes trae además lo que sembró el seed.
+    const delTurno = await prisma.transaccion.findMany({ where: { turno_id: turnoId }, select: { id: true } });
+    const ids = body.ventas.map((v: { id: number }) => v.id);
+    for (const { id } of delTurno) expect(ids).toContain(id);
+  });
+
+  it('el rango a medida acota por fecha de negocio', async () => {
+    const body = await (await pedir('?rango=custom&desde=2020-01-01&hasta=2020-01-02')).json();
+    expect(body.ambito).toBe('PERIODO');
+    expect(body.ventas).toHaveLength(0);
+  });
+
+  it('el período no rompe el aislamiento entre sucursales', async () => {
+    const otra = await prisma.sucursal.create({ data: { nombre: `${MARCADOR} otra-periodo`, activa: true } });
+    const ajena = await prisma.transaccion.create({
+      data: { canal: 'SALON', sucursal_id: otra.id, total: 777, estado: 'PAGADO', payment_status: 'PAGADO' },
+    });
+
+    const body = await (await pedir('?rango=mes')).json();
     expect(body.ventas.map((v: { id: number }) => v.id)).not.toContain(ajena.id);
 
     await prisma.transaccion.delete({ where: { id: ajena.id } });

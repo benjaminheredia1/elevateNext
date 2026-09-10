@@ -9,6 +9,8 @@ import { lineasDeCombo } from '@/lib/server/promociones/combos.service';
 import { resolverCliente, getClienteAnonimo } from '@/lib/server/clientes/clientes.service';
 import { rangoDiaNegocio, hoyISO } from '@/lib/server/fechas';
 import { siguienteNumeroSucursal } from '@/lib/server/ventas/numeracion';
+import { ventaVistaInclude, mapearVenta } from '@/lib/server/ventas/venta-vista';
+import type { RangoFechas } from '@/lib/server/finanzas/rango';
 
 interface Meta { ip?: string | null; userAgent?: string | null }
 
@@ -216,15 +218,22 @@ export async function getMovimientos(session: Session) {
  *
  * Sin turno abierto (caja cerrada) cae al día de negocio en curso de la misma
  * sucursal, para poder revisar lo vendido después de cerrar.
+ *
+ * Con `periodo` (semana, mes, rango) se ignora el turno y se mira el calendario:
+ * el cajero necesita responder "¿cuánto fiamos este mes?" sin salir de su caja.
+ * La sucursal sale siempre de la sesión, nunca del pedido.
  */
-export async function getVentasDeCaja(session: Session, fechaISO?: string | null) {
+export async function getVentasDeCaja(
+  session: Session,
+  opciones: { fecha?: string | null; periodo?: RangoFechas | null } = {},
+) {
   const sucursal_id = sucursalDe(session);
-  const turno = await prisma.cajaTurno.findFirst({ where: { sucursal_id, estado: 'ABIERTO' } });
+  const { fecha = null, periodo = null } = opciones;
+  const turno = periodo ? null : await prisma.cajaTurno.findFirst({ where: { sucursal_id, estado: 'ABIERTO' } });
 
-  // Con fecha explícita manda la fecha; si no, el turno abierto; y si no hay
+  // Manda el período explícito; si no, la fecha; si no, el turno abierto; y sin
   // turno, el día de negocio de hoy en esa sucursal.
-  const porFecha = fechaISO || !turno;
-  const rango = porFecha ? rangoDiaNegocio(fechaISO) : null;
+  const rango = periodo ?? (fecha || !turno ? rangoDiaNegocio(fecha) : null);
 
   const ventas = await prisma.transaccion.findMany({
     where: {
@@ -232,74 +241,17 @@ export async function getVentasDeCaja(session: Session, fechaISO?: string | null
       ...(rango ? { created_at: { gte: rango.desde, lte: rango.hasta } } : { turno_id: turno!.id }),
     },
     orderBy: { created_at: 'desc' },
-    include: {
-      transaccionesDetalles_id: {
-        include: {
-          producto: { select: { id: true, nombre: true } },
-          combo: { select: { id: true, nombre: true } },
-        },
-      },
-      cliente: { select: { id: true, nombre: true, telefono: true } },
-      cajero: { select: { id: true, nombre: true } },
-      // La deuda explica un fiado: cuánto queda y cuándo vence.
-      cuenta_corriente: { select: { id: true, monto: true, monto_pagado: true, estado: true, vencimiento: true } },
-      // Desglose del pago mixto para reimprimir el recibo: cuánto entró por
-      // efectivo y cuánto por QR solo existe acá, la venta guarda "MIXTO" y
-      // nada más. Se filtran los de VENTA porque un abono a deuda cobrado en
-      // la misma operación también cuelga de esta transacción.
-      movimientos: { where: { tipo: 'VENTA' }, select: { metodo_pago: true, monto: true } },
-    },
+    include: ventaVistaInclude,
   });
 
   return {
     turno,
     // Ámbito de lo que se está viendo, para que la pantalla pueda decirlo.
-    ambito: porFecha ? 'DIA' : 'TURNO',
-    fecha: rango ? hoyISO() : null,
-    ventas: ventas.map(v => {
-      // Pendiente de cobro: el fiado de salón y el contra-entrega del delivery.
-      const esFiado = v.payment_status === 'PENDIENTE' || v.payment_status === 'COD_PENDIENTE';
-      const deuda = v.cuenta_corriente;
-      return {
-        id: v.id,
-        numero_turno: v.numero_turno,
-        // El que se le dice al cliente; `id` queda como referencia interna.
-        numero_sucursal: v.numero_sucursal,
-        codigo: v.codigo,
-        canal: v.canal,
-        created_at: v.created_at,
-        total: Number(v.total),
-        metodo_pago: v.metodo_pago,
-        estado: v.estado,
-        payment_status: v.payment_status,
-        // Cómo se cerró la venta: es el eje por el que se filtra la pantalla.
-        forma: v.es_cortesia ? 'CORTESIA' : esFiado ? 'FIADO' : 'PAGADA',
-        es_cortesia: v.es_cortesia,
-        // `codigo_descuento` guarda el privilegio o la promo aplicada.
-        descuento: v.codigo_descuento,
-        cliente: v.cliente ? { id: v.cliente.id, nombre: v.cliente.nombre, telefono: v.cliente.telefono } : null,
-        cliente_nombre: v.cliente?.nombre ?? v.cliente_nombre,
-        cajero: v.cajero?.nombre ?? null,
-        deuda: deuda
-          ? {
-              saldo: Number(deuda.monto) - Number(deuda.monto_pagado),
-              estado: deuda.estado,
-              vencimiento: deuda.vencimiento,
-            }
-          : null,
-        items: v.transaccionesDetalles_id.map(d => ({
-          producto_id: d.producto_id,
-          nombre: d.producto.nombre,
-          cantidad: d.cantidad,
-          precio_unitario: Number(d.precio_unitario),
-          descuento: Number(d.descuentoAplicado),
-          // Las líneas de un combo comparten combo_id: la pantalla las agrupa.
-          combo: d.combo ? { id: d.combo.id, nombre: d.combo.nombre } : null,
-        })),
-        // Solo se usa para reimprimir el recibo de un pago mixto.
-        movimientos: v.movimientos.map(m => ({ metodo_pago: m.metodo_pago, monto: Number(m.monto) })),
-      };
-    }),
+    ambito: periodo ? 'PERIODO' : rango ? 'DIA' : 'TURNO',
+    fecha: !periodo && rango ? (fecha ?? hoyISO()) : null,
+    desde: rango?.desde ?? null,
+    hasta: rango?.hasta ?? null,
+    ventas: ventas.map(mapearVenta),
   };
 }
 

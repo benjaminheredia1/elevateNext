@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import apiClient from '@/hooks/api';
+import type { VentaCaja } from '@/hooks/caja';
 
 /** `todo` = sin filtro de fechas: desde el primer registro del negocio hasta hoy. */
 export type RangoKey = 'hoy' | '7d' | 'mes' | 'todo' | 'custom';
@@ -50,6 +51,26 @@ export function useFlujoCaja(rango: RangoState) {
       return res.data;
     },
   });
+}
+
+/** Ventas del período con su detalle: las mismas que ve la caja, por sucursal. */
+export function useVentasAdmin(rango: RangoState) {
+  return useQuery({
+    queryKey: ['admin-finanzas', 'ventas', rango],
+    queryFn: async () => {
+      const res = await apiClient.get(`/api/admin/ventas?${queryString(rango)}`);
+      return res.data as VentasAdmin;
+    },
+  });
+}
+
+export interface VentasAdmin {
+  desde: string;
+  hasta: string;
+  total: number;
+  /** Hay más ventas en el período de las que se devolvieron. */
+  truncado: boolean;
+  ventas: VentaCaja[];
 }
 
 export function useTurnos(rango: RangoState) {
