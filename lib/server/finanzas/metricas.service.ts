@@ -82,27 +82,33 @@ export async function ventasNetas(rango: RangoFechas, sucursal?: number): Promis
   };
 }
 
-/**
- * CMV del período: suma el costo CONGELADO de cada línea vendida
- * (costo_unitario × cantidad). Las líneas de antes de este cambio no tienen
- * costo congelado (quedaron en null) y caen al costo actual del insumo, igual
- * que se comportaba todo el sistema hasta ahora — sin eso, un reporte de un
- * período viejo se quedaría en blanco en vez de aproximar.
- */
-export async function cmvPorReceta(rango: RangoFechas, sucursal?: number): Promise<number> {
-  const detalles = await prisma.transaccionesDetalles.findMany({
-    where: { transaccion: whereVentasNetas(rango, sucursal) },
-    select: {
-      producto_id: true, cantidad: true, costo_unitario: true,
-      transaccion: { select: { sucursal_id: true } },
-    },
-  });
+/** Lo mínimo que una línea vendida necesita tener para valorizar su costo. */
+export interface LineaValorizable {
+  producto_id: number;
+  costo_unitario: number | null;
+  transaccion: { sucursal_id: number };
+}
 
-  // Las líneas sin costo congelado necesitan el costo en vivo. Se resuelven todas
-  // juntas antes de sumar: con `await` dentro del bucle, cada ficha técnica esperaba
-  // a la anterior, y como las ventas previas a este campo nunca se backfillean, ese
-  // camino es el de TODOS los reportes con datos viejos — serializarlo son cientos
-  // de consultas en fila contra una base remota.
+/**
+ * Resolvedor del costo unitario de una línea vendida: el CONGELADO al momento
+ * de la venta, o el costo actual de la ficha técnica si la línea es anterior a
+ * ese campo (quedaron en null). Sin la caída al costo vivo, un reporte de un
+ * período viejo se quedaría en blanco en vez de aproximar.
+ *
+ * Devuelve una función y no un número para que el CMV (que solo suma) y el
+ * informe contable (que necesita el costo línea por línea) valoricen idéntico:
+ * si las dos definiciones se separan, el total del informe deja de cuadrar
+ * contra el estado de resultados.
+ *
+ * Las líneas sin costo congelado se resuelven todas juntas antes de devolver:
+ * con `await` dentro del bucle, cada ficha técnica esperaba a la anterior, y
+ * como las ventas previas a este campo nunca se backfillean, ese camino es el
+ * de TODOS los reportes con datos viejos — serializarlo son cientos de
+ * consultas en fila contra una base remota.
+ */
+export async function resolverCostoUnitario(
+  detalles: LineaValorizable[],
+): Promise<(linea: LineaValorizable) => number> {
   const clavesPendientes = new Map<string, { productoId: number; sucursalId: number }>();
   for (const detalle of detalles) {
     if (detalle.costo_unitario != null) continue;
@@ -114,12 +120,30 @@ export async function cmvPorReceta(rango: RangoFechas, sucursal?: number): Promi
       [clave, await costoFichaTecnica(productoId, undefined, sucursalId)]),
   ));
 
+  return (linea) => linea.costo_unitario != null
+    ? linea.costo_unitario
+    : (costoEnVivo.get(`${linea.producto_id}:${linea.transaccion.sucursal_id}`) ?? 0);
+}
+
+/**
+ * CMV del período: suma el costo CONGELADO de cada línea vendida
+ * (costo_unitario × cantidad). Ver `resolverCostoUnitario` para el detalle de
+ * cómo se valoriza cada línea.
+ */
+export async function cmvPorReceta(rango: RangoFechas, sucursal?: number): Promise<number> {
+  const detalles = await prisma.transaccionesDetalles.findMany({
+    where: { transaccion: whereVentasNetas(rango, sucursal) },
+    select: {
+      producto_id: true, cantidad: true, costo_unitario: true,
+      transaccion: { select: { sucursal_id: true } },
+    },
+  });
+
+  const costoDe = await resolverCostoUnitario(detalles);
+
   let cmv = 0;
   for (const detalle of detalles) {
-    const costo = detalle.costo_unitario != null
-      ? detalle.costo_unitario
-      : (costoEnVivo.get(`${detalle.producto_id}:${detalle.transaccion.sucursal_id}`) ?? 0);
-    cmv += costo * Number(detalle.cantidad);
+    cmv += costoDe(detalle) * Number(detalle.cantidad);
   }
 
   return Number(cmv.toFixed(2));

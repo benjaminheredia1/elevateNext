@@ -10,7 +10,7 @@
  * queda en npm está congelada en 0.18.5 con una vulnerabilidad conocida, y las
  * nuevas viven en un CDN propio que complica el build en Vercel.
  */
-import writeXlsxFile, { type Cell, type Column } from 'write-excel-file/node';
+import writeXlsxFile, { type Cell, type Column, type Row, type SheetData } from 'write-excel-file/node';
 import { NextResponse } from 'next/server';
 
 /** Cómo se muestra cada columna. El ancho va en caracteres, como en Excel. */
@@ -21,6 +21,13 @@ export interface ColumnaExcel<T> {
   ancho?: number;
   /** Las columnas de dinero y cantidades se alinean a la derecha. */
   tipo?: 'texto' | 'numero';
+  /**
+   * Formato numérico de Excel (`'#,##0.00'`, `'0%'`). Va en el archivo, no en el
+   * texto: la celda sigue siendo un número que contabilidad puede sumar, y se
+   * ve con los decimales correctos. Sin esto, un 0.85 se lee "0.85" en vez de
+   * "85%" y un total sale "1245.5" en vez de "1,245.50".
+   */
+  formato?: string;
 }
 
 /** Ancho por defecto, el mismo que traen los archivos de referencia. */
@@ -51,6 +58,25 @@ export function montoExcel(valor: unknown): number {
   return Number.isFinite(n) ? Number(n.toFixed(2)) : 0;
 }
 
+/**
+ * Una celda del cuerpo. Es la única definición de cómo se vuelca un valor, para
+ * que la hoja simple y las multi-hoja se vean igual.
+ */
+function celda<T>(col: ColumnaExcel<T>, fila: T): Cell {
+  const v = col.valor(fila);
+  if (v === null || v === undefined) return { value: undefined };
+  // Las de texto van como String a propósito: si no, Excel se come el cero
+  // inicial de un teléfono como 07730281 y lo muestra en notación científica.
+  return col.tipo === 'numero'
+    ? { value: Number(v), type: Number, align: 'right' as const, format: col.formato }
+    : { value: String(v), type: String };
+}
+
+/** Encabezado en negrita: es la fila que se lee primero. */
+function encabezado<T>(columnas: ColumnaExcel<T>[]): Row {
+  return columnas.map(col => ({ value: col.header, fontWeight: 'bold' as const, type: String }));
+}
+
 /** Arma el .xlsx de una hoja y devuelve su contenido listo para responder. */
 export async function construirExcel<T>(
   nombreHoja: string,
@@ -59,17 +85,8 @@ export async function construirExcel<T>(
 ): Promise<Buffer> {
   const columns: Column<T>[] = columnas.map(col => ({
     width: col.ancho ?? ANCHO_POR_DEFECTO,
-    // Encabezado en negrita: es la fila que se lee primero.
     header: { value: col.header, fontWeight: 'bold' as const },
-    cell: (fila: T): Cell => {
-      const v = col.valor(fila);
-      if (v === null || v === undefined) return { value: undefined };
-      // Las de texto van como String a propósito: si no, Excel se come el cero
-      // inicial de un teléfono como 07730281 y lo muestra en notación científica.
-      return col.tipo === 'numero'
-        ? { value: Number(v), type: Number, align: 'right' as const }
-        : { value: String(v), type: String };
-    },
+    cell: (fila: T): Cell => celda(col, fila),
   }));
 
   // Sin datos, la librería devuelve una hoja vacía: ni siquiera los encabezados.
@@ -125,4 +142,52 @@ export async function excelResponse<T>(
   filas: T[],
 ): Promise<NextResponse> {
   return respuestaExcel(await construirExcel(nombreHoja, columnas, filas), reporte);
+}
+
+/**
+ * Hoja ya volcada a celdas. El tipo de sus filas queda "adentro": un libro
+ * mezcla hojas de cosas distintas (líneas de venta, turnos, días) y no hay un
+ * `T` común, así que cada hoja se prepara con su propio tipo y recién después
+ * se juntan.
+ */
+export interface HojaPreparada {
+  nombre: string;
+  anchos: number[];
+  data: SheetData;
+}
+
+/** Vuelca una hoja a celdas conservando el tipado de sus filas. */
+export function prepararHoja<T>(
+  nombre: string,
+  columnas: ColumnaExcel<T>[],
+  filas: T[],
+): HojaPreparada {
+  return {
+    nombre,
+    anchos: columnas.map(col => col.ancho ?? ANCHO_POR_DEFECTO),
+    // Los encabezados van siempre, aunque no haya filas: un reporte de un
+    // período sin movimientos igual tiene que decir de qué es.
+    data: [encabezado(columnas), ...filas.map(fila => columnas.map(col => celda(col, fila)))],
+  };
+}
+
+/** Arma un .xlsx de varias hojas. */
+export async function construirExcelMultiHoja(hojas: HojaPreparada[]): Promise<Buffer> {
+  return writeXlsxFile(
+    hojas.map(hoja => ({
+      data: hoja.data,
+      sheet: hoja.nombre,
+      columns: hoja.anchos.map(width => ({ width })),
+      // La fila de encabezados queda fija, igual que en las hojas simples.
+      stickyRowsCount: 1,
+    })),
+  ).toBuffer();
+}
+
+/** Atajo multi-hoja: arma el libro y devuelve la respuesta de descarga. */
+export async function excelMultiHojaResponse(
+  reporte: string,
+  hojas: HojaPreparada[],
+): Promise<NextResponse> {
+  return respuestaExcel(await construirExcelMultiHoja(hojas), reporte);
 }
